@@ -6,6 +6,14 @@
 #ifndef LIBGIMLI_H
 #define LIBGIMLI_H
 
+/* This header file defines the interface that a child process may optionally
+ * use to notify the gimli monitor process that it is up and running and in a
+ * healthy condition.
+ * If the signal handlers are not established, the monitor will still be able
+ * to respawn the child in the case of an abnormal terminator, but may not be
+ * able to obtain trace information.
+ */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
