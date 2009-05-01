@@ -58,22 +58,17 @@ volatile struct gimli_heartbeat *gimli_heartbeat_attach(void)
     return hb;
   }
 
-  idstr = getenv("GIMLI_HB_ID");
-  if (!idstr) {
-    fprintf(stderr, "gimli: GIMLI_HB_ID is not set\n");
-    return NULL;
-  }
-
-  fd = open(idstr, O_RDWR, 0700);
-  if (fd == -1) {
-    fprintf(stderr, "gimli: can't open %s: %s\n", idstr, strerror(errno));
+  idstr = getenv("GIMLI_HB_FD");
+  if (idstr) {
+    fd = atoi(idstr);
+  } else {
+    fprintf(stderr, "gimli: GIMLI_HB_FD is not set\n");
     return NULL;
   }
 
   /* this is the file descriptor we need to use to access the
    * heartbeat segment */
   hb = mmap(NULL, sizeof(*hb), PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-
 
   if (hb == (struct gimli_heartbeat*)-1) {
     fprintf(stderr, "gimli: can't map %s: %s\n", idstr, strerror(errno));

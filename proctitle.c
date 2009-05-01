@@ -9,7 +9,7 @@
 
 static char *title = NULL;
 static size_t title_size = 0;
-static char *progname = "";
+char *gimli_progname = "";
 extern char **child_argv;
 
 char **gimli_init_proctitle(int argc, char **argv)
@@ -49,7 +49,7 @@ char **gimli_init_proctitle(int argc, char **argv)
   new_vec[i] = NULL;
   argv = new_vec;
   strcpy(buf, argv[0]);
-  progname = strdup(basename(buf));
+  gimli_progname = strdup(basename(buf));
 
   return argv;
 }
@@ -69,10 +69,10 @@ void gimli_set_proctitlev(const char *fmt, va_list ap)
   char *start = title;
 
   if (fmt[0] == '-') {
-    /* omit the progname */
+    /* omit the gimli_progname */
     fmt++;
   } else {
-    snprintf(title, title_size, "%s: ", child_argv ? child_argv[0] : progname);
+    snprintf(title, title_size, "%s: ", child_argv ? child_argv[0] : gimli_progname);
     start += strlen(title);
     size -= strlen(title);
   }

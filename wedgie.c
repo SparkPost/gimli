@@ -10,6 +10,8 @@
 #include <signal.h>
 #include <sys/ucontext.h>
 #include <sys/time.h>
+  
+volatile struct gimli_heartbeat *hb;
 
 typedef int wedgie_t;
 enum wedgie_enum {
@@ -52,7 +54,7 @@ static void mr_wedge(struct wedgie_data *data, int port)
 {
   fprintf(stderr, "taking a nap\n");
   sleep(2);
-//  *(long*)42 = 42;
+  *(long*)42 = 42;
   sleep(10);
   printf("done sleeping\n");
 }
@@ -82,8 +84,9 @@ int main(int argc, char *argv[])
 {
   pthread_mutex_t m;
   pthread_mutex_init(&m, NULL);
-  if (gimli_heartbeat_attach()) {
+  if ((hb = gimli_heartbeat_attach())) {
     fprintf(stderr, "heartbeat activated\n");
+    gimli_heartbeat_set(hb, GIMLI_HB_RUNNING);
   } else {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
