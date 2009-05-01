@@ -1,0 +1,18 @@
+gimli is a crash tracing/analysis framework.
+
+The concept is that an executable can be linked with libgimli to enable
+tracing support.
+
+A gimli enabled application may then be run under supervision of a monitor
+process that can detect if the application has stalled, and invoke a trace and
+then optionally restart the supervised application.
+
+The tracing is carried out by a coroner process.  The coroner will gather a
+stack trace for all threads in the target process and can also load additional
+tracing modules to gather even more information about the problem.
+
+For each mapped module in the traced process address space, the coroner will
+locate a trace module with a corresponding name.  The trace module can
+interrogate the target process to find key datastructures and interpret them
+into readable information for the trace file.
+
