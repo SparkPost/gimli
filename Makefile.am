@@ -3,6 +3,8 @@ bin_PROGRAMS = monitor glider
 noinst_PROGRAMS = wedgie
 lib_LTLIBRARIES = libgimli.la
 
+include_HEADERS = libgimli.h
+
 monitor_SOURCES = main.c proctitle.c config.c
 glider_SOURCES = trace.c linux.c elf.c hash.c elf-read.c dwarf-read.c dwarf-unwind.c dwarf-expr.c darwin.c solaris.c
 glider_LDADD = @CORONER_LDFLAGS@
