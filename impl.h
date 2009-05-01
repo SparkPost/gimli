@@ -56,8 +56,10 @@
 #include <thread_db.h>
 #endif
 #include <stdarg.h>
+#include <dlfcn.h>
 #include "gimli_elf.h"
 #include "libgimli.h"
+#include "libgimli_ana.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -141,14 +143,7 @@ struct gimli_object_file {
 
   gimli_hash_t dies; /* offset-string => gimli_dwarf_die */
   struct gimli_dwarf_die *first_die;
-};
-
-struct gimli_symbol {
-  char *name;
-  void *addr;
-  uint32_t size;
-  uint32_t ordinality;
-  struct gimli_symbol *next;
+  struct gimli_ana_module *tracer_module;
 };
 
 struct gimli_object_mapping {
@@ -178,7 +173,6 @@ struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
   const char *name, void *addr, uint32_t size);
 struct gimli_object_file *gimli_find_object(
   const char *objname);
-struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name);
 
 typedef enum _gimli_hash_iter_ret {
   GIMLI_HASH_ITER_STOP = 0,
@@ -213,14 +207,17 @@ int gimli_thread_regs_to_dwarf(struct gimli_unwind_cursor *cur);
 void *gimli_reg_addr(struct gimli_unwind_cursor *cur, int col);
 int dwarf_determine_source_line_number(void *pc, char *src, int srclen,
   uint64_t *lineno);
-int gimli_read_mem(void *src, void *dest, int len);
 
 char **gimli_init_proctitle(int argc, char **argv);
 void gimli_set_proctitle(const char *fmt, ...);
 void gimli_set_proctitlev(const char *fmt, va_list ap);
-const char *gimli_pc_sym_name(void *addr, char *buf, int buflen);
 
 int process_args(int *argc, char **argv[]);
+
+const char *gimli_pc_sym_name(void *addr, char *buf, int buflen);
+int gimli_read_mem(void *src, void *dest, int len);
+struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name);
+char *gimli_read_string(void *addr);
 
 #ifdef __cplusplus
 }

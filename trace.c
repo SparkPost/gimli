@@ -11,6 +11,37 @@ struct gimli_thread_state *gimli_threads = NULL;
 struct gimli_object_file *gimli_files = NULL;
 struct gimli_object_mapping *gimli_mappings = NULL;
 
+struct gimli_ana_api ana_api = {
+  GIMLI_ANA_API_VERSION,
+  gimli_sym_lookup,
+  gimli_pc_sym_name,
+  gimli_read_mem,
+  gimli_read_string
+};
+
+char *gimli_read_string(void *addr)
+{
+  int len;
+  char c;
+  char *buf;
+
+  len = 0;
+  while (gimli_read_mem(addr + len, &c, 1) == 1) {
+    if (c == '\0') {
+      break;
+    }
+    len++;
+  }
+
+  if (len) {
+    buf = malloc(len+1);
+    gimli_read_mem(addr, buf, len);
+    buf[len] = '\0';
+    return buf;
+  }
+  return NULL;
+}
+
 /* lower is better.
  * We weight underscores at the start heavier than
  * those later on.
@@ -288,10 +319,23 @@ void trace_process(int pid)
 {
   if (gimli_attach(pid)) {
     int i;
+    struct gimli_object_file *file;
 
     for (i = 0; i < gimli_nthreads; i++) {
       gimli_stack_trace(i);
     }
+
+    printf("\n");
+
+    for (file = gimli_files; file; file = file->next) {
+      if (file->tracer_module == NULL) continue;
+
+      if (file->tracer_module->perform_trace) {
+        file->tracer_module->perform_trace(&ana_api, file->objname);
+      }
+    }
+
+
   }
   gimli_detach();
 }
@@ -335,6 +379,7 @@ struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
   s = calloc(1, sizeof(*s));
 
   s->name = strdup(name);
+  s->rawname = s->name;
   s->addr = addr;
   s->size = size;
   s->ordinality = f->symcount++;
@@ -347,7 +392,7 @@ struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
   }
 
   /* this may fail due to duplicate names */
-  gimli_hash_insert(f->symbols, s->name, s);
+  gimli_hash_insert(f->symbols, s->rawname, s);
   return s;
 }
 
@@ -390,6 +435,11 @@ struct gimli_object_file *gimli_add_object(
   const char *objname, void *base)
 {
   struct gimli_object_file *f = gimli_find_object(objname);
+  struct gimli_symbol *sym;
+  char *name = NULL;
+  char buf[1024];
+  char buf2[1024];
+  void *h;
 
   if (f) return f;
 
@@ -414,6 +464,35 @@ struct gimli_object_file *gimli_add_object(
   }
   gimli_bake_symtab(f);
 #endif
+
+  /* perform discovery of tracer module */
+  sym = gimli_sym_lookup(f->objname, "gimli_tracer_module_name");
+  if (sym) {
+    name = gimli_read_string(sym->addr);
+  }
+  if (name == NULL) {
+    strcpy(buf, f->objname);
+    snprintf(buf2, sizeof(buf2)-1, "gimli_%s", basename(buf));
+    name = strdup(buf2);
+  }
+  strcpy(buf, f->objname);
+  snprintf(buf2, sizeof(buf2)-1, "%s/%s", dirname(buf), name);
+
+  if (access(buf2, F_OK) == 0) {
+    h = dlopen(buf2, RTLD_NOW|RTLD_GLOBAL);
+    if (h) {
+      gimli_module_init_func func = (gimli_module_init_func)
+        dlsym(h, "gimli_ana_init");
+      if (func) {
+        f->tracer_module = (*func)(&ana_api); 
+      }
+    } else {
+      printf("Unable to load library: %s: %s\n", buf2, dlerror());
+    }
+  } else if (sym) {
+    printf("NOTE: module %s declared that its tracing should be performed by %s, but that module was not found (%s)\n",
+      f->objname, buf2, strerror(errno));
+  }
 
   return f;
 }
