@@ -11,6 +11,9 @@ static char *title = NULL;
 static size_t title_size = 0;
 char *gimli_progname = "";
 extern char **child_argv;
+#ifdef __MACH__
+extern char **environ;
+#endif
 
 char **gimli_init_proctitle(int argc, char **argv)
 {

@@ -220,7 +220,7 @@ int gimli_attach(int pid)
 				if (!realpath(name, rname)) strcpy(rname, name);
 				fprintf(stderr, "%p [%p] %s\n", im.imageLoadAddress, im.imageFilePath, rname);
 
-				of = gimli_add_object(rname);
+				of = gimli_add_object(rname, im.imageLoadAddress);
 //				of->base_addr = im.imageLoadAddress;
 
 				/* now, from the mach header, find each segment and its
@@ -262,9 +262,11 @@ int gimli_attach(int pid)
 							continue;
 						}
 						symoff = (char*)im.imageLoadAddress + scmd.symoff;
+						/* 
 						fprintf(stderr, "symtab: symoff=%p (la=%p %p) nsyms=%x strof=%p strsize=%x\n",
 							scmd.symoff, im.imageLoadAddress, symoff, 
 							scmd.nsyms, scmd.stroff, scmd.strsize);
+						*/
 						for (n = 0; n < scmd.nsyms; n++) {
 							char *straddr;
 							int type;
@@ -278,7 +280,6 @@ int gimli_attach(int pid)
 							memset(name, 0, sizeof(name));
 							straddr = (char*)im.imageLoadAddress;
 							straddr += scmd.stroff + nl.n_un.n_strx;
-							printf("sym strx: %lx\n", nl.n_un.n_strx);
 							gimli_read_mem(straddr, name, sizeof(name));
 							if (!isprint(name[0])) name[0] = '\0';
 
@@ -290,11 +291,12 @@ int gimli_attach(int pid)
 							if (nl.n_un.n_strx == 0) continue;
 							if (nl.n_value == 0) continue;
 
-//							fprintf(stderr, "symaddr=%p (n_strx=%p %s) type=%x sect=%x desc=%x value=%p\n",
-//								symaddr, nl.n_un.n_strx, name,
-//								nl.n_type, nl.n_sect, nl.n_desc, nl.n_value);
-
-
+/*
+							fprintf(stderr, "symaddr=%p (n_strx=%p %s) type=%x sect=%x desc=%x value=%p\n",
+								symaddr, nl.n_un.n_strx, name,
+								nl.n_type, nl.n_sect, nl.n_desc, nl.n_value);
+*/
+							if (!strlen(name)) continue;
 							gimli_add_symbol(of, name, (char*)nl.n_value + of->base_addr, 0);
 						}
 					}
@@ -395,6 +397,7 @@ int gimli_read_mem(void *src, void *dest, int len)
 	}
 }
 
+#if 0
 static void *darwin_exc_handler(void *unused)
 {
 	kern_return_t rc;
@@ -441,6 +444,23 @@ static int activate(void)
 		pthread_create(&thr, &attr, darwin_exc_handler, NULL);
 		pthread_attr_destroy(&attr);
 	}
+}
+#endif
+
+int dwarf_determine_source_line_number(void *pc, char *src, int srclen,
+  uint64_t *lineno)
+{
+	return 0;
+}
+
+int gimli_show_param_info(struct gimli_unwind_cursor *cur)
+{
+	return 0;
+}
+
+int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
+{
+	return 0;
 }
 
 #endif

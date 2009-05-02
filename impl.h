@@ -105,7 +105,7 @@ struct gimli_unwind_cursor {
   struct gimli_thread_state st;
   struct gimli_dwarf_unwind_state dw;
   /* if a signal frame, the signal that triggered it */
-  struct siginfo si;
+  siginfo_t si;
 };
 
 struct dw_secinfo {

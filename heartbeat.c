@@ -27,7 +27,7 @@ static void request_trace(void)
   kill(getpid(), SIGSTOP);
 }
 
-static void gimli_signal_handler(int signo, struct siginfo *si, void *unused)
+static void gimli_signal_handler(int signo, siginfo_t *si, void *unused)
 {
   /* reset signal to default, which is to cause termination */
   signal(signo, SIG_DFL);

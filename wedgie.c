@@ -37,7 +37,7 @@ union wedgie_union {
   struct timeval tv;
 };
 
-static void handler(int signo, struct siginfo *si, void *v)
+static void handler(int signo, siginfo_t *si, void *v)
 {
   char buf[1024];
   printf("pid: %d signal handler invoked signo=%d si=%p v=%p\n", getpid(), signo, si, v);

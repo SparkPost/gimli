@@ -79,7 +79,14 @@ struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,
     i = lower + ((upper - lower)/2);
     csym = f->symtab[i];
 
-    if (csym->addr <= addr && csym->addr + csym->size >= addr) {
+    if (csym->addr <= addr &&
+#ifndef __MACH__
+        csym->addr + csym->size >= addr
+#else
+        /* we have no size info from the nlist symbols */
+        ((i + 1 > upper) || (f->symtab[i+1]->addr > addr))
+#endif
+        ) {
       /* we're in the right region, but there may be multiple
        * symbols that map here; try to find the one with the
        * most readable name */
@@ -237,6 +244,7 @@ void gimli_stack_trace(int tid)
                   case CLD_CONTINUED: source = "stopped child has continued"; break;
                 }
                 break;
+#ifdef SIGPOLL
               case SIGPOLL:
                 switch (cur.si.si_code) {
                   case POLL_IN: source = "data input available"; break;
@@ -247,6 +255,7 @@ void gimli_stack_trace(int tid)
                   case POLL_HUP: source = "device disconnected"; break;
                 }
                 break;
+#endif
 
             }
           } else {
