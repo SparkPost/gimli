@@ -44,6 +44,8 @@ typedef struct section my_section;
 
 
 
+static int target_pid;
+static int got_task = 0;
 static task_t targetTask;
 static mach_port_t exc_port;
 static char parent_port_name[256];
@@ -173,6 +175,7 @@ int gimli_attach(int pid)
 	 *
 	 * See also taskgated(8)
 	 */
+	target_pid = pid;
 	rc = task_for_pid(mach_task_self(), pid, &targetTask);
 	if (rc != KERN_SUCCESS) {
 		/* this will usually fail unless you call this from the
@@ -180,6 +183,7 @@ int gimli_attach(int pid)
 		fprintf(stderr, "task_for_pid returned %d\n", rc);
 		return 0;
 	}
+	got_task = 1;
 	task_suspend(targetTask);
 
 	/* lets see if we can figure out what we have loaded and where.
@@ -372,7 +376,11 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 
 int gimli_detach(void)
 {
-	task_resume(targetTask);
+	if (got_task) {
+		task_resume(targetTask);
+	} else {
+		kill(target_pid, SIGCONT);
+	}
 	return 0;
 }
 
