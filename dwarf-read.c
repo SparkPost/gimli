@@ -555,7 +555,9 @@ int gimli_process_dwarf(struct gimli_object_file *f)
    * In particular, we can scan the .debug_info section to resolve
    * function names into symbols for the back trace code */
 
-  process_line_numbers(f);
+  if (f->elf) {
+    process_line_numbers(f);
+  }
 
   return 1;
 }

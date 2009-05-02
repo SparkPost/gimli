@@ -505,6 +505,7 @@ struct gimli_object_file *gimli_add_object(
 #ifndef __MACH__
   f->elf = gimli_elf_open(f->objname);
   if (f->elf) {
+    f->elf->gobject = f;
     /* need to determine the base address offset for this object */
     f->base_addr = (intptr_t)base - f->elf->vaddr;
     if (debug) {

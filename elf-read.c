@@ -162,6 +162,29 @@ const char *gimli_get_section_data(struct gimli_elf_ehdr *elf, int section)
   return s->data;
 }
 
+struct gimli_section_data *gimli_get_section_by_name(
+  gimli_object_file_t *elf, const char *name)
+{
+  struct gimli_section_data *data;
+  struct gimli_elf_shdr *shdr;
+
+  if (gimli_hash_find(elf->gobject->sections, name, (void**)&data)) {
+    return data;
+  }
+  shdr = gimli_get_elf_section_by_name(elf, name);
+  if (!shdr) return NULL;
+  data = calloc(1, sizeof(*data));
+  data->data = (char*)gimli_get_section_data(elf, shdr->section_no);
+  data->size = shdr->sh_size;
+  data->offset = shdr->sh_offset;
+  data->addr = shdr->sh_addr;
+  data->name = strdup(name);
+  data->container = elf;
+  gimli_hash_insert(elf->gobject->sections, name, data);
+  return data;
+}
+
+
 const char *gimli_elf_get_string(struct gimli_elf_ehdr *elf,
   int section, uint64_t off)
 {

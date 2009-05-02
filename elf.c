@@ -43,6 +43,7 @@ int gimli_process_elf(struct gimli_object_file *f)
   gimli_elf_enum_symbols(f->elf, for_each_symbol, f);
 
   if (f->aux_elf) {
+    f->aux_elf->gobject = f;
     gimli_elf_enum_symbols(f->aux_elf, for_each_symbol, f);
   }
 

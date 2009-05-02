@@ -60,6 +60,7 @@ struct gimli_elf_ehdr {
   struct gimli_elf_shdr *sections;
   struct gimli_elf_ehdr *refelf;
   char *objname;
+  struct gimli_object_file *gobject;
   uint64_t vaddr;
 };
 
@@ -68,10 +69,12 @@ typedef int (*gimli_elf_sym_iter_func)(struct gimli_elf_ehdr *elf,
 
 int gimli_elf_enum_symbols(struct gimli_elf_ehdr *elf,
   gimli_elf_sym_iter_func func, void *arg);
-struct gimli_elf_ehdr *gimli_elf_open(const char *filename, struct gimli_elf_ehdr *refelf);
+struct gimli_elf_ehdr *gimli_elf_open(const char *filename);
+#if 0
 struct gimli_elf_shdr *gimli_get_elf_section_by_name(gimli_object_file_t *elf,
   const char *name);
 const char *gimli_get_section_data(gimli_object_file_t *elf, int section);
+#endif
 
 /* for e_type: */
 #define GIMLI_ET_NONE 0 /* no file type */
