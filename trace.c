@@ -378,8 +378,15 @@ struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
  
   s = calloc(1, sizeof(*s));
 
-  s->name = strdup(name);
-  s->rawname = s->name;
+  s->rawname = strdup(name);
+  s->name = s->rawname;
+
+  if (!strncmp(s->name, "_Z", 2)) {
+    /* need to de-mangle, per:
+     * http://www.codesourcery.com/public/cxx-abi/abi.html#mangling
+     */
+  }
+
   s->addr = addr;
   s->size = size;
   s->ordinality = f->symcount++;

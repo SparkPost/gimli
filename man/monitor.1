@@ -1,0 +1,226 @@
+.\" vim:ft=nroff:ts=2:sw=2:et:
+.\" Copyright 2009 Message Systems, Inc.
+.TH monitor 1 "1 May 2009"
+.SH NAME
+monitor \- Run a process and monitor its health
+.SH SYNOPSIS
+.B monitor
+.RB [ options ]
+.I "process to run ..."
+
+.SH DESCRIPTION
+.B monitor
+detaches itself from the spawning session, spawns the child process, and
+then goes into a monitoring state.  Monitoring the child process consists
+of two main tasks:
+.PP
+.B fault monitoring
+is implemented by catching the
+.B SIGCHLD
+signal from the child process.  A gimli compatible child process will
+use
+.I libgimli
+to establish a signal handler that will send itself the
+.B SIGSTOP
+signal in the event of a fault.  The
+.B monitor
+will receive
+.B SIGCHLD
+when the child stops and knows to then initiate a trace.
+.PP
+.B watchdog
+is implemented by setting up shared memory between the monitor process
+and the child.  The shared memory segment is referred to as the heartbeat,
+and contains two pieces of state
+information.  The first is the general stage of life for the child process,
+which is one of
+.I starting, running
+and
+.I stopping.
+The other state information is a counter to indicate activity in the child
+process.
+.B monitor
+inspects the state and counter and watches for change.  If no change is
+detected after a certain amount of time has passed, then the child process
+is deemed to have become wedged in some fashion, and
+.B monitor
+will initiate a trace and then arrange to terminate the child process.
+.SH CONFIGURATION
+.B monitor
+takes its configuration from an optional configuration file, environmental
+variables and command line options.  The following configuration options
+are possible and may be specified in the configuration file or as command
+line options.  In addition, each one has a corresponding environmental
+variable equivalent.
+.PP
+.B monitor
+will read the configuration file specified by the
+.B GIMLI_CONFIG_FILE
+environmental or the
+.B --config-file
+command line option.  Command line options always override environmental
+variables.
+.PP
+If a configuration file is specified, options are read from it and applied
+as though they were passed on the command line.  The configuration syntax follows the Unix tradition of using the
+.B #
+character to denote that the rest of the line is a comment, and uses a simple
+.B name = value
+syntax for expressing options.  Value names are the names of the options
+listed below, but without a leading
+.B --
+prefix.
+.PP
+After processing an optional configuration file, each of the possible options
+environmental variable equivalents is checked and applied as though those
+values were passed on the command line.
+.PP
+After processing environmental variables, the command line options are checked
+and applied.  Command line options always trump any other form of option
+setting.  Command line options may have any number of leading
+.B \-
+characters.
+.SH OPTIONS
+.TP
+.B watchdog-interval=seconds
+Configures the interval after which the child process will be deemed wedged
+if it is in the
+.I running
+state.  The default value is 60 seconds.  The corresponding environmental
+variable is
+.B GIMLI_WATCHDOG_INTERVAL
+.TP
+.B watchdog-start-interval=seconds
+Configures the interval after which the child process will be deemed wedged
+if it is in the
+.I starting
+state.  The default value is 200 seconds.  The corresponding environmental
+variable is
+.B GIMLI_WATCHDOG_START_INTERVAL
+.TP
+.B watchdog-stop-interval=seconds
+Configures the interval after which the child process will be deemed wedged
+if it is in the
+.I stopping
+state.  The default value is 60 seconds.  The corresponding environmental
+variable is
+.B GIMLI_WATCHDOG_STOP_INTERVAL
+.TP
+.B debug=1
+Enables debugging output.  If used without specifying a value, thusly:
+.B --debug
+the debugging state will be toggled.  The corresponding environmental
+variable is
+.B GIMLI_DEBUG
+.TP
+.B detach=0
+Prevents
+.B monitor
+from detaching from the controlling process.  If used without specifying
+a value, the detach state will be toggled.  The corresponding environmental
+variable is
+.B GIMLI_DETACH
+.TP
+.B setsid=0
+Prevents
+.B monitor
+from establishing its own session.  If used without specifying a value,
+the setsid state will be toggled.  The default is to use the setsid(2)
+system call to establish its own session, but this may be incompatible
+with other process management frameworks.  The corresponding environmental
+variable is
+.B GIMLI_SETSID
+.TP
+.B glider=/path/to/trace/program
+When
+.B monitor
+needs to initiate a trace, it will invoke the glider(1) utility.  The default
+value for the
+.I glider
+option is the installation path configured when the
+.B Gimli
+utilities were installed.  If for some reason you need to specify an alternate
+path, or an alternate trace utility, you may do so via this option.
+The corresponding environmental variable is
+.B GIMLI_GLIDER_PATH
+.TP
+.B trace-dir=/path/to/store/traces
+If
+.B monitor
+initiates a trace, it will create a trace file in the trace directory.
+The default location is
+.B /tmp
+and you are strongly encouraged to set this to a more appropriate location.
+The corresponding environmental variable is
+.B GIMLI_TRACE_DIR
+.TP
+.B respawn-frequency=seconds
+In the event that
+.B monitor
+needs to respawn the process, it will not do so more than once every
+.I respawn-frequency
+seconds.  This acts as a brake to avoid torturing your system in the
+event of a critical system resource shortage or in the case of a brown
+paper bag configuration change.  The default value is 15 seconds.
+The corresponding environmental variable is
+.B GIMLI_RESPAWN_FREQUENCY
+
+.SH TRACING
+When
+.B monitor
+decides that it needs to trace a child process, it will create a trace
+file in the configured
+.I trace-dir
+using the basename(3) of the child process executable concatenated with
+the process id of the child and using the suffix
+.B .trc
+.PP
+The trace file will be created with a header describing the reason
+for the trace and the time of the incident.
+.B monitor
+will then spawn the configured
+.I glider
+utility to perform tracing.  The glider process will be run with its 
+standard output and standard error streams redirected to the trace file.
+.PP
+If a file with the same name as the intended trace file already exists,
+.B monitor
+will overwrite it.
+
+.SH RESPAWN
+.B monitor
+will respawn the child process if it terminates abnormally.  Abnormal
+termination is any situation where the child process terminates due to
+the receipt of any one of the 
+.B SIGSEGV SIGABRT SIGBUS SIGILL SIGFPE
+or
+.B SIGKILL
+signals.  If the child process terminates for any other reason, then
+.B monitor
+will exit and return the exit code from the child process.
+
+.SH SIGNALS
+.TP
+.B SIGUSR1
+If
+.B monitor
+is sent the
+.B SIGUSR1
+signal, it will treat it as an alternative means of incrementing the counter
+in the heartbeat.  If it provided to allow processes implemented in script
+to take advantage of the watchdog facility, without requiring the scripting
+environment to be extended.
+.TP
+.B SIGTERM SIGINT SIGQUIT
+If
+.B monitor
+receives any of these signals, it will treat them as an indication that it
+should exit.  Before exiting,
+.B monitor
+will relay the signal to the child process and wait for it to exit.
+
+.SH AUTHOR
+Wez Furlong
+.SH "SEE ALSO"
+glider(1), pstack(1), gstack(1)
+

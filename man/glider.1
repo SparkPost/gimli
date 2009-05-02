@@ -1,0 +1,28 @@
+.\" vim:ft=nroff:ts=2:sw=2:et:
+.\" Copyright 2009 Message Systems, Inc.
+.TH glider 1 "1 May 2009"
+.SH NAME
+glider \- Analyze a process at the time of death
+.SH SYNOPSIS
+.B glider
+.I pid
+
+.SH DESCRIPTION
+.B glider
+is intended to be invoked by monitor(1) in the event of a fault or watchdog.
+When invoked,
+.B glider
+will attach to the specified child process, and generate a stack trace
+using DWARF debugging information, if present.
+.PP
+In addition to generating a stack trace,
+.B glider
+will attempt to locate and load
+.I Gimli
+specific modules to provide additional information about the target process.
+
+.SH AUTHOR
+Wez Furlong
+.SH "SEE ALSO"
+glider(1), pstack(1), gstack(1)
+
