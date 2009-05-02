@@ -69,9 +69,9 @@ typedef int (*gimli_elf_sym_iter_func)(struct gimli_elf_ehdr *elf,
 int gimli_elf_enum_symbols(struct gimli_elf_ehdr *elf,
   gimli_elf_sym_iter_func func, void *arg);
 struct gimli_elf_ehdr *gimli_elf_open(const char *filename, struct gimli_elf_ehdr *refelf);
-struct gimli_elf_shdr *gimli_get_section_by_name(struct gimli_elf_ehdr *elf,
+struct gimli_elf_shdr *gimli_get_elf_section_by_name(gimli_object_file_t *elf,
   const char *name);
-const char *gimli_get_section_data(struct gimli_elf_ehdr *elf, int section);
+const char *gimli_get_section_data(gimli_object_file_t *elf, int section);
 
 /* for e_type: */
 #define GIMLI_ET_NONE 0 /* no file type */
@@ -144,6 +144,7 @@ const char *gimli_get_section_data(struct gimli_elf_ehdr *elf, int section);
 #define GIMLI_PT_DYNAMIC 2
 #define GIMLI_PT_INTERP 3
 
+#define gimli_object_is_executable(obj)  ((obj)->e_type == GIMLI_ET_EXEC)
 
 #ifdef __cplusplus
 }

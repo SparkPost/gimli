@@ -123,7 +123,7 @@ struct gimli_elf_shdr *gimli_get_section_by_index(
   return NULL;
 }
 
-struct gimli_elf_shdr *gimli_get_section_by_name(struct gimli_elf_ehdr *elf,
+struct gimli_elf_shdr *gimli_get_elf_section_by_name(struct gimli_elf_ehdr *elf,
   const char *name)
 {
   struct gimli_elf_shdr *s = NULL;
@@ -173,8 +173,7 @@ const char *gimli_elf_get_string(struct gimli_elf_ehdr *elf,
 }
 
 
-struct gimli_elf_ehdr *gimli_elf_open(const char *filename,
-  struct gimli_elf_ehdr *refelf)
+struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
 {
   struct gimli_elf_ehdr *elf = calloc(1, sizeof(*elf));
   unsigned char ident[16];
@@ -193,7 +192,6 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename,
     return 0;
   }
 
-  elf->refelf = refelf;
   elf->objname = strdup(filename);
 
   if (ident[GIMLI_EI_VERSION] != GIMLI_EV_CURRENT) {

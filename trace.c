@@ -330,6 +330,46 @@ void trace_process(int pid)
     int i;
     struct gimli_object_file *file;
 
+    for (file = gimli_files; file; file = file->next) {
+      /* perform discovery of tracer module */
+      struct gimli_symbol *sym;
+      char *name = NULL;
+      char buf[1024];
+      char buf2[1024];
+      void *h;
+
+      sym = gimli_sym_lookup(file->objname, "gimli_tracer_module_name");
+      if (sym) {
+        name = gimli_read_string(sym->addr);
+      }
+      if (name == NULL) {
+        strcpy(buf, file->objname);
+        snprintf(buf2, sizeof(buf2)-1, "gimli_%s", basename(buf));
+        name = strdup(buf2);
+      }
+      strcpy(buf, file->objname);
+      snprintf(buf2, sizeof(buf2)-1, "%s/%s", dirname(buf), name);
+
+      if (access(buf2, F_OK) == 0) {
+        h = dlopen(buf2, RTLD_NOW|RTLD_GLOBAL);
+        if (h) {
+          gimli_module_init_func func = (gimli_module_init_func)
+            dlsym(h, "gimli_ana_init");
+          if (func) {
+            file->tracer_module = (*func)(&ana_api); 
+          }
+        } else {
+          printf("Unable to load library: %s: %s\n", buf2, dlerror());
+        }
+      } else if (sym) {
+        printf("NOTE: module %s declared that its tracing should be performed by %s, but that module was not found (%s)\n",
+            file->objname, buf2, strerror(errno));
+      }
+
+      gimli_process_dwarf(file);
+      gimli_bake_symtab(file);
+    }
+
     for (i = 0; i < gimli_nthreads; i++) {
       gimli_stack_trace(i);
     }
@@ -453,20 +493,17 @@ struct gimli_object_file *gimli_add_object(
   struct gimli_object_file *f = gimli_find_object(objname);
   struct gimli_symbol *sym;
   char *name = NULL;
-  char buf[1024];
-  char buf2[1024];
-  void *h;
-
   if (f) return f;
 
   f = calloc(1, sizeof(*f));
   f->objname = strdup(objname);
   f->next = gimli_files;
   f->symbols = gimli_hash_new(NULL);
+  f->sections = gimli_hash_new(NULL);
   gimli_files = f;
 
 #ifndef __MACH__
-  f->elf = gimli_elf_open(f->objname, NULL);
+  f->elf = gimli_elf_open(f->objname);
   if (f->elf) {
     /* need to determine the base address offset for this object */
     f->base_addr = (intptr_t)base - f->elf->vaddr;
@@ -476,39 +513,8 @@ struct gimli_object_file *gimli_add_object(
     }
 
     gimli_process_elf(f);
-    gimli_process_dwarf(f);
   }
-  gimli_bake_symtab(f);
 #endif
-
-  /* perform discovery of tracer module */
-  sym = gimli_sym_lookup(f->objname, "gimli_tracer_module_name");
-  if (sym) {
-    name = gimli_read_string(sym->addr);
-  }
-  if (name == NULL) {
-    strcpy(buf, f->objname);
-    snprintf(buf2, sizeof(buf2)-1, "gimli_%s", basename(buf));
-    name = strdup(buf2);
-  }
-  strcpy(buf, f->objname);
-  snprintf(buf2, sizeof(buf2)-1, "%s/%s", dirname(buf), name);
-
-  if (access(buf2, F_OK) == 0) {
-    h = dlopen(buf2, RTLD_NOW|RTLD_GLOBAL);
-    if (h) {
-      gimli_module_init_func func = (gimli_module_init_func)
-        dlsym(h, "gimli_ana_init");
-      if (func) {
-        f->tracer_module = (*func)(&ana_api); 
-      }
-    } else {
-      printf("Unable to load library: %s: %s\n", buf2, dlerror());
-    }
-  } else if (sym) {
-    printf("NOTE: module %s declared that its tracing should be performed by %s, but that module was not found (%s)\n",
-      f->objname, buf2, strerror(errno));
-  }
 
   return f;
 }

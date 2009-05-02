@@ -3,7 +3,6 @@
  * For licensing information, see:
  * https://labs.omniti.com/gimli/trunk/LICENSE
  */
-#ifndef __MACH__
 #include "impl.h"
 #include "gimli_dwarf.h"
 //#define debug 1
@@ -578,8 +577,5 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
   return 1;
 }
 
-#endif
-
 /* vim:ts=2:sw=2:et:
  */
-

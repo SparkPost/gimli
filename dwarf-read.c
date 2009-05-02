@@ -3,7 +3,6 @@
  * For licensing information, see:
  * https://labs.omniti.com/gimli/trunk/LICENSE
  */
-#ifndef __MACH__
 #include "impl.h"
 #include "gimli_dwarf.h"
 
@@ -186,7 +185,7 @@ int dwarf_determine_source_line_number(void *pc, char *src, int srclen,
     return 0;
   }
 
-  if (f->elf->e_type != GIMLI_ET_EXEC) {
+  if (!gimli_object_is_executable(f->elf)) {
     pc -= (intptr_t)m->base;
   }
 
@@ -230,7 +229,7 @@ found:
 
 static int process_line_numbers(struct gimli_object_file *f)
 {
-  struct gimli_elf_shdr *s = NULL;
+  struct gimli_section_data *s = NULL;
   struct {
     char *address;
     uint64_t file;
@@ -264,13 +263,13 @@ static int process_line_numbers(struct gimli_object_file *f)
   if (f->aux_elf) {
     s = gimli_get_section_by_name(f->aux_elf, ".debug_line");
     if (s) {
-      data = gimli_get_section_data(f->aux_elf, s->section_no);
+      data = s->data;
     }
   }
   if (!s) {
     s = gimli_get_section_by_name(f->elf, ".debug_line");
     if (s) {
-      data = gimli_get_section_data(f->elf, s->section_no);
+      data = s->data;
     }
   }
   if (!s) {
@@ -278,7 +277,7 @@ static int process_line_numbers(struct gimli_object_file *f)
   }
   if (debug) fprintf(stderr, "\nGot debug_line info\n");
 
-  end = data + s->sh_size;
+  end = data + s->size;
 
   while (data < end) {
     const char *cuend;
@@ -584,16 +583,16 @@ static void local_hexdump(void *addr, int p, int n)
 }
 
 static int get_sect_data(struct gimli_object_file *f, const char *name,
-  const char **startptr, const char **endptr, struct gimli_elf_ehdr **elf)
+  const char **startptr, const char **endptr, gimli_object_file_t **elf)
 {
   const char *data = NULL, *end = NULL;
-  struct gimli_elf_shdr *s;
+  struct gimli_section_data *s;
 
   if (elf && *elf) {
     s = gimli_get_section_by_name(*elf, name);
   } else {
     s = gimli_get_section_by_name(f->elf, name);
-    if (!s || s->sh_size <= sizeof(void*)) {
+    if (!s || s->size <= sizeof(void*)) {
       if (f->aux_elf) {
         s = gimli_get_section_by_name(f->aux_elf, name);
       } else {
@@ -602,8 +601,8 @@ static int get_sect_data(struct gimli_object_file *f, const char *name,
     }
   }
   if (s) {
-    data = gimli_get_section_data(s->elf, s->section_no);
-    if (elf) *elf = s->elf;
+    data = s->data;
+    if (elf) *elf = s->container;
   } else {
     data = NULL;
     if (elf) *elf = NULL;
@@ -611,7 +610,7 @@ static int get_sect_data(struct gimli_object_file *f, const char *name,
   if (data == NULL) {
     return 0;
   }
-  end = data + s->sh_size;
+  end = data + s->size;
 
   *startptr = data;
   *endptr = end;
@@ -623,7 +622,7 @@ static int get_sect_data(struct gimli_object_file *f, const char *name,
 int dw_calc_location(struct gimli_unwind_cursor *cur,
   uint64_t compilation_unit_base_addr,
   struct gimli_object_mapping *m, uint64_t offset, uint64_t *res,
-  struct gimli_elf_ehdr *elf, int *is_stack)
+  gimli_object_file_t *elf, int *is_stack)
 {
   const char *data, *end;
   void *rstart = NULL, *rend = NULL;
@@ -668,7 +667,7 @@ int dw_calc_location(struct gimli_unwind_cursor *cur,
     if (cur->st.pc >= rstart && cur->st.pc < rend) {
 //      printf("Found the range I was looking for, data=%p, len=%d\n", data, len);
 
-      return dw_eval_expr(cur, data, len, 0, res, NULL, is_stack);
+      return dw_eval_expr(cur, (uint8_t*)data, len, 0, res, NULL, is_stack);
     }
     data += len;
   }
@@ -705,7 +704,7 @@ static const char *find_abbr(const char *abbr, const char *end, uint64_t fcode)
 static uint64_t get_value(uint64_t form, uint64_t addr_size, int is_64,
   const char **datap, const char *end,
   uint64_t *vptr, const char **byteptr,
-  struct gimli_elf_ehdr *elf)
+  gimli_object_file_t *elf)
 {
   uint64_t u64;
   int64_t s64;
@@ -886,7 +885,7 @@ static struct gimli_dwarf_die *process_die(
   const char **datap, const char *end,
   const char *abbrstart, const char *abbrend,
   int is_64, uint8_t addr_size,
-  struct gimli_elf_ehdr *elf,
+  gimli_object_file_t *elf,
   gimli_hash_t diehash
 )
 {
@@ -993,7 +992,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(struct gimli_object_file *f,
   const char *data, *datastart, *end, *next;
   const char *abbr, *abbrstart, *abbrend;
   const char *cuend, *custart;
-  struct gimli_elf_ehdr *elf = NULL;
+  gimli_object_file_t *elf = NULL;
   uint64_t initlen;
   uint32_t len32;
   uint16_t ver;
@@ -1014,7 +1013,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(struct gimli_object_file *f,
     }
     data = datastart;
 
-    if (f->elf->e_type != GIMLI_ET_EXEC) {
+    if (!gimli_object_is_executable(f->elf)) {
       struct gimli_object_mapping *m;
 
       for (m = gimli_mappings; m; m = m->next) {
@@ -1131,10 +1130,10 @@ int gimli_dwarf_die_get_uint64_t_attr(
 struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
   struct gimli_unwind_cursor *cur)
 {
-  struct gimli_elf_shdr *s = NULL;
+  struct gimli_section_data *s = NULL;
   const char *data, *end, *next;
   struct gimli_object_mapping *m;
-  struct gimli_elf_ehdr *elf = NULL;
+  gimli_object_file_t *elf = NULL;
   uint64_t reloc = 0;
   uint32_t len32;
   int is_64 = 0;
@@ -1156,7 +1155,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
     return 0;
   }
 
-  if (m->objfile->elf->e_type != GIMLI_ET_EXEC) {
+  if (!gimli_object_is_executable(m->objfile->elf)) {
     reloc = (uint64_t)(intptr_t)m->base;
 //    printf("Using reloc adjustment for %s: 0x%llx\n", m->objfile->objname, reloc);
   }
@@ -1244,11 +1243,11 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
             }
 
             if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_low_pc, &lopc)) {
-              lopc = (uint64_t)addr;
+              lopc = (uint64_t)(intptr_t)addr;
               continue;
             }
             if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_high_pc, &hipc)) {
-              hipc = (uint64_t)addr + l;
+              hipc = (uint64_t)(intptr_t)addr + l;
               continue;
             }
 
@@ -1622,6 +1621,8 @@ static int show_param(struct gimli_unwind_cursor *cur,
                 addr++;
               }
               printf("\"\n");
+            } else {
+              printf(" <invalid address>\n");
             }
           } else if (indent < 6) {
             snprintf(namebuf, sizeof(namebuf)-1, "%p", addr);
@@ -1657,8 +1658,8 @@ static int show_param(struct gimli_unwind_cursor *cur,
           loc = gimli_dwarf_die_get_attr(kid, DW_AT_data_member_location);
           is_stack = 1;
           if (loc && loc->form == DW_FORM_block) {
-            if (!dw_eval_expr(cur, loc->ptr, loc->code, 0, &root, &root,
-                &is_stack)) {
+            if (!dw_eval_expr(cur, (uint8_t*)loc->ptr, loc->code, 0,
+                &root, &root, &is_stack)) {
               printf("unable to evaluate member location\n");
               root = 0;
             } else {
@@ -1742,7 +1743,7 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
   if (frame_base_attr) {
     switch (frame_base_attr->form) {
       case DW_FORM_block:
-        dw_eval_expr(cur, frame_base_attr->ptr, frame_base_attr->code,
+        dw_eval_expr(cur, (uint8_t*)frame_base_attr->ptr, frame_base_attr->code,
             0, &frame_base, NULL, &is_stack);
         break;
       case DW_FORM_data8:
@@ -1767,8 +1768,8 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
         switch (location->form) {
           case DW_FORM_block:
 //            printf("using block to eval param location\n");
-            if (!dw_eval_expr(cur, location->ptr, location->code, frame_base,
-                &res, NULL, &is_stack)) {
+            if (!dw_eval_expr(cur, (uint8_t*)location->ptr, location->code,
+                frame_base, &res, NULL, &is_stack)) {
               res = 0;
             }
             break;
@@ -1809,8 +1810,6 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
 
   return 0;
 }
-
-#endif
 
 /* vim:ts=2:sw=2:et:
  */

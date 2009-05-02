@@ -3,7 +3,6 @@
  * For licensing information, see:
  * https://labs.omniti.com/gimli/trunk/LICENSE
  */
-#ifndef __MACH__
 #include "impl.h"
 #include "gimli_dwarf.h"
 
@@ -382,7 +381,6 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
   cur->st.pc = pc;
   cur->st.fp = fp;
 
-#ifndef __sparc__
   /* For architectures with constant-length instructions where the return
    * address immediately follows the call instruction, a simple solution is to
    * subtract the length of an instruction from the return address to obtain
@@ -395,36 +393,13 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
   if (cur->st.pc && !gimli_is_signal_frame(cur)) {
     cur->st.pc--;
   }
-#endif
-
-#if defined(__linux__) && defined(__x86_64__)
-  if (debug) {
-    printf("rax\t%p\n", cur->st.regs.rax);
-    printf("rbx\t%p\n", cur->st.regs.rbx);
-    printf("rcx\t%p\n", cur->st.regs.rcx);
-    printf("rdx\t%p\n", cur->st.regs.rdx);
-    printf("rsi\t%p\n", cur->st.regs.rsi);
-    printf("rdi\t%p\n", cur->st.regs.rdi);
-    printf("rbp\t%p\n", cur->st.regs.rbp);
-    printf("rsp\t%p\n", cur->st.regs.rsp);
-    printf("r8\t%p\n", cur->st.regs.r8);
-    printf("r9\t%p\n", cur->st.regs.r9);
-    printf("r10\t%p\n", cur->st.regs.r10);
-    printf("r11\t%p\n", cur->st.regs.r11);
-    printf("r12\t%p\n", cur->st.regs.r12);
-    printf("r13\t%p\n", cur->st.regs.r13);
-    printf("r14\t%p\n", cur->st.regs.r14);
-    printf("r15\t%p\n", cur->st.regs.r15);
-    printf("rip\t%p\n", cur->st.regs.rip);
-  }
-#endif
   return 1;
 }
 
 int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
 {
   struct gimli_object_mapping *m;
-  struct gimli_elf_shdr *s = NULL;
+  struct gimli_section_data *s = NULL;
   const char *eh_start;
   const char *eh_frame;
   const char *end, *next;
@@ -459,7 +434,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
     if (s) {
       /* on solaris, GCC can emit an eh_frame section, but it can
        * be effectively empty; we want to fall back on debug_frame */
-      if (s->sh_size <= sizeof(void*)) {
+      if (s->size <= sizeof(void*)) {
         s = NULL;
       }
     }
@@ -473,17 +448,17 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
       continue;
     }
 
-    eh_frame = gimli_get_section_data(s->elf, s->section_no);
+    eh_frame = s->data;
     if (!eh_frame) {
       continue;
     }
     if (debug) {
       printf("Using %s for unwind data for %s, %x bytes offset %x\n",
-          s->name, s->elf->objname, s->sh_size, s->sh_offset);
+          s->name, s->container->objname, s->size, s->offset);
     }
 
     eh_start = eh_frame;
-    end = eh_frame + s->sh_size;
+    end = eh_frame + s->size;
 
     while (eh_frame < end) {
       struct dw_cie cie;
@@ -571,7 +546,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
             enc &= ~ DW_EH_PE_indirect;
 
             if (!dw_read_encptr(enc, &eh_frame, end,
-                  s->sh_addr + eh_frame - eh_start, &cie.personality_routine)) {
+                  s->addr + eh_frame - eh_start, &cie.personality_routine)) {
               fprintf(stderr, "Error while reading personality routine, enc=%02x offset: %lx\n", enc, eh_frame - eh_start);
               return 0;
             }
@@ -599,7 +574,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
         /* cie_id is the offset to the CIE that preceeds this FDE,
          * but we already know what it is */
         if (!dw_read_encptr(cie.code_enc, &eh_frame, end,
-              s->sh_addr + eh_frame - eh_start, &fde.initial_loc)) {
+              s->addr + eh_frame - eh_start, &fde.initial_loc)) {
           fprintf(stderr, "Error while reading initial loc\n");
           return 0;
         }
@@ -619,7 +594,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
         }
         if (cie.lsda_enc != DW_EH_PE_omit) {
           if (!dw_read_encptr(cie.lsda_enc, &eh_frame, end,
-                s->sh_addr + eh_frame - eh_start, &fde.lsda_ptr)) {
+                s->addr + eh_frame - eh_start, &fde.lsda_ptr)) {
             fprintf(stderr, "Error while reading lsda pointer\n");
             return 0;
           }
@@ -683,8 +658,6 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
 
   return 0;
 }
-
-#endif
 
 /* vim:ts=2:sw=2:et:
  */

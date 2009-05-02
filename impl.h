@@ -57,7 +57,11 @@
 #endif
 #include <stdarg.h>
 #include <dlfcn.h>
+#ifdef __MACH__
+#include "gimli_macho.h"
+#else
 #include "gimli_elf.h"
+#endif
 #include "libgimli.h"
 #include "libgimli_ana.h"
 
@@ -122,14 +126,32 @@ struct gimli_line_info {
   struct gimli_line_info *next;
 };
 
+#ifdef __MACH__
+typedef struct gimli_macho_object gimli_object_file_t;
+#else
+typedef struct gimli_elf_ehdr gimli_object_file_t;
+#endif
+
+struct gimli_section_data {
+  char *name;
+  char *data;
+  uint64_t size;
+  uint64_t offset;
+  uint64_t addr;
+  gimli_object_file_t *container;
+};
+
+struct gimli_section_data *gimli_get_section_by_name(
+  gimli_object_file_t *elf, const char *name);
+
 struct gimli_object_file {
   char *objname;
   struct gimli_object_file *next;
   int fd;
-  /* primary ELF for the mapped module */
-  struct gimli_elf_ehdr *elf;
-  /* alternate ELF containing aux debug info */
-  struct gimli_elf_ehdr *aux_elf;
+  /* primary object for the mapped module */
+  gimli_object_file_t *elf;
+  /* alternate object containing aux debug info */
+  gimli_object_file_t *aux_elf;
 
   gimli_hash_t symbols; /* symname => gimli_symbol */
   struct gimli_symbol **symtab;
@@ -144,6 +166,8 @@ struct gimli_object_file {
   gimli_hash_t dies; /* offset-string => gimli_dwarf_die */
   struct gimli_dwarf_die *first_die;
   struct gimli_ana_module *tracer_module;
+
+  gimli_hash_t sections; /* sectname => gimli_section_data */
 };
 
 struct gimli_object_mapping {

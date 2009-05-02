@@ -37,7 +37,7 @@ int gimli_process_elf(struct gimli_object_file *f)
   /* LSB says that debugging versions may be present in /usr/lib/debug,
    * so let's try those first */
   snprintf(altpath, sizeof(altpath)-1, "/usr/lib/debug%s.debug", f->objname);
-  f->aux_elf = gimli_elf_open(altpath, f->elf);
+  f->aux_elf = gimli_elf_open(altpath);
 #endif
 
   gimli_elf_enum_symbols(f->elf, for_each_symbol, f);

@@ -13,6 +13,12 @@
 
 #include <libgen.h>
 
+#if __DARWIN_UNIX03 /* Leopard and up */
+#define GIMLI_DARWIN_REGNAME(x)  __##x
+#else
+#define GIMLI_DARWIN_REGNAME(x)  x
+#endif
+
 static const cpu_type_t whatami =
 #if defined(__LP64__) && defined(__x86_64__)
       CPU_TYPE_X86_64
@@ -26,31 +32,11 @@ static const cpu_type_t whatami =
 # error don't know my own arch
 #endif
       ;
-#ifdef __LP64__
-typedef struct segment_command_64 my_segment_command;
-typedef struct mach_header_64 my_mach_header;
-typedef struct nlist_64 my_nlist;
-typedef struct section_64 my_section;
-# define MY_LC_SEGMENT LC_SEGMENT_64
-# define MY_MH_MAGIC MH_MAGIC_64
-#else
-typedef struct segment_command my_segment_command;
-typedef struct mach_header my_mach_header;
-typedef struct nlist my_nlist;
-typedef struct section my_section;
-# define MY_LC_SEGMENT LC_SEGMENT
-# define MY_MH_MAGIC MH_MAGIC
-#endif
-
-
 
 static int target_pid;
 static int got_task = 0;
 static task_t targetTask;
-static mach_port_t exc_port;
-static char parent_port_name[256];
 
-#if 0
 /* Starting with OSX 10.5, apple introduced the concept of a
  * a dSYM bundle which contains a mach-o object file with dwarf
  * segments.
@@ -60,18 +46,26 @@ static char parent_port_name[256];
 static void find_dwarf_dSYM(struct gimli_object_file *of)
 {
   char dsym[PATH_MAX];
-  char *base = basename(of->filename);
-  my_mach_header  hdr;
+  char *base;
+  char basepath[PATH_MAX];
+  gimli_mach_header  hdr;
   uint32_t hdr_offset = 0; /* offset of mach_header from start of file */
   uint32_t cmd_offset;
   int n;
   int fd;
-  my_segment_command scmd;
+  gimli_segment_command scmd;
   char sectname[16];
+  gimli_object_file_t *container;
+  
+  strcpy(basepath, of->objname);
+  base = basename(basepath);
 
-  snprintf(dsym, sizeof(dsym)-1, "%s.dSYM/Contents/Resources/DWARF/%s", of->filename, base);
+  snprintf(dsym, sizeof(dsym)-1,
+    "%s.dSYM/Contents/Resources/DWARF/%s", of->objname, base);
 
-  fprintf(stderr, "dsym: trying %s\n", dsym);
+  if (debug) {
+    fprintf(stderr, "dsym: trying %s\n", dsym);
+  }
   fd = open(dsym, O_RDONLY);
   if (fd == -1) return;
 
@@ -79,7 +73,7 @@ static void find_dwarf_dSYM(struct gimli_object_file *of)
     fprintf(stderr, "error reading mach header %s\n", strerror(errno));
     return;
   }
-  fprintf(stderr, "header magic is %x\n", hdr.magic);
+
   if (NXSwapBigLongToHost(hdr.magic) == FAT_MAGIC) {
     int nfat = NXSwapBigLongToHost(hdr.cputype);
     int i;
@@ -107,49 +101,68 @@ static void find_dwarf_dSYM(struct gimli_object_file *of)
       fprintf(stderr, "Couldn't find a suitable matching arch in fat dsym\n");
     }
   }
-  if (hdr.magic != MY_MH_MAGIC) {
+  if (hdr.magic != GIMLI_MH_MAGIC) {
     close(fd);
     return;
   }
 
-  /* we're looking for an LC_SEGMENT with a segname of __DWARF */
+  container = calloc(1, sizeof(*container));
+  container->gobject = of;
+  container->objname = strdup(dsym);
+  container->is_exec = 1;
 
+  of->aux_elf = container;
+
+  /* we're looking for an LC_SEGMENT with a segname of __DWARF */
   cmd_offset = hdr_offset + sizeof(hdr);
   for (n = 0; n < hdr.ncmds; n++, cmd_offset += scmd.cmdsize) {
     pread(fd, &scmd, sizeof(struct load_command), cmd_offset);
-    if (scmd.cmd == MY_LC_SEGMENT) {
+    if (scmd.cmd == GIMLI_LC_SEGMENT) {
       if (pread(fd, &scmd, sizeof(scmd), cmd_offset) != sizeof(scmd)) {
         fprintf(stderr, "pread failed %s\n", strerror(errno));
+        continue;
       }
-      fprintf(stderr, "segment %d %s\n", n, scmd.segname);
       if (strcmp("__DWARF", scmd.segname) == 0) {
         uint32_t sec_addr = cmd_offset + sizeof(scmd);
-        int s;
-        my_section sec;
+        int sno;
+        gimli_section sec;
         char *buf;
+        struct gimli_section_data *s;
 
-        for (s = 0; s < scmd.nsects; s++, sec_addr += sizeof(sec)) {
-          pread(fd, &sec, sizeof(sec), sec_addr);
+        for (sno = 0; sno < scmd.nsects; sno++, sec_addr += sizeof(sec)) {
+          if (pread(fd, &sec, sizeof(sec), sec_addr) != sizeof(sec)) {
+            continue;
+          }
 
           // make the names look more like elven versions
-          memcpy(sectname, sec.sectname + 1, sizeof(sec.sectname)-1);
-          sectname[0] = '.';
-          sectname[sizeof(sectname)-1] = '\0';
+          s = calloc(1, sizeof(*s));
+          memcpy(sectname, sec.sectname + 1, 15);
+          sectname[15] = '\0';
+          s->name = strdup(sectname);
+          s->name[0] = '.';
+          s->addr = sec.addr;
+          s->size = sec.size;
+          s->data = malloc(s->size);
+          s->offset = sec.offset;
+          s->container = container;
+          pread(fd, s->data, s->size, s->offset);
 
-          buf = malloc(sec.size);
-          pread(fd, buf, sec.size, sec.offset);
-          gimli_add_dwarf_section(of, buf, sec.size, sectname);
-          free(buf);
+          gimli_hash_insert(of->sections, s->name, s);
         }
       }
     }
   }
-  gimli_process_dwarf_info(of);
 }
-#endif
 
-int gimli_process_mach(struct gimli_object_file *f)
+struct gimli_section_data *gimli_get_section_by_name(
+  gimli_object_file_t *elf, const char *name)
 {
+  struct gimli_section_data *s = NULL;
+
+  if (gimli_hash_find(elf->gobject->sections, name, (void**)&s)) {
+    return s;
+  }
+  return NULL;
 }
 
 int gimli_attach(int pid)
@@ -202,62 +215,66 @@ int gimli_attach(int pid)
     l[0].n_un.n_name = "_dyld_all_image_infos";
     nlist("/usr/lib/dyld", l);
     if (l[0].n_value) {
-      gimli_read_mem(l[0].n_value, &infos, sizeof(infos));
-      fprintf(stderr, "version=%x count=%x array=%p\n", infos.version, 
-        infos.infoArrayCount, infos.infoArray);
+      gimli_read_mem((void*)l[0].n_value, &infos, sizeof(infos));
 
       for (i = 0; i < infos.infoArrayCount; i++) {
         struct dyld_image_info im;
         char name[PATH_MAX];
         char rname[PATH_MAX];
         struct gimli_object_file *of = NULL;
-        my_mach_header  mhdr;
+        gimli_mach_header  mhdr;
         int n;
         char *addr = NULL;
-        my_segment_command scmd;
+        gimli_segment_command scmd;
 
-        gimli_read_mem((char*)infos.infoArray + (i * sizeof(im)), &im, sizeof(im));
-        if (im.imageLoadAddress == 0) continue;
+        gimli_read_mem((char*)infos.infoArray + (i * sizeof(im)),
+            &im, sizeof(im));
+
+        if (im.imageLoadAddress == 0) {
+          continue;
+        }
 
         memset(name, 0, sizeof(name));
-        gimli_read_mem(im.imageFilePath, name, sizeof(name));
+        gimli_read_mem((void*)im.imageFilePath, name, sizeof(name));
         if (!realpath(name, rname)) strcpy(rname, name);
-        fprintf(stderr, "%p [%p] %s\n", im.imageLoadAddress, im.imageFilePath, rname);
 
-        of = gimli_add_object(rname, im.imageLoadAddress);
-//        of->base_addr = im.imageLoadAddress;
+        if (debug) {
+          fprintf(stderr, "%p [%p] %s\n",
+            im.imageLoadAddress, im.imageFilePath, rname);
+        }
+
+        of = gimli_add_object(rname, (void*)im.imageLoadAddress);
+        of->elf = calloc(1, sizeof(*of->elf));
+        of->elf->gobject = of;
+        of->elf->is_exec = 1;
+        of->elf->objname = of->objname;
 
         /* now, from the mach header, find each segment and its
          * address range and record the mapping */
-        gimli_read_mem(im.imageLoadAddress, &mhdr, sizeof(mhdr));
-//        fprintf(stderr, "loadaddr=%p magic=%x filetype=%x ncmds=%x sizeofcmds=%x flags=%x\n", im.imageLoadAddress, mhdr.magic, mhdr.filetype, mhdr.ncmds, mhdr.sizeofcmds, mhdr.flags);
+        gimli_read_mem((void*)im.imageLoadAddress, &mhdr, sizeof(mhdr));
 
         addr = (char*)im.imageLoadAddress;
         addr += sizeof(mhdr);
         for (n = 0; n < mhdr.ncmds; n++) {
           memset(&scmd, 0, sizeof(scmd));
           gimli_read_mem(addr, &scmd, sizeof(struct load_command));
-//          fprintf(stderr, "addr=%p command %x size=%x\n", addr, scmd.cmd, scmd.cmdsize);
-          if (scmd.cmd == MY_LC_SEGMENT)
+          if (scmd.cmd == GIMLI_LC_SEGMENT)
           {
             char *mapaddr;
             gimli_read_mem(addr, &scmd, sizeof(scmd));
         
             if (!strcmp("__TEXT", scmd.segname)) {  
-//            fprintf(stderr, "segment %s vmaddr=%p vmsize=%p fileoff=%p filesize=%p nsects=%d\n",
-//            scmd.segname, scmd.vmaddr, scmd.vmsize, scmd.fileoff, scmd.filesize,
-//              scmd.nsects);
-
               if ((void*)scmd.vmaddr != im.imageLoadAddress) {
                 of->base_addr = (uint64_t)(intptr_t)im.imageLoadAddress;
               }
-              gimli_add_mapping(of->objname, (void*)scmd.vmaddr, scmd.vmsize, 0);
+              gimli_add_mapping(of->objname,
+                (void*)scmd.vmaddr, scmd.vmsize, 0);
             }
           }
 
           if (scmd.cmd == LC_SYMTAB) {
             struct symtab_command scmd;
-            my_nlist nl;
+            gimli_nlist nl;
             int n;
             char *symaddr;
 
@@ -266,11 +283,6 @@ int gimli_attach(int pid)
               continue;
             }
             symoff = (char*)im.imageLoadAddress + scmd.symoff;
-            /* 
-            fprintf(stderr, "symtab: symoff=%p (la=%p %p) nsyms=%x strof=%p strsize=%x\n",
-              scmd.symoff, im.imageLoadAddress, symoff, 
-              scmd.nsyms, scmd.stroff, scmd.strsize);
-            */
             for (n = 0; n < scmd.nsyms; n++) {
               char *straddr;
               int type;
@@ -285,22 +297,15 @@ int gimli_attach(int pid)
               straddr = (char*)im.imageLoadAddress;
               straddr += scmd.stroff + nl.n_un.n_strx;
               gimli_read_mem(straddr, name, sizeof(name));
-              if (!isprint(name[0])) name[0] = '\0';
-
-//              if (nl.n_type & (N_PEXT|N_STAB)) continue;
+              if (!isprint(name[0])) continue;
               if (nl.n_sect != 1) {
                 continue;
               }
               if (nl.n_type == N_UNDF) continue;
               if (nl.n_un.n_strx == 0) continue;
               if (nl.n_value == 0) continue;
-
-/*
-              fprintf(stderr, "symaddr=%p (n_strx=%p %s) type=%x sect=%x desc=%x value=%p\n",
-                symaddr, nl.n_un.n_strx, name,
-                nl.n_type, nl.n_sect, nl.n_desc, nl.n_value);
-*/
               if (!strlen(name)) continue;
+
               gimli_add_symbol(of, name, (char*)nl.n_value + of->base_addr, 0);
             }
           }
@@ -308,8 +313,7 @@ int gimli_attach(int pid)
           addr += scmd.cmdsize;
         }
 
-//        find_dwarf_dSYM(of);
-        gimli_bake_symtab(of);
+        find_dwarf_dSYM(of);
       }
     }
   }
@@ -320,21 +324,18 @@ int gimli_attach(int pid)
     threads = calloc(n, sizeof(*threads));
 
     for (i = 0; i < n; i++) {
+#if defined(__LP64__) || defined(__ppc__)
+# error this code assumes 32-bit intel
+#endif
       x86_thread_state32_t ts32;
       mach_msg_type_number_t count = x86_THREAD_STATE32_COUNT;
       memset(&ts32, 0, sizeof(ts32));
       rc = thread_get_state(threadlist[i], x86_THREAD_STATE32,
           (thread_state_t)&ts32, &count);
       if (rc == KERN_SUCCESS) {
-#if __DARWIN_UNIX03 /* Leopard and up */
-        threads[i].pc = (void*)ts32.__eip;
-        threads[i].fp = (void*)ts32.__ebp;
-        threads[i].sp = (void*)ts32.__esp;
-#else
-        threads[i].pc = (void*)ts32.eip;
-        threads[i].fp = (void*)ts32.ebp;
-        threads[i].sp = (void*)ts32.esp;
-#endif
+        threads[i].pc = (void*)ts32.GIMLI_DARWIN_REGNAME(eip);
+        threads[i].fp = (void*)ts32.GIMLI_DARWIN_REGNAME(ebp);
+        threads[i].sp = (void*)ts32.GIMLI_DARWIN_REGNAME(esp);
       }
     }
     gimli_nthreads = n;
@@ -350,6 +351,7 @@ int gimli_init_unwind(struct gimli_unwind_cursor *cur,
   return 1;
 }
 
+#if 0
 int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 {
   /* generic x86 backtrace */
@@ -373,14 +375,70 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 
   return 0;
 }
+#endif
+int gimli_unwind_next(struct gimli_unwind_cursor *cur)
+{
+  struct {
+    void *fp;
+    void *pc;
+  } frame;
+  struct gimli_unwind_cursor c;
+  
+#if 0
+  if (gimli_is_signal_frame(cur)) {
+    ucontext_t uc;
 
+    if (gimli_read_mem((void*)cur->st.lwpst.pr_oldcontext, &uc, sizeof(uc)) !=
+        sizeof(uc)) {
+      fprintf(stderr, "unable to read old context\n");
+      return 0;
+    }
+    /* update to next in chain */
+    cur->st.lwpst.pr_oldcontext = (intptr_t)uc.uc_link;
+    /* copy out register set */
+    memcpy(cur->st.regs, uc.uc_mcontext.gregs, sizeof(cur->st.regs));
+    /* update local copy */
+    cur->st.fp = (void*)cur->st.regs[R_FP];
+    cur->st.pc = (void*)cur->st.regs[R_PC];
+    cur->st.sp = (void*)cur->st.regs[R_SP];
+    return 1;
+  }
+#endif
+
+  c = *cur;
+  if (gimli_dwarf_unwind_next(cur) && cur->st.pc) {
+    return 1;
+  }
+  if (debug) {
+    fprintf(stderr, "dwarf unwind unsuccessful\n");
+  }
+
+  if (c.st.fp) {
+    if (gimli_read_mem(c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
+      memset(&frame, 0, sizeof(frame));
+    }
+
+    if (c.st.fp == frame.fp) {
+      return 0;
+    }
+    cur->st.fp = frame.fp;
+    cur->st.pc = frame.pc;
+    if (cur->st.pc > 0 && !gimli_is_signal_frame(cur)) {
+      cur->st.pc--;
+    }
+#ifdef __i386__
+    cur->st.regs.GIMLI_DARWIN_REGNAME(ebp) = (intptr_t)cur->st.fp;
+#endif
+    return 1;
+  }
+  return 0;
+}
 int gimli_detach(void)
 {
   if (got_task) {
     task_resume(targetTask);
-  } else {
-    kill(target_pid, SIGCONT);
   }
+  kill(target_pid, SIGCONT);
   return 0;
 }
 
@@ -389,85 +447,68 @@ int gimli_read_mem(void *src, void *dest, int len)
   kern_return_t rc;
   mach_msg_type_number_t dataCnt = len;
 
-  rc = vm_read_overwrite(targetTask, (vm_address_t)src, len, (vm_address_t)dest, &dataCnt);
+  rc = vm_read_overwrite(targetTask, (vm_address_t)src, len,
+          (vm_address_t)dest, &dataCnt);
 
   switch (rc) {
     case KERN_SUCCESS:
       return dataCnt;
     case KERN_PROTECTION_FAILURE:
       errno = EFAULT;
-      return -1;
+      return 0;
     case KERN_INVALID_ADDRESS:
       errno = EINVAL;
-      return -1;
+      return 0;
     default:
-      return -1;
+      return 0;
   }
 }
 
-#if 0
-static void *darwin_exc_handler(void *unused)
+void *gimli_reg_addr(struct gimli_unwind_cursor *cur, int col)
 {
-  kern_return_t rc;
-#define MSG_SIZE 512
-  mach_msg_header_t *msg = alloca(MSG_SIZE);
-
-  while (1) {
-    rc = mach_msg(msg, MACH_RCV_MSG, MSG_SIZE, MSG_SIZE,
-              exc_port, 0, MACH_PORT_NULL);
-    if (rc == KERN_SUCCESS) {
-      libgimli_spawn_gimli(0);
-      exit(1);
-    }
-  }
-}
-
-static int activate(void)
-{
-  /* rather than unixy signals, use the darwin specific
-   * exception handler port. */
-  kern_return_t rc;
-  pthread_attr_t attr;
-  pthread_t thr;
-
-  rc = mach_port_allocate(mach_task_self(),
-        MACH_PORT_RIGHT_RECEIVE, &exc_port);
-  if (rc != KERN_SUCCESS) {
-    return 0;
-  }
-  rc = mach_port_insert_right(mach_task_self(),
-        exc_port, exc_port,
-        MACH_MSG_TYPE_MAKE_SEND);
-  if (rc != KERN_SUCCESS) {
-    return 0;
-  }
-
-  rc = task_set_exception_ports(mach_task_self(),
-        EXC_MASK_BAD_ACCESS|EXC_MASK_BAD_INSTRUCTION,
-        exc_port, EXCEPTION_STATE, x86_THREAD_STATE32);
-  if (rc == KERN_SUCCESS) {
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 32*1024);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_create(&thr, &attr, darwin_exc_handler, NULL);
-    pthread_attr_destroy(&attr);
-  }
-}
+  /* See http://wikis.sun.com/display/SunStudio/Dwarf+Register+Numbering */
+  switch (col) {
+#ifdef __x86_64__
+    case 0: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rax);
+    case 1: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rdx);
+    case 2: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rcx);
+    case 3: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rbx);
+    case 4: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rsi);
+    case 5: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rdi);
+    case 6: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rbp);
+    case 7: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rsp);
+    case 8: return &cur->st.regs.GIMLI_DARWIN_REGNAME(r8);
+    case 9: return &cur->st.regs.GIMLI_DARWIN_REGNAME(r9);
+    case 10: return &cur->st.regs.GIMLI_DARWIN_REGNAME(r10);
+    case 11: return &cur->st.regs.GIMLI_DARWIN_REGNAME(r11);
+    case 12: return &cur->st.regs.GIMLI_DARWIN_REGNAME(r12);
+    case 13: return &cur->st.regs.GIMLI_DARWIN_REGNAME(r13);
+    case 14: return &cur->st.regs.GIMLI_DARWIN_REGNAME(r14);
+    case 15: return &cur->st.regs.GIMLI_DARWIN_REGNAME(r15);
+    /* return address */
+    case 16: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rip);
+#elif defined(__i386__)
+    case 0: return &cur->st.regs.GIMLI_DARWIN_REGNAME(eax);
+    case 1: return &cur->st.regs.GIMLI_DARWIN_REGNAME(ecx);
+    case 2: return &cur->st.regs.GIMLI_DARWIN_REGNAME(edx);
+    case 3: return &cur->st.regs.GIMLI_DARWIN_REGNAME(ebx);
+    case 4: return &cur->st.regs.GIMLI_DARWIN_REGNAME(esp);
+    case 5: return &cur->st.regs.GIMLI_DARWIN_REGNAME(ebp);
+    case 6: return &cur->st.regs.GIMLI_DARWIN_REGNAME(esi);
+    case 7: return &cur->st.regs.GIMLI_DARWIN_REGNAME(edi);
+    /* return address */
+    case 8: return &cur->st.regs.GIMLI_DARWIN_REGNAME(eip);
+#else
+# error code me
 #endif
-
-int dwarf_determine_source_line_number(void *pc, char *src, int srclen,
-  uint64_t *lineno)
-{
-  return 0;
+    default: return 0;
+  }
 }
-
-int gimli_show_param_info(struct gimli_unwind_cursor *cur)
-{
-  return 0;
-}
-
 int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
 {
+  if (cur->st.pc == (void*)-1) {
+    return 1;
+  }
   return 0;
 }
 
