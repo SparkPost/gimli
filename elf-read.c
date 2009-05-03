@@ -103,8 +103,10 @@ static uint8_t native_elf_abi =
 static uint16_t native_machine =
 #ifdef __x86_64__
   GIMLI_EM_X86_64
+#elif defined(__sparcv9)
+  GIMLI_EM_SPARCV9
 #elif defined(__sparc__)
-  GIMLI_EM_SPARC
+  GIMLI_EM_SPARC32PLUS
 #else
   GIMLI_EM_386
 #endif
@@ -289,7 +291,11 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
     elf->e_shstrndx = hdr.e_shstrndx;
   }
 
-  if (elf->e_machine != native_machine) {
+  if (elf->e_machine != native_machine
+#ifdef __sparc__ /* too many variants for simple compares... */
+      && elf->e_machine != GIMLI_EM_SPARC
+#endif
+    ) {
     fprintf(stderr, "ELF: %s: expected e_machine=%d, found %d\n",
       filename, native_machine, elf->e_machine);
     return 0;

@@ -11,7 +11,7 @@ static char *title = NULL;
 static size_t title_size = 0;
 char *gimli_progname = "";
 extern char **child_argv;
-#ifdef __MACH__
+#ifndef __linux__
 extern char **environ;
 #endif
 

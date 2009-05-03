@@ -5,6 +5,7 @@
  */
 #ifdef sun
 #include "impl.h"
+#include <sys/stack.h>
 
 /* this is the solaris proc_service style interface.
  * libc_db library routines require that we export these functions.
@@ -66,6 +67,54 @@ ps_err_e ps_pstop(struct ps_prochandle *ph)
 {
   return PS_OK;
 }
+
+#ifdef __sparc__
+ps_err_e ps_lsetxregs(struct ps_prochandle *ph, lwpid_t lid,
+         caddr_t xregset)
+{
+  return PS_ERR;
+}
+
+ps_err_e ps_lgetxregs(struct ps_prochandle *ph, lwpid_t lid,
+         caddr_t xregset)
+{
+  char path[1024];
+  int fd;
+  int ret;
+
+  snprintf(path, sizeof(path)-1, "/proc/%d/lwp/%d/xregs", ph->pid, lid);
+
+  fd = open(path, O_RDONLY);
+  if (fd >= 0) {
+    ret = read(fd, xregset, sizeof(prxregset_t));
+    if (ret == sizeof(prxregset_t)) {
+      close(fd);
+      return PS_OK;
+    }
+    fprintf(stderr, "unable to read xregs for LWP %d: %s\n",
+      lid, strerror(errno));
+    close(fd);
+  } else {
+    fprintf(stderr, "unable to read xregs for LWP %d: %s %s\n",
+      lid, path, strerror(errno));
+  }
+  return PS_BADLID;
+}
+
+ps_err_e ps_lgetxregsize(struct ps_prochandle *ph, lwpid_t lid,
+    int *xregsize)
+{
+  char path[1024];
+  struct stat st;
+
+  snprintf(path, sizeof(path)-1, "/proc/%d/lwp/%d/xregs", ph->pid, lid);
+  if (stat(path, &st) == 0) {
+    *xregsize = (int)st.st_size;
+    return PS_OK;
+  }
+  return PS_BADLID;
+}
+#endif
 
 ps_err_e ps_lsetregs(struct ps_prochandle *ph, lwpid_t lwpid,
          const prgregset_t gregset)
@@ -358,10 +407,7 @@ int gimli_init_unwind(struct gimli_unwind_cursor *cur,
 
 int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 {
-  struct {
-    void *fp;
-    void *pc;
-  } frame;
+  struct frame frame;
   struct gimli_unwind_cursor c;
   
   if (gimli_is_signal_frame(cur)) {
@@ -384,7 +430,7 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
   }
 
   c = *cur;
-  if (gimli_dwarf_unwind_next(cur) && cur->st.pc) {
+  if (gimli_dwarf_unwind_next(cur) && cur->st.pc && cur->st.pc != c.st.pc) {
     return 1;
   }
   if (debug) {
@@ -396,15 +442,28 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
       memset(&frame, 0, sizeof(frame));
     }
 
-    if (c.st.fp == frame.fp) {
+    if (c.st.fp == frame.fr_savfp) {
       return 0;
     }
-    cur->st.fp = frame.fp;
-    cur->st.pc = frame.pc;
+    cur->st.fp = (void*)frame.fr_savfp;
+    cur->st.pc = (void*)frame.fr_savpc;
+
     if (cur->st.pc > 0 && !gimli_is_signal_frame(cur)) {
       cur->st.pc--;
     }
     cur->st.regs[R_FP] = (intptr_t)cur->st.fp;
+#ifdef __sparc__
+    cur->st.regs[R_PC] = cur->st.regs[R_I7];
+    cur->st.regs[R_nPC] = cur->st.regs[R_PC] + 4;
+    memcpy(&cur->st.regs[R_O0], &cur->st.regs[R_I0], 8 * sizeof(prgreg_t));
+    cur->st.sp = (void*)cur->st.regs[R_FP] + STACK_BIAS;
+
+    if (cur->st.sp && gimli_read_mem(cur->st.sp, &cur->st.regs[R_L0],
+        sizeof(struct rwindow)) != sizeof(struct rwindow)) {
+      /* we should try to fill this data in via gwindow information */
+      fprintf(stderr, "unable to read rwindow @ %p\n", cur->st.sp);
+    }
+#endif
 
     if (cur->st.pc == 0 && cur->st.lwpst.pr_oldcontext) {
       /* well, gimli_is_signal_frame is supposed to detect a signal
@@ -454,6 +513,43 @@ void *gimli_reg_addr(struct gimli_unwind_cursor *cur, int col)
     case 14: return &cur->st.regs[REG_R14];
     case 15: return &cur->st.regs[REG_R15];
     case 16: return &cur->st.regs[REG_RIP]; /* return address */
+#elif defined(__sparc__)
+    case 0: return &cur->st.regs[R_G0];
+    case 1: return &cur->st.regs[R_G1];
+    case 2: return &cur->st.regs[R_G2];
+    case 3: return &cur->st.regs[R_G3];
+    case 4: return &cur->st.regs[R_G4];
+    case 5: return &cur->st.regs[R_G5];
+    case 6: return &cur->st.regs[R_G6];
+    case 7: return &cur->st.regs[R_G7];
+
+    case 8: return &cur->st.regs[R_O0];
+    case 9: return &cur->st.regs[R_O1];
+    case 10: return &cur->st.regs[R_O2];
+    case 11: return &cur->st.regs[R_O3];
+    case 12: return &cur->st.regs[R_O4];
+    case 13: return &cur->st.regs[R_O5];
+    case 14: return &cur->st.regs[R_O6];
+    case 15: return &cur->st.regs[R_O7];
+
+    case 16: return &cur->st.regs[R_L0];
+    case 17: return &cur->st.regs[R_L1];
+    case 18: return &cur->st.regs[R_L2];
+    case 19: return &cur->st.regs[R_L3];
+    case 20: return &cur->st.regs[R_L4];
+    case 21: return &cur->st.regs[R_L5];
+    case 22: return &cur->st.regs[R_L6];
+    case 23: return &cur->st.regs[R_L7];
+
+    case 24: return &cur->st.regs[R_I0];
+    case 25: return &cur->st.regs[R_I1];
+    case 26: return &cur->st.regs[R_I2];
+    case 27: return &cur->st.regs[R_I3];
+    case 28: return &cur->st.regs[R_I4];
+    case 29: return &cur->st.regs[R_I5];
+    case 30: return &cur->st.regs[R_I6];
+    case 31: return &cur->st.regs[R_I7];
+
 #else
 #error no yet coded
 #endif
@@ -520,7 +616,7 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
   }
 #elif defined(__sparc__)
   if (cur->st.fp + sizeof(struct frame)
-      == cur->st.lwpst.pr_oldcontext) {
+      == (void*)cur->st.lwpst.pr_oldcontext) {
     /* TODO: implement for sparc */
     return 1;
   }

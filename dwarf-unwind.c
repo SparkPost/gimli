@@ -280,6 +280,14 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         set_rule(cur, regnum, DW_RULE_OFFSET, -arg * cie->data_align);
         break;
 
+      case DW_CFA_GNU_window_save:
+        /* sparc special */
+        for (regnum = 16; regnum < 32; regnum++) {
+          set_rule(cur, regnum, DW_RULE_OFFSET,
+            (regnum - 16) * sizeof(void*));
+        }
+        break;
+
       default:
         fprintf(stderr, "DWARF: unwind: unhandled insn %02x (%02x)\n",
           op, oprand);
@@ -359,6 +367,25 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
           fprintf(stderr, "Setting col %d to %p\n", i, val);
         }
         break;
+      case DW_RULE_REG:
+        regaddr = gimli_reg_addr(cur, cur->dw.cols[i].value);
+        if (!regaddr) {
+          printf("Couldn't find address for register %d\n",
+            cur->dw.cols[i].value);
+          return 0;
+        }
+        val = *(void**)regaddr;
+        regaddr = gimli_reg_addr(cur, i);
+        if (!regaddr) {
+          printf("couldn't find address for column %d\n", i);
+          return 0;
+        }
+        *(void**)regaddr = val;
+        if (debug) {
+          fprintf(stderr, "Setting col %d to %p\n", i, val);
+        }
+        break;
+
       default:
         fprintf(stderr, "DWARF: line %d: Unhandled rule %d\n",
           __LINE__, cur->dw.cols[i].rule);

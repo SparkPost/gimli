@@ -77,6 +77,9 @@ extern "C" {
 #define DW_CFA_GNU_args_size   0x2e
 #define DW_CFA_GNU_negative_offset_extended 0x2f
 
+/* sparc */
+#define DW_CFA_GNU_window_save 0x2d
+
 /* pre-define line number program opcodes */
 #define DW_LNS_copy 0x01 
 #define DW_LNS_advance_pc 0x02 

@@ -74,7 +74,7 @@ struct gimli_dwarf_reg_column {
   uint64_t value; /* operand */
 };
 
-#define GIMLI_MAX_DWARF_REGS 32
+#define GIMLI_MAX_DWARF_REGS 42
 #define GIMLI_DWARF_CFA_REG GIMLI_MAX_DWARF_REGS-2
 #define GIMLI_DWARF_CFA_OFF GIMLI_MAX_DWARF_REGS-1
 struct gimli_dwarf_unwind_state {

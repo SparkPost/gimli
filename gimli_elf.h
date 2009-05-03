@@ -86,6 +86,8 @@ const char *gimli_get_section_data(gimli_object_file_t *elf, int section);
 /* for e_machine: */
 #define GIMLI_EM_NONE  0   /* no machine */
 #define GIMLI_EM_SPARC 2   /* sparc */
+#define GIMLI_EM_SPARC32PLUS 18 /* Sun SPARC 32+ */
+#define GIMLI_EM_SPARCV9 43 /* Sun SPARC V9 (64-bit) */
 #define GIMLI_EM_386   3   /* i386 */
 #define GIMLI_EM_X86_64 62 /* amd x86_64 */
 
