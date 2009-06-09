@@ -16,6 +16,7 @@ int detach = 1;
 int do_setsid = 1;
 int child_argc;
 char **child_argv;
+char *pidfile = NULL;
 char *glider_path = GIMLI_GLIDER_PATH;
 char *trace_dir = "/tmp";
 volatile struct gimli_heartbeat *heartbeat = NULL;
@@ -523,6 +524,43 @@ int main(int argc, char *argv[])
       fprintf(stderr, "starting new session for %s\n", child_argv[0]);
     }
     setsid();
+  }
+
+  if (pidfile) {
+    struct flock lock;
+    char pidstr[16];
+    pid_t mypid;
+    int fd;
+
+    mypid = getpid();
+    memset(&lock, 0, sizeof(lock));
+    lock.l_type = F_WRLCK;
+    lock.l_start = 0;
+    lock.l_whence = SEEK_SET;
+    lock.l_len = 0;
+
+    fd = open(pidfile, O_RDWR|O_CREAT, 0644);
+    if (fd == -1) {
+      fprintf(stderr, "Failed to open pidfile %s for write: %s\n",
+        pidfile, strerror(errno));
+      exit(1);
+    }
+    if (fcntl(fd, F_SETLK, &lock) != 0) {
+      int len;
+
+      len = read(fd, pidstr, sizeof(pidstr)-1);
+      pidstr[len] = '\0';
+
+      fprintf(stderr, "Failed to lock pidfile %s: process %s owns it: %s\n",
+        pidfile, pidstr, strerror(errno));
+      exit(1);
+    }
+    snprintf(pidstr, sizeof(pidstr)-1, "%d", mypid);
+    ftruncate(fd, 0);
+    write(fd, pidstr, strlen(pidstr));
+    fsync(fd);
+
+    /* leak the fd, so that we retain the lock */
   }
 
   setup_signal_handlers(0);

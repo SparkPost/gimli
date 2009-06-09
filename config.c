@@ -28,6 +28,7 @@ static struct option {
   { "setsid", "GIMLI_SETSID", OPT_INTEGER, &do_setsid },
   { "glider", "GIMLI_GLIDER_PATH", OPT_STRING, &glider_path },
   { "trace-dir", "GIMLI_TRACE_DIR", OPT_STRING, &trace_dir },
+  { "pidfile", "GIMLI_PID_FILE", OPT_STRING, &pidfile },
   { "respawn-frequency", "GIMLI_RESPAWN_FREQUENCY",
     OPT_INTEGER, &respawn_frequency },
   { "config-file", "GIMLI_CONFIG_FILE", OPT_STRING, &config_file },
