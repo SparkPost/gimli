@@ -429,8 +429,6 @@ void wait_for_child(struct kid_proc *p)
 
     if (use_heartbeat && did_hb_state_change(&hb)) {
       continue;
-    } else {
-      goto trace;
     }
 
     if (p->should_trace ||
