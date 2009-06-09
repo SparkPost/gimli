@@ -563,6 +563,18 @@ int main(int argc, char *argv[])
     /* leak the fd, so that we retain the lock */
   }
 
+  if (detach) {
+    int devnull = open("/dev/null", O_RDWR);
+
+    if (devnull >= 0) {
+      dup2(devnull, STDIN_FILENO);
+      dup2(devnull, STDOUT_FILENO);
+      dup2(devnull, STDERR_FILENO);
+      close(devnull);
+    }
+    chdir("/");
+  }
+
   setup_signal_handlers(0);
 
   while (respawn) {
