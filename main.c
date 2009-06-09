@@ -191,26 +191,48 @@ static struct kid_proc *spawn_child(void)
   heartbeat->state = GIMLI_HB_NOT_SUPP;
   heartbeat->ticks = 0;
 
-  p->pid = fork();
-  if (p->pid == 0) {
-    if (do_setsid) {
-      setsid();
-    }
-    setup_signal_handlers(1);
-    _exit(execvp(child_argv[0], child_argv));
-  }
-  if (p->pid == -1) {
-    fprintf(stderr, "fork() failed: %s\n", strerror(errno));
-    free(p);
-    return NULL;
-  }
-  gimli_set_proctitle("monitoring child %d", p->pid);
+  /* link this in first, so that we don't race if the child dies
+   * immediately */
   p->running = 1;
   p->next = procs;
   if (procs) {
     procs->prev = p;
   }
   procs = p;
+
+  p->pid = fork();
+  if (p->pid == 0) {
+    /* give the parent time to assign the pid into p->pid.
+     * without this delay, there's a possible race in the case
+     * where a process has broken dyn deps and fails immediately
+     * after exec; in that case, the child handler above is triggered
+     * and cannot find "p" in the procs list. */
+    sleep(2);
+
+    if (do_setsid) {
+      setsid();
+    }
+    setup_signal_handlers(1);
+    execvp(child_argv[0], child_argv);
+    _exit(1);
+  }
+  gimli_set_proctitle("monitoring child %d", p->pid);
+  /* in some cases, exec() succeeds, but the process fails to get
+   * into main.  One example is broken dyn deps.  Give it a reasonable
+   * grace period to fail out in this way, and treat that kind of
+   * super-fast exit as we do a failed fork() */
+  sleep(4);
+  if (p->pid == -1 || !p->running) {
+    if (p->pid == -1) {
+      fprintf(stderr, "fork() failed: %s\n", strerror(errno));
+    } else {
+      fprintf(stderr, "child died immediately on startup\n");
+    }
+    /* unlink */
+    procs = p->next;
+    free(p);
+    return NULL;
+  }
   return p;
 }
 
@@ -590,7 +612,7 @@ int main(int argc, char *argv[])
 
     p = spawn_child();
     if (p == NULL) {
-      gimli_set_proctitle("delaying spawn: resource limitations prevent fork");
+      gimli_set_proctitle("delaying spawn: fork failed");
       sleep(60);
       continue;
     }
