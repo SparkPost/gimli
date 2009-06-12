@@ -18,6 +18,7 @@ int detach = 1;
 int do_setsid = 1;
 int child_argc;
 char **child_argv;
+char *arg0 = NULL;
 char *pidfile = NULL;
 char *glider_path = GIMLI_GLIDER_PATH;
 char *trace_dir = "/tmp";
@@ -215,7 +216,7 @@ static struct kid_proc *spawn_child(void)
       setsid();
     }
     setup_signal_handlers(1);
-    execvp(child_argv[0], child_argv);
+    execvp(arg0 ? arg0 : child_argv[0], child_argv);
     _exit(1);
   }
   gimli_set_proctitle("monitoring child %d", p->pid);

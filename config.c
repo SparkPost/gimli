@@ -34,6 +34,7 @@ static struct option {
   { "config-file", "GIMLI_CONFIG_FILE", OPT_STRING, &config_file },
   { "uid", "GIMLI_UID", OPT_INTEGER, &run_as_uid },
   { "gid", "GIMLI_GID", OPT_INTEGER, &run_as_gid },
+  { "arg0", "GIMLI_ARG0", OPT_STRING, &arg0 },
   { NULL }
 };
 
@@ -281,6 +282,13 @@ int process_args(int *argcptr, char **argvptr[])
    * which is the argv[0] for the child */
   *argcptr = argc - i;
   *argvptr = argv + i;
+
+  if (arg0) {
+    char buf[1024];
+    strcpy(buf, arg0);
+    gimli_progname = strdup(basename(buf));
+  }
+
   return 1;
 }
 
