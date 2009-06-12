@@ -521,7 +521,7 @@ int main(int argc, char *argv[])
   }
   child_image = child_argv[0];
   if (arg0) {
-    argv[0] = arg0;
+    child_argv[0] = arg0;
   }
 
   if (debug) {
