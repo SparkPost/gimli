@@ -94,13 +94,29 @@ static void catch_usr1(int sig_num)
   }
 }
 
+static void catch_hup(int sig_num)
+{
+  struct kid_proc *p;
+
+  fprintf(stderr, "monitor: caught signal %s, restarting children.\n",
+    strsignal(sig_num));
+
+  for (p = procs; p; p = p->next) {
+    if (p->running && p->tracer_for == 0) {
+      kill(p->pid, SIGTERM);
+    }
+  }
+  signal(SIGHUP, catch_hup);
+}
+
 /* any other signals, we're going to exit, but we want to make
  * sure that our cleanup bits are invoked */
 static void catch_other(int sig_num)
 {
   struct kid_proc *p;
 
-  fprintf(stderr, "monitor: caught signal %d, terminating.\n", sig_num);
+  fprintf(stderr, "monitor: caught signal %s, terminating.\n",
+    strsignal(sig_num));
   should_exit = 1;
   respawn = 0;
   for (p = procs; p; p = p->next) {
@@ -352,6 +368,7 @@ static void setup_signal_handlers(int is_child)
   signal(SIGTERM, handler);
   signal(SIGINT, handler);
   signal(SIGQUIT, handler);
+  signal(SIGHUP, catch_hup);
   signal(SIGCHLD, is_child ? SIG_DFL : catch_sigchld);
   signal(SIGUSR1, is_child ? SIG_DFL : catch_usr1);
 }
