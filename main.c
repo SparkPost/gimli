@@ -98,7 +98,7 @@ static void catch_hup(int sig_num)
 {
   struct kid_proc *p;
 
-  fprintf(stderr, "monitor: caught signal %s, restarting children.\n",
+  fprintf(stderr, "monitor: caught signal %s, restarting child\n",
     strsignal(sig_num));
 
   for (p = procs; p; p = p->next) {
@@ -106,6 +106,8 @@ static void catch_hup(int sig_num)
       kill(p->pid, SIGTERM);
     }
   }
+  respawn = 1;
+  should_exit = 0;
   signal(SIGHUP, catch_hup);
 }
 
