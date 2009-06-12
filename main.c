@@ -519,7 +519,7 @@ int main(int argc, char *argv[])
   if (!process_args(&child_argc, &child_argv)) {
     return 1;
   }
-  child_image = argv[0];
+  child_image = child_argv[0];
   if (arg0) {
     argv[0] = arg0;
   }
