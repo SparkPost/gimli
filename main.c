@@ -41,6 +41,7 @@ struct kid_proc {
   int running;
   int kills;
   int watchdog;
+  int force_respawn;
 };
 
 struct kid_proc *procs = NULL;
@@ -103,6 +104,7 @@ static void catch_hup(int sig_num)
 
   for (p = procs; p; p = p->next) {
     if (p->running && p->tracer_for == 0) {
+      p->force_respawn = 1;
       kill(p->pid, SIGTERM);
     }
   }
@@ -662,7 +664,10 @@ int main(int argc, char *argv[])
     }
     time(&last_spawn);
     wait_for_child(p);
-    if (WIFSIGNALED(p->exit_status) && (
+    if (p->force_respawn) {
+      respawn = 1;
+      free(p);
+    } else if (WIFSIGNALED(p->exit_status) && (
 #ifdef SIGSEGV
           WTERMSIG(p->exit_status) == SIGSEGV ||
 #endif
