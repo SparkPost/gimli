@@ -283,13 +283,7 @@ int process_args(int *argcptr, char **argvptr[])
   *argcptr = argc - i;
   *argvptr = argv + i;
 
-  if (arg0) {
-    char buf[1024];
-    strcpy(buf, arg0);
-    gimli_progname = strdup(basename(buf));
-  }
-
-  return 1;
+   return 1;
 }
 
 /* vim:ts=2:sw=2:et:

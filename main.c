@@ -22,6 +22,7 @@ char *arg0 = NULL;
 char *pidfile = NULL;
 char *glider_path = GIMLI_GLIDER_PATH;
 char *trace_dir = "/tmp";
+char *child_image;
 volatile struct gimli_heartbeat *heartbeat = NULL;
 static char hb_file[256] = "";
 static time_t last_spawn = 0;
@@ -216,7 +217,7 @@ static struct kid_proc *spawn_child(void)
       setsid();
     }
     setup_signal_handlers(1);
-    execvp(arg0 ? arg0 : child_argv[0], child_argv);
+    execvp(child_image, child_argv);
     _exit(1);
   }
   gimli_set_proctitle("monitoring child %d", p->pid);
@@ -518,6 +519,11 @@ int main(int argc, char *argv[])
   if (!process_args(&child_argc, &child_argv)) {
     return 1;
   }
+  child_image = argv[0];
+  if (arg0) {
+    argv[0] = arg0;
+  }
+
   if (debug) {
     fprintf(stderr, "Child to monitor: (argc=%d) ", child_argc);
     for (i = 0; i < child_argc; i++) {
