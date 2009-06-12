@@ -32,6 +32,8 @@ static struct option {
   { "respawn-frequency", "GIMLI_RESPAWN_FREQUENCY",
     OPT_INTEGER, &respawn_frequency },
   { "config-file", "GIMLI_CONFIG_FILE", OPT_STRING, &config_file },
+  { "uid", "GIMLI_UID", OPT_INTEGER, &run_as_uid },
+  { "gid", "GIMLI_GID", OPT_INTEGER, &run_as_gid },
   { NULL }
 };
 

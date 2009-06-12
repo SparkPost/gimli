@@ -12,6 +12,8 @@ int watchdog_interval = 60;
 int watchdog_start_interval = 200;
 int watchdog_stop_interval = 60;
 int respawn_frequency = 15;
+int run_as_uid = -1;
+int run_as_gid = -1;
 int detach = 1;
 int do_setsid = 1;
 int child_argc;
@@ -583,6 +585,22 @@ int main(int argc, char *argv[])
     fsync(fd);
 
     /* leak the fd, so that we retain the lock */
+  }
+
+  /* drop privs if appropriate */
+  if (run_as_gid != -1) {
+    if (setgid(run_as_gid)) {
+      fprintf(stderr, "Failed to setgid(%d): %s\n",
+        run_as_gid, strerror(errno));
+      exit(1);
+    }
+  }
+  if (run_as_uid != -1) {
+    if (setuid(run_as_uid)) {
+      fprintf(stderr, "Failed to setuid(%d): %s\n",
+        run_as_uid, strerror(errno));
+      exit(1);
+    }
   }
 
   if (detach) {
