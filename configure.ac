@@ -1,5 +1,5 @@
 # vim:ts=2:sw=2:et:
-AC_INIT(gimli,1.0,,gimli)
+AC_INIT(gimli,1.1,,gimli)
 AM_INIT_AUTOMAKE([foreign])
 AC_PROG_CC
 AM_PROG_CC_C_O
