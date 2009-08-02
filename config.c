@@ -75,6 +75,34 @@ static int apply_option(struct option *opt, const char *value)
   return 0;
 }
 
+static void usage(void)
+{
+  int j;
+  int len = 0;
+
+  fprintf(stderr, "\nGimli monitor usage.\n");
+  fprintf(stderr,
+      "Available options are as follows (values are either defaults,\n"
+      "or those loaded via the config-file, if any)\n"
+      "Consult monitor(1) for more details\n\n");
+  for (j = 0; options[j].optname; j++) {
+    if (strlen(options[j].optname) > len) {
+      len = strlen(options[j].optname);
+    }
+  }
+  len += 3;
+  for (j = 0; options[j].optname; j++) {
+    fprintf(stderr, "  --%-*s\t", len, options[j].optname);
+    if (options[j].opttype == OPT_INTEGER) {
+      fprintf(stderr, "integer: %d\n", *(int*)options[j].valptr);
+    } else {
+      char *str = *(char**)options[j].valptr;
+      fprintf(stderr, "string: %s\n", str ? str : "<not set>");
+    }
+  }
+  fprintf(stderr, "\n");
+}
+
 static int do_cmd_line(int argc, char *argv[], const char *only_me)
 {
   int i, j;
@@ -117,11 +145,16 @@ static int do_cmd_line(int argc, char *argv[], const char *only_me)
       continue;
     }
     invalid = 1;
+    if (!strcmp("h", name) || !strcmp("help", name)) {
+      usage();
+      return 0;
+    }
     for (j = 0; options[j].optname; j++) {
       if (!strcmp(options[j].optname, name)) {
         if (!apply_option(&options[j], val)) {
           fprintf(stderr, "Invalid value %s for option %s\n",
             val, name);
+          usage();
           return 0;
         }
         invalid = 0;
@@ -130,12 +163,14 @@ static int do_cmd_line(int argc, char *argv[], const char *only_me)
     }
     if (invalid) {
       fprintf(stderr, "Unknown option %s\n", name);
+      usage();
       return 0;
     }
   }
 
   if (i == argc) {
     fprintf(stderr, "Missing required process to run\n");
+    usage();
     return 0;
   }
 
