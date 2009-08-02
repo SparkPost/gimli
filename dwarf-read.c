@@ -1617,8 +1617,12 @@ static int show_param(struct gimli_unwind_cursor *cur,
                 if (namebuf[0] == '\0') break;
                 if (isprint(namebuf[0])) {
                   printf("%c", namebuf[0]);
+                } else if (namebuf[0] == '"') {
+                  printf("\\\"");
+                } else if (namebuf[0] == '\\') {
+                  printf("\\\\");
                 } else {
-                  printf("\\x%02x", namebuf[0]);
+                  printf("\\x%02x", ((int)namebuf[0]) & 0xff);
                 }
                 addr++;
               }
