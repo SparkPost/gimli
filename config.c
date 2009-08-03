@@ -24,6 +24,7 @@ static struct option {
   { "watchdog-stop-interval", "GIMLI_WATCHDOG_STOP_INTERVAL",
     OPT_INTEGER, &watchdog_stop_interval },
   { "debug", "GIMLI_DEBUG", OPT_INTEGER, &debug },
+  { "quiet", "GIMLI_QUIET", OPT_INTEGER, &quiet },
   { "detach", "GIMLI_DETACH", OPT_INTEGER, &detach },
   { "setsid", "GIMLI_SETSID", OPT_INTEGER, &do_setsid },
   { "glider", "GIMLI_GLIDER_PATH", OPT_STRING, &glider_path },

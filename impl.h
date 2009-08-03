@@ -178,7 +178,7 @@ struct gimli_object_mapping {
   struct gimli_object_file *objfile;
 };
 
-extern int debug, detach, watchdog_interval, watchdog_start_interval,
+extern int debug, quiet, detach, watchdog_interval, watchdog_start_interval,
   watchdog_stop_interval, do_setsid, respawn_frequency;
 extern int run_as_uid, run_as_gid;
 extern char *glider_path, *trace_dir, *gimli_progname, *pidfile, *arg0;

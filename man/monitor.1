@@ -121,6 +121,17 @@ a value, the detach state will be toggled.  The corresponding environmental
 variable is
 .B GIMLI_DETACH
 .TP
+.B quiet=1
+Enables quiet mode when
+.B detach
+is enabled.  This will redirect the standard output and standard error
+to /dev/null.
+If used without specifying a value, thusly:
+.B --quiet
+the quiet state will be toggled.  The corresponding environmental
+variable is
+.B GIMLI_QUIET
+.TP
 .B setsid=0
 Prevents
 .B monitor

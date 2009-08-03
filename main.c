@@ -8,6 +8,7 @@
 int respawn = 1;
 int should_exit = 0;
 int debug = 0;
+int quiet = 0;
 int watchdog_interval = 60;
 int watchdog_start_interval = 200;
 int watchdog_stop_interval = 60;
@@ -636,8 +637,10 @@ int main(int argc, char *argv[])
 
     if (devnull >= 0) {
       dup2(devnull, STDIN_FILENO);
-      dup2(devnull, STDOUT_FILENO);
-      dup2(devnull, STDERR_FILENO);
+      if (quiet) {
+        dup2(devnull, STDOUT_FILENO);
+        dup2(devnull, STDERR_FILENO);
+      }
       close(devnull);
     }
     chdir("/");
