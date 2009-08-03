@@ -422,7 +422,7 @@ void wait_for_exit(struct kid_proc *p, int timeout)
 
     while (nanosleep(&ts, &rem) == -1) {
       /* interrupted */
-      if (p->exit_status || p->should_trace == TRACE_ME) {
+      if (!p->running || p->exit_status || p->should_trace == TRACE_ME) {
         return;
       }
       if (p->tracer_for == 0 && did_hb_state_change(&hb)) {
@@ -433,7 +433,7 @@ void wait_for_exit(struct kid_proc *p, int timeout)
       }
       memcpy(&ts, &rem, sizeof(rem));
     }
-    if (p->exit_status || p->should_trace == TRACE_ME) {
+    if (!p->running || p->exit_status || p->should_trace == TRACE_ME) {
       return;
     }
     if (p->tracer_for == 0 && did_hb_state_change(&hb)) {
