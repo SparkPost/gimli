@@ -94,7 +94,7 @@ long gimli_ptrace(int cmd, int pid, void *addr, void *data)
   if (cmd == PTRACE_GETREGS) {
     if (ret == -1) {
       sleep(1);
-      while ((ret = ptrace(cmd, pid, addr, data)) == -1) {
+      while (tries && (ret = ptrace(cmd, pid, addr, data)) == -1) {
         if (errno == ESRCH) {
           if (--tries) {
             sleep(1);
