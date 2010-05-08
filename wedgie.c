@@ -44,6 +44,7 @@ static void handler(int signo, siginfo_t *si, void *v)
   printf("pid: %d signal handler invoked signo=%d si=%p v=%p\n", getpid(), signo, si, v);
   printf("top of stack %p\n", &signo);
   snprintf(buf, sizeof(buf)-1, "./glider %d", getpid());
+//  snprintf(buf, sizeof(buf)-1, "/opt/msys/gimli/bin/glider %d", getpid());
 //  snprintf(buf, sizeof(buf)-1, "gstack %d", getpid());
   system(buf);
   printf("exiting wedgie\n");

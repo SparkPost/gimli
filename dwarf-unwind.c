@@ -383,11 +383,6 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
   void *fp = cur->st.fp;
   void *regaddr;
   void *val;
-  struct gimli_unwind_cursor newcur;
-
-  memcpy(&newcur, cur, sizeof(newcur));
-
-//  uint64_t new_values[GIMLI_MAX_DWARF_REGS];
 
   if (debug) {
     fprintf(stderr, "\napply_regs:\npc=%p fp=%p sp=%p\n",
@@ -446,7 +441,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
           fprintf(stderr, "col %d: couldn't read value\n", i);
           return 0;
         }
-        regaddr = gimli_reg_addr(&newcur, i);
+        regaddr = gimli_reg_addr(cur, i);
         if (!regaddr) {
           printf("couldn't find address for column %d\n", i);
           return 0;
@@ -464,7 +459,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
           return 0;
         }
         val = *(void**)regaddr;
-        regaddr = gimli_reg_addr(&newcur, i);
+        regaddr = gimli_reg_addr(cur, i);
         if (!regaddr) {
           printf("couldn't find address for column %d\n", i);
           return 0;
@@ -481,7 +476,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
             fprintf(stderr, "failed to evaluate DWARF expression\n");
             return 0;
           }
-          regaddr = gimli_reg_addr(&newcur, i);
+          regaddr = gimli_reg_addr(cur, i);
           if (!regaddr) {
             printf("couldn't find address for column %d\n", i);
             return 0;
@@ -501,7 +496,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
             fprintf(stderr, "failed to evaluate DWARF expression\n");
             return 0;
           }
-          regaddr = gimli_reg_addr(&newcur, i);
+          regaddr = gimli_reg_addr(cur, i);
           if (!regaddr) {
             printf("couldn't find address for column %d\n", i);
             return 0;
@@ -534,7 +529,6 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
   if (debug) {
     fprintf(stderr, "new pc is %p\n", pc);
   }
-  memcpy(&cur->st, &newcur.st, sizeof(newcur.st));
   cur->st.pc = pc;
   cur->st.fp = fp;
 

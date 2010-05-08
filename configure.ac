@@ -17,7 +17,10 @@ AC_ARG_WITH(codesign,[
   --with-codesign=certname     Mac OS/X: name of a code signing certificate
                                to use to authorize the glider as a debugger],[
   DARWIN_CODESIGN="codesign -s $withval glider"
+],[
+  DARWIN_CODESIGN="echo"
 ])
+DARWIN_DSYMUTIL="echo"
 
 case $host in
   *darwin*)
