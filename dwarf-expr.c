@@ -19,7 +19,7 @@ struct dw_stack_val {
 struct dw_expr {
   int top;
   struct dw_stack_val stack[255];
-  const char *ops, *end;
+  const uint8_t *ops, *end;
 };
 
 static int push(struct dw_expr *e, struct dw_stack_val *v)
@@ -71,7 +71,8 @@ static int deref(uint64_t addr, uint64_t *resp, uint8_t opsize)
       break;
   }
   if (res != opsize) {
-    fprintf(stderr, "DWARF: expr: unable to deref %d bytes from %p\n", ptr);
+    fprintf(stderr, "DWARF: expr: unable to deref %d bytes from %p\n",
+      opsize, ptr);
     return 0;
   }
   if (debug) printf("deref: addr=%p opsize=%d res=%llx\n", ptr, opsize, res);

@@ -12,7 +12,7 @@ struct dw_rule_stack {
 };
 
 struct dw_cie {
-  const char *aug, *init_insns, *insn_end;
+  const uint8_t *aug, *init_insns, *insn_end;
   uint64_t code_align, ret_addr;
   int64_t data_align;
   uint64_t personality_routine;
@@ -26,7 +26,7 @@ struct dw_cie {
 struct dw_fde {
   uint64_t initial_loc;
   uint64_t addr_range;
-  const char *insns, *insn_end;
+  const uint8_t *insns, *insn_end;
   uint64_t lsda_ptr;
 };
 
@@ -67,6 +67,19 @@ static void set_rule(struct gimli_unwind_cursor *cur,
   cur->dw.cols[colno].value = val;
 }
 
+static void set_expr(struct gimli_unwind_cursor *cur,
+  int colno, int rule, const uint8_t *ops, uint64_t val)
+{
+  if (debug) {
+    fprintf(stderr, 
+        "   set_rule: colno=%d rule=%d %lld\n", colno, rule,
+        (long long)val);
+  }
+  cur->dw.cols[colno].rule = rule;
+  cur->dw.cols[colno].value = val;
+  cur->dw.cols[colno].ops = ops;
+}
+
 /* Here, pc is initially set to the program counter that corresponds
  * to the start of the dwarf instructions (the initial location).
  * As we process through the CFA rule table, we may advance the pc
@@ -75,8 +88,8 @@ static void set_rule(struct gimli_unwind_cursor *cur,
  * pass the pc address of interest (cur->st.pc), so we break out of
  * the loop at that point */
 static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
-    struct dw_cie *cie, struct dw_fde *fde, const char *insns,
-    const char *insn_end, uint64_t pc)
+    struct dw_cie *cie, struct dw_fde *fde, const uint8_t *insns,
+    const uint8_t *insn_end, uint64_t pc)
 {
   uint64_t regnum, arg;
 
@@ -288,6 +301,55 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         }
         break;
 
+      case DW_CFA_expression:
+      {
+        const uint8_t *exprop;
+        void *res;
+
+        regnum = dw_read_uleb128(&insns, insn_end);
+        /* size of expression data */
+        arg = dw_read_uleb128(&insns, insn_end);
+        exprop = insns;
+        insns += arg;
+
+        fprintf(stderr, "DW_CFA_expression regnum=%d\n", regnum);
+        set_expr(cur, regnum, DW_RULE_EXPR, exprop, arg);
+        break;
+      }
+
+      case DW_CFA_val_expression:
+      {
+        const uint8_t *exprop;
+        void *res;
+
+        regnum = dw_read_uleb128(&insns, insn_end);
+        /* size of expression data */
+        arg = dw_read_uleb128(&insns, insn_end);
+        exprop = insns;
+        insns += arg;
+
+        fprintf(stderr, "DW_CFA_val_expression regnum=%d\n", regnum);
+        set_expr(cur, regnum, DW_RULE_VAL_EXPR, exprop, arg);
+        break;
+      }
+
+      case DW_CFA_def_cfa_expression:
+      {
+        const uint8_t *exprop;
+        void *res;
+
+        /* size of expression data */
+        arg = dw_read_uleb128(&insns, insn_end);
+        exprop = insns;
+        insns += arg;
+
+        fprintf(stderr, "DW_CFA_def_cfa_expression\n");
+        set_expr(cur, GIMLI_DWARF_CFA_REG, DW_RULE_EXPR, exprop, arg);
+        set_rule(cur, GIMLI_DWARF_CFA_OFF, 0, 0);
+        break;
+      }
+
+
       default:
         fprintf(stderr, "DWARF: unwind: unhandled insn %02x (%02x)\n",
           op, oprand);
@@ -298,6 +360,21 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
   return 1;
 }
 
+static int eval_expr(int exprcol,
+  uint64_t initval, uint64_t *retval,
+  struct gimli_unwind_cursor *cur)
+{
+  const uint8_t *ops, *end;
+  int is_stack = 1;
+
+  ops = cur->dw.cols[exprcol].ops;
+  end = ops + cur->dw.cols[exprcol].value;
+
+  return dw_eval_expr(cur, ops, cur->dw.cols[exprcol].value,
+    0, // frame_base,
+    retval, &initval, &is_stack);
+}
+
 static int apply_regs(struct gimli_unwind_cursor *cur,
   struct dw_cie *cie)
 {
@@ -306,6 +383,10 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
   void *fp = cur->st.fp;
   void *regaddr;
   void *val;
+  struct gimli_unwind_cursor newcur;
+
+  memcpy(&newcur, cur, sizeof(newcur));
+
 //  uint64_t new_values[GIMLI_MAX_DWARF_REGS];
 
   if (debug) {
@@ -335,9 +416,17 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
     if (debug) {
       fprintf(stderr, "fp=%p\n", fp);
     }
+  } else if (cur->dw.cols[GIMLI_DWARF_CFA_REG].rule == DW_RULE_EXPR) {
+    uint64_t ret;
+    if (!eval_expr(GIMLI_DWARF_CFA_REG, 0, &ret, cur)) {
+      fprintf(stderr, "failed to evaluate DWARF expression\n");
+      return 0;
+    }
+    fp = (void*)(intptr_t)ret;
   } else {
     fprintf(stderr, "DWARF: line %d: Unhandled rule %d for CFA\n",
       __LINE__, cur->dw.cols[GIMLI_DWARF_CFA_REG].rule);
+    return 0;
   }
   if (debug) {
     fprintf(stderr, "New CFA is %p\n", fp);
@@ -357,7 +446,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
           fprintf(stderr, "col %d: couldn't read value\n", i);
           return 0;
         }
-        regaddr = gimli_reg_addr(cur, i);
+        regaddr = gimli_reg_addr(&newcur, i);
         if (!regaddr) {
           printf("couldn't find address for column %d\n", i);
           return 0;
@@ -375,7 +464,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
           return 0;
         }
         val = *(void**)regaddr;
-        regaddr = gimli_reg_addr(cur, i);
+        regaddr = gimli_reg_addr(&newcur, i);
         if (!regaddr) {
           printf("couldn't find address for column %d\n", i);
           return 0;
@@ -385,10 +474,50 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
           fprintf(stderr, "Setting col %d to %p\n", i, val);
         }
         break;
+      case DW_RULE_EXPR:
+        {
+          uint64_t ret;
+          if (!eval_expr(i, (uint64_t)(intptr_t)fp, &ret, cur)) {
+            fprintf(stderr, "failed to evaluate DWARF expression\n");
+            return 0;
+          }
+          regaddr = gimli_reg_addr(&newcur, i);
+          if (!regaddr) {
+            printf("couldn't find address for column %d\n", i);
+            return 0;
+          }
+          val = *(void**)(intptr_t)ret;
+          *(void**)regaddr = val;
+          if (debug) {
+            fprintf(stderr, "Setting col %d to %p\n", i, val);
+          }
+          break;
+        }
+
+      case DW_RULE_VAL_EXPR:
+        {
+          uint64_t ret;
+          if (!eval_expr(i, (uint64_t)(intptr_t)fp, &ret, cur)) {
+            fprintf(stderr, "failed to evaluate DWARF expression\n");
+            return 0;
+          }
+          regaddr = gimli_reg_addr(&newcur, i);
+          if (!regaddr) {
+            printf("couldn't find address for column %d\n", i);
+            return 0;
+          }
+          *(void**)regaddr = (void*)(intptr_t)ret;
+          if (debug) {
+            fprintf(stderr, "Setting col %d to %p\n", i, ret);
+          }
+          break;
+        }
+
 
       default:
         fprintf(stderr, "DWARF: line %d: Unhandled rule %d\n",
           __LINE__, cur->dw.cols[i].rule);
+        return 0;
     }
   }
   if (debug) {
@@ -405,6 +534,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
   if (debug) {
     fprintf(stderr, "new pc is %p\n", pc);
   }
+  memcpy(&cur->st, &newcur.st, sizeof(newcur.st));
   cur->st.pc = pc;
   cur->st.fp = fp;
 
@@ -427,9 +557,9 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
 {
   struct gimli_object_mapping *m;
   struct gimli_section_data *s = NULL;
-  const char *eh_start;
-  const char *eh_frame;
-  const char *end, *next;
+  const uint8_t *eh_start;
+  const uint8_t *eh_frame;
+  const uint8_t *end, *next;
   int is_eh_frame = 0;
   int is_64 = 0;
   uint64_t initlen;
@@ -443,12 +573,21 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
   };
   int section_number;
 
+  /* can't unwind via dwarf if don't have a valid register set */
+  if (cur->dwarffail) {
+    return 0;
+  }
+
   m = gimli_mapping_for_addr(cur->st.pc);
+  cur->dwarffail = 1;
   if (!m) {
     return 0;
   }
   if (!m->objfile->elf) {
     return 0;
+  }
+  if (debug) {
+    fprintf(stderr, "DWARF: unwind_next pc=%p fp=%p\n", cur->st.pc, cur->st.fp);
   }
 
   for (section_number = 0; sections_to_try[section_number].name;
@@ -492,9 +631,9 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
       struct dw_fde fde;
       uint32_t len;
       uint64_t cie_id;
-      const char *aug;
+      const uint8_t *aug;
 
-      //printf("offset: %p\n", eh_frame - eh_start);
+      if (debug) printf("offset: %p\n", eh_frame - eh_start);
       memcpy(&len, eh_frame, sizeof(len));
       if (len == 0 && is_eh_frame) {
         break;
@@ -509,7 +648,10 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
         initlen = len;
       }
       next = eh_frame + initlen;
-
+if (debug) {
+  printf("initlen: %lx (next = %lx) is64=%d\n",
+    (long)initlen, (long)(next - eh_start), is_64);
+}
       if (is_64) {
         memcpy(&cie_id, eh_frame, sizeof(cie_id));
         eh_frame += sizeof(cie_id);
@@ -521,7 +663,6 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
           cie_id = 0xffffffffffffffffULL;
         }
       }
-
       if ((is_eh_frame && cie_id == 0) ||
           (!is_eh_frame && cie_id == 0xffffffffffffffffULL)) {
         uint8_t ver;
@@ -533,12 +674,18 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
         } else if (sizeof(void*) == 4) {
           cie.code_enc = DW_EH_PE_udata4;
         }
+        cie.code_enc = DW_EH_PE_absptr;
         cie.lsda_enc = DW_EH_PE_omit;
 
         memcpy(&ver, eh_frame, sizeof(ver));
         eh_frame += sizeof(ver);
         cie.aug = eh_frame;
-        eh_frame += strlen(cie.aug) + 1;
+        eh_frame += strlen((char*)cie.aug) + 1;
+        if (cie.aug[0] == 'e' && cie.aug[1] == 'h') {
+          /* ignore GNU 'eh' augmentation data that immediately
+           * follows the augmentation string */
+          eh_frame += sizeof(void*);
+        }
         cie.code_align = dw_read_uleb128(&eh_frame, end);
         cie.data_align = dw_read_leb128(&eh_frame, end);
         if (ver == 3) {
@@ -556,7 +703,10 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
 
         /* read in augmentation information */
         while (aug && *aug) {
-          if (*aug == 'z') {
+          if (*aug == 'e' && *aug == 'h') {
+            /* skip the 'eh' augmentation; already processed above */
+            aug += 2;
+          } else if (*aug == 'z') {
             /* augmentation section size */
             uint64_t o = dw_read_uleb128(&eh_frame, end);
             cie.init_insns = eh_frame + o;
@@ -573,7 +723,8 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
             enc &= ~ DW_EH_PE_indirect;
 
             if (!dw_read_encptr(enc, &eh_frame, end,
-                  s->addr + eh_frame - eh_start, &cie.personality_routine)) {
+                  s->addr + eh_frame - eh_start,
+                  &cie.personality_routine)) {
               fprintf(stderr, "Error while reading personality routine, enc=%02x offset: %lx\n", enc, eh_frame - eh_start);
               return 0;
             }
@@ -601,22 +752,33 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
         /* cie_id is the offset to the CIE that preceeds this FDE,
          * but we already know what it is */
         if (!dw_read_encptr(cie.code_enc, &eh_frame, end,
-              s->addr + eh_frame - eh_start, &fde.initial_loc)) {
+             s->addr + eh_frame - eh_start, &fde.initial_loc)) {
           fprintf(stderr, "Error while reading initial loc\n");
           return 0;
         }
 
-        /* it makes no sense to have a relative number here, so we
-         * make the base address 0 */
-        if (!dw_read_encptr(cie.code_enc, &eh_frame, end, 0, &fde.addr_range)) {
+
+        if (!dw_read_encptr(cie.code_enc & 0x0f, &eh_frame, end,
+                  s->addr + eh_frame - eh_start,
+            &fde.addr_range)) {
           fprintf(stderr, "Error while reading addr_range\n");
           return 0;
         }
+        if (debug) {
+          printf("FDE: addr_range raw=%p\ninit_loc=%p addr=%p\n", 
+            (void*)(intptr_t)fde.addr_range,
+            (void*)(intptr_t)fde.initial_loc,
+            s->addr);
+        }
         fde.initial_loc += m->objfile->base_addr;
         if (debug) {
-          printf("FDE: init=%p-%p pc=%p aug=%s\n",
+          char name[1024];
+          const char *sym = gimli_pc_sym_name(
+              (void*)(intptr_t)fde.initial_loc, name, sizeof(name));
+          printf("FDE: init=%p-%p %s\npc=%p aug=%s\n",
               (char*)(intptr_t)fde.initial_loc,
               (char*)(intptr_t)(fde.initial_loc + fde.addr_range),
+              sym,
               cur->st.pc, cie.aug);
         }
         if (cie.lsda_enc != DW_EH_PE_omit) {
@@ -635,7 +797,8 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
           if (debug) {
             fprintf(stderr, "This is the FDE for the current PC\n");
             fprintf(stderr, "FDE: init=" PTRFMT "-" PTRFMT " pc=" PTRFMT "\n",
-                (intptr_t)fde.initial_loc, fde.addr_range,
+                (void*)(intptr_t)fde.initial_loc,
+                (void*)(intptr_t)fde.addr_range,
                 (void*)cur->st.pc);
           }
 
@@ -669,6 +832,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
             }
             return 0;
           }
+          cur->dwarffail = 0;
 
           return 1;
         }

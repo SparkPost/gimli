@@ -382,7 +382,7 @@ struct gimli_dwarf_attr {
   uint64_t attr;
   uint64_t form;
   uint64_t code;
-  const char *ptr;
+  const uint8_t *ptr;
 };
 
 struct gimli_dwarf_die {
@@ -392,10 +392,10 @@ struct gimli_dwarf_die {
   struct gimli_dwarf_attr *attrs;
 };
 
-int dw_read_encptr(uint8_t enc, const char **ptr, const char *end,
+int dw_read_encptr(uint8_t enc, const uint8_t **ptr, const uint8_t *end,
   uint64_t pc, uint64_t *output);
-uint64_t dw_read_uleb128(const char **ptr, const char *end);
-int64_t dw_read_leb128(const char **ptr, const char *end);
+uint64_t dw_read_uleb128(const uint8_t **ptr, const uint8_t *end);
+int64_t dw_read_leb128(const uint8_t **ptr, const uint8_t *end);
 int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
   uint64_t oplen,
   uint64_t frame_base, uint64_t *result, uint64_t *prepopulate,

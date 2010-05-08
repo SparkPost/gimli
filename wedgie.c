@@ -5,6 +5,7 @@
  */
 #include "libgimli.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
 #include <signal.h>
@@ -42,10 +43,9 @@ static void handler(int signo, siginfo_t *si, void *v)
   char buf[1024];
   printf("pid: %d signal handler invoked signo=%d si=%p v=%p\n", getpid(), signo, si, v);
   printf("top of stack %p\n", &signo);
-  snprintf(buf, sizeof(buf)-1, "valgrind --tool=memcheck ./gimli_coroner %d", getpid());
+  snprintf(buf, sizeof(buf)-1, "./glider %d", getpid());
 //  snprintf(buf, sizeof(buf)-1, "gstack %d", getpid());
-//  system(buf);
-  sleep(50);
+  system(buf);
   printf("exiting wedgie\n");
   exit(1);
 }
@@ -93,6 +93,9 @@ int main(int argc, char *argv[])
     sa.sa_sigaction = handler;
     sa.sa_flags = SA_SIGINFO;
     sigaction(SIGSEGV, &sa, NULL);
+#ifdef SIGBUS
+    sigaction(SIGBUS, &sa, NULL);
+#endif
 //    signal(SIGSEGV, handler);
   }
   func_two();

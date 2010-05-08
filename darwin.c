@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2009 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2007-2010 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://labs.omniti.com/gimli/trunk/LICENSE
  */
@@ -12,6 +12,7 @@
  */
 
 #include <libgen.h>
+#include <Security/Authorization.h>
 
 #if __DARWIN_UNIX03 /* Leopard and up */
 #define GIMLI_DARWIN_REGNAME(x)  __##x
@@ -36,6 +37,66 @@ static const cpu_type_t whatami =
 static int target_pid;
 static int got_task = 0;
 static task_t targetTask;
+
+/* Given a path to an image file, open it, find the correct architecture
+ * portion for the header, populate rethdr with it and return the file
+ * descriptor */
+static int read_mach_header(const char *filename,
+  uint32_t *rethdr_offset, gimli_mach_header *rethdr)
+{
+  int fd;
+  gimli_mach_header  hdr;
+  uint32_t hdr_offset = 0; /* offset of mach_header from start of file */
+
+  fd = open(filename, O_RDONLY);
+  if (fd == -1) return -1;
+
+  if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+    fprintf(stderr, "error reading mach header %s\n", strerror(errno));
+    close(fd);
+    return -1;
+  }
+
+  if (NXSwapBigLongToHost(hdr.magic) == FAT_MAGIC) {
+    int nfat = NXSwapBigLongToHost(hdr.cputype);
+    int i;
+    struct fat_arch fa;
+    int found = 0;
+
+    for (i = 0; i < nfat; i++) {
+      pread(fd, &fa, sizeof(fa), sizeof(struct fat_header) + (i * sizeof(fa)));
+      fa.cputype = NXSwapBigLongToHost(fa.cputype);
+      fa.cpusubtype = NXSwapBigLongToHost(fa.cpusubtype);
+      fa.offset = NXSwapBigLongToHost(fa.offset);
+      fa.size = NXSwapBigLongToHost(fa.size);
+
+      if (fa.cputype == whatami) {
+        if (debug) {
+          fprintf(stderr, "matching arch %x %x at %x (%x)\n",
+            fa.cputype, fa.cpusubtype, fa.offset, fa.size);
+        }
+        hdr_offset = fa.offset;
+        pread(fd, &hdr, sizeof(hdr), hdr_offset);
+        found = 1;
+        break;
+      }
+    }
+    if (!found) {
+      fprintf(stderr, "Couldn't find a suitable matching arch in fat dsym\n");
+      close(fd);
+      return -1;
+    }
+  }
+  if (hdr.magic != GIMLI_MH_MAGIC) {
+    fprintf(stderr, "Couldn't find a valid mach header in %s\n", filename);
+    close(fd);
+    return -1;
+  }
+  memcpy(rethdr, &hdr, sizeof(hdr));
+  *rethdr_offset = hdr_offset;
+//  printf("%s: native @ offset %x %d\n", filename, hdr_offset, hdr_offset);
+  return fd;
+}
 
 /* Starting with OSX 10.5, apple introduced the concept of a
  * a dSYM bundle which contains a mach-o object file with dwarf
@@ -66,45 +127,8 @@ static void find_dwarf_dSYM(struct gimli_object_file *of)
   if (debug) {
     fprintf(stderr, "dsym: trying %s\n", dsym);
   }
-  fd = open(dsym, O_RDONLY);
+  fd = read_mach_header(dsym, &hdr_offset, &hdr);
   if (fd == -1) return;
-
-  if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
-    fprintf(stderr, "error reading mach header %s\n", strerror(errno));
-    return;
-  }
-
-  if (NXSwapBigLongToHost(hdr.magic) == FAT_MAGIC) {
-    int nfat = NXSwapBigLongToHost(hdr.cputype);
-    int i;
-    struct fat_arch fa;
-    int found = 0;
-    for (i = 0; i < nfat; i++) {
-      pread(fd, &fa, sizeof(fa), 
-        sizeof(struct fat_header) + (i * sizeof(fa))
-      );
-      fa.cputype = NXSwapBigLongToHost(fa.cputype);
-      fa.cpusubtype = NXSwapBigLongToHost(fa.cpusubtype);
-      fa.offset = NXSwapBigLongToHost(fa.offset);
-      fa.size = NXSwapBigLongToHost(fa.size);
-
-      if (fa.cputype == whatami) {
-        fprintf(stderr, "matching arch %x %x at %x (%x)\n", fa.cputype, fa.cpusubtype,
-          fa.offset, fa.size);
-        hdr_offset = fa.offset;
-        pread(fd, &hdr, sizeof(hdr), hdr_offset);
-        found = 1;
-        break;
-      }
-    }
-    if (!found) {
-      fprintf(stderr, "Couldn't find a suitable matching arch in fat dsym\n");
-    }
-  }
-  if (hdr.magic != GIMLI_MH_MAGIC) {
-    close(fd);
-    return;
-  }
 
   container = calloc(1, sizeof(*container));
   container->gobject = of;
@@ -141,6 +165,10 @@ static void find_dwarf_dSYM(struct gimli_object_file *of)
           s->name = strdup(sectname);
           s->name[0] = '.';
           s->addr = sec.addr;
+          if (debug) {
+            fprintf(stderr, "%s %s s->addr=%p base_addr=%p\n",
+              of->objname, sectname, s->addr, of->base_addr);
+          }
           s->size = sec.size;
           s->data = malloc(s->size);
           s->offset = sec.offset;
@@ -163,6 +191,289 @@ struct gimli_section_data *gimli_get_section_by_name(
     return s;
   }
   return NULL;
+}
+
+static void read_symtab(struct gimli_object_file *of,
+  int fd, uint32_t cmd_offset, uint32_t file_off,
+  gimli_mach_header *mhdr)
+{
+  struct symtab_command scmd;
+  gimli_nlist nl[256];
+  int n;
+  char *symaddr;
+  /* number of nlist entries read from symtab */
+  int nsyms;
+  char *strtab;
+  int i;
+
+  if (pread(fd, &scmd, sizeof(scmd), cmd_offset) != sizeof(scmd)) {
+    fprintf(stderr, "pread failed %s\n", strerror(errno));
+    return;
+  }
+
+  /* compensate for offset of inner file for fat images */
+  scmd.symoff += file_off;
+  scmd.stroff += file_off;
+
+  strtab = malloc(scmd.strsize + 1);
+  strtab[scmd.strsize] = '\0';
+  if (debug) {
+    printf("%s: symoff %x %d\n", of->objname, scmd.symoff, scmd.symoff);
+    printf("%s: stroff %x %d\n", of->objname, scmd.stroff, scmd.stroff);
+  }
+  if (pread(fd, strtab, scmd.strsize, scmd.stroff) != scmd.strsize) {
+    fprintf(stderr, "failed to read string tab\n");
+    return;
+  }
+
+  nsyms = 0;
+
+  while (nsyms < scmd.nsyms) {
+    n = (scmd.nsyms - nsyms) * sizeof(nl[0]);
+    if (n > sizeof(nl)) {
+      n = sizeof(nl);
+    }
+    n = pread(fd, nl, n, scmd.symoff + (nsyms * sizeof(nl[0])));
+    if (n == -1) {
+      break;
+    }
+    n /= sizeof(nl[0]);
+    nsyms += n;
+
+    for (i = 0; i < n; i++) {
+      gimli_nlist *nsym = &nl[i];
+
+      if (nsym->n_value != 0 && nsym->n_type != N_UNDF &&
+          nsym->n_un.n_strx > 0 && nsym->n_un.n_strx < scmd.strsize &&
+          strtab[nsym->n_un.n_strx] != '\0') {
+        int want_symbol = 0;
+
+        if (nsym->n_type & N_STAB) {
+          switch (nsym->n_type) {
+            case N_GSYM:
+            case N_FNAME:
+            case N_FUN: /* may have line numbers */
+            case N_LSYM:
+              want_symbol = 1;
+              break;
+            default:
+              want_symbol = 0;
+              //printf("        stab:%x\n", nsym->n_type);
+          }
+        } else if (nsym->n_type & N_PEXT) {
+          want_symbol = 0;
+        } else {
+          want_symbol = 1;
+#if 0
+          printf("sym %d: %.*s\n", i, 8, strtab + nsym->n_un.n_strx);
+          printf("        stab:%x pext:%d type:%x ext:%d\n",
+            nsym->n_type & N_STAB,
+            (nsym->n_type & N_PEXT) == N_PEXT ? 1 : 0,
+            nsym->n_type & N_TYPE,
+            (nsym->n_type & N_EXT) == N_EXT ? 1 : 0);
+#endif
+        }
+        if (want_symbol) {
+          void *value = (void*)(intptr_t)nsym->n_value;
+
+          if (mhdr->filetype != MH_EXECUTE) {
+            value += of->base_addr;
+          }
+//          printf("sym: %s %p\n", strtab + nsym->n_un.n_strx, (char*)value);
+          gimli_add_symbol(of, strtab + nsym->n_un.n_strx, value, 0);
+        }
+
+      }
+    }
+  }
+}
+
+/* lets see if we can figure out what we have loaded and where.  We assume that
+ * the address of dyld_all_image_infos in this process is the same as the
+ * target (which should always be true) and read the info out of the target
+ * from that address.  This interface is documented in <mach-o/dyld_images.h>
+ */
+static void discover_maps(void)
+{
+  struct nlist l[3];
+  int i;
+  char *symoff = NULL;
+  struct dyld_shared_cache_ranges shared_cache;
+  struct dyld_all_image_infos infos;
+  int have_shared_cache;
+  int in_shared_cache;
+  gimli_mach_header hdr;
+
+  memset(&l, 0, sizeof(l));
+  l[0].n_un.n_name = "_dyld_all_image_infos";
+  l[1].n_un.n_name = "_dyld_shared_region_ranges";
+  nlist("/usr/lib/dyld", l);
+    
+  if (!l[0].n_value) {
+    fprintf(stderr,
+      "DYLD: could not locate dyld_all_image_infos\n");
+    return;
+  }
+  gimli_read_mem((void*)l[0].n_value, &infos, sizeof(infos));
+
+  /* 10.5 introduces a shared cache; when processing images, if the image
+   * addresses match against the shared cache, then we need to perform
+   * an additional computation to obtain the relocated address in the target */
+  if (l[1].n_value) {
+    gimli_read_mem((void*)l[1].n_value, &shared_cache, sizeof(shared_cache));
+    have_shared_cache = 1;
+  } else {
+    have_shared_cache = 0;
+  }
+
+  /* walk the image info and determine the image names */
+  for (i = 0; i < infos.infoArrayCount; i++) {
+    struct dyld_image_info im;
+    char name[PATH_MAX];
+    char rname[PATH_MAX];
+    struct gimli_object_file *of = NULL;
+    gimli_mach_header mhdr;
+    int n, fd;
+    char *addr = NULL;
+    gimli_segment_command seg;
+    char sectname[16];
+    uint32_t hdr_offset, cmd_offset;
+
+    gimli_read_mem((char*)infos.infoArray + (i * sizeof(im)),
+        &im, sizeof(im));
+
+    if (im.imageLoadAddress == 0) {
+      continue;
+    }
+
+    memset(name, 0, sizeof(name));
+    gimli_read_mem((void*)im.imageFilePath, name, sizeof(name));
+    if (!realpath(name, rname)) strcpy(rname, name);
+
+    if (debug) {
+      fprintf(stderr, "%p [%p] %s\n",
+          im.imageLoadAddress, im.imageFilePath, rname);
+    }
+
+    of = gimli_add_object(rname, 0);
+    of->elf = calloc(1, sizeof(*of->elf));
+    of->elf->gobject = of;
+    of->elf->is_exec = 1;
+    of->elf->objname = of->objname;
+
+    /* now, from the mach header, find each segment and its
+     * address range and record the mapping */
+    gimli_read_mem((void*)im.imageLoadAddress, &mhdr, sizeof(mhdr));
+
+    in_shared_cache = 0;
+    if (have_shared_cache) {
+      for (n = 0; n < shared_cache.sharedRegionsCount; n++) {
+        if ((intptr_t)im.imageLoadAddress >= shared_cache.ranges[n].start &&
+            (intptr_t)im.imageLoadAddress < shared_cache.ranges[n].start +
+            shared_cache.ranges[n].length) {
+          in_shared_cache = 1;
+          break;
+        }
+      }
+    }
+
+    if (in_shared_cache) {
+      /* the contents in memory are rebound instead of adjusted, so we
+       * need to compute the adjustment by reading the header from the
+       * actual MACH-O file.
+       * XXX: given that we always compare to the image on disk, I'm not
+       * sure what additional special handling is needed for these?
+       */
+    }
+
+    fd = read_mach_header(rname, &hdr_offset, &hdr);
+    cmd_offset = hdr_offset + sizeof(hdr);
+    for (n = 0; n < hdr.ncmds; n++, cmd_offset += seg.cmdsize) {
+      pread(fd, &seg, sizeof(struct load_command), cmd_offset);
+      if (seg.cmd == LC_SYMTAB) {
+        read_symtab(of, fd, cmd_offset, hdr_offset, &mhdr);
+        continue;
+      }
+      if (seg.cmd != GIMLI_LC_SEGMENT) {
+        continue;
+      }
+      if (pread(fd, &seg, sizeof(seg), cmd_offset) != sizeof(seg)) {
+        fprintf(stderr, "pread failed %s\n", strerror(errno));
+        continue;
+      }
+      if (!strcmp(seg.segname, SEG_PAGEZERO)) {
+        /* ignore zero page mapping */
+        continue;
+      }
+      if (!strcmp(seg.segname, SEG_TEXT) && of->base_addr == 0) {
+        /* compute the slide */
+        of->base_addr = (intptr_t)im.imageLoadAddress - seg.vmaddr;
+      }
+      gimli_add_mapping(of->objname,
+        (void*)(intptr_t)(seg.vmaddr + of->base_addr), seg.vmsize, seg.fileoff);
+
+      if (!strcmp(seg.segname, "__TEXT")) {
+        /* look for an __eh_frame section */
+        uint32_t sec_addr = cmd_offset + sizeof(seg);
+        int sno;
+        gimli_section sec;
+        char *buf;
+        struct gimli_section_data *s;
+
+        for (sno = 0; sno < seg.nsects; sno++, sec_addr += sizeof(sec)) {
+          if (pread(fd, &sec, sizeof(sec), sec_addr) != sizeof(sec)) {
+            continue;
+          }
+          if (!strcmp("__eh_frame", sec.sectname)) {
+
+            // make the names look more like elven versions
+            s = calloc(1, sizeof(*s));
+            memcpy(sectname, sec.sectname + 1, 15);
+            sectname[15] = '\0';
+            s->name = strdup(sectname);
+            s->name[0] = '.';
+            s->addr = sec.addr;
+            s->size = sec.size;
+            s->data = malloc(s->size);
+            s->offset = sec.offset + hdr_offset;
+            s->container = of->elf;
+            pread(fd, s->data, s->size, s->offset);
+
+            gimli_hash_insert(of->sections, s->name, s);
+          }
+        }
+      }
+
+    }
+    find_dwarf_dSYM(of);
+  }
+}
+
+static void make_authz_request(void)
+{
+  OSStatus st;
+  AuthorizationItem item = {"system.privilege.taskport", 0, NULL, 0};
+  AuthorizationRights rights = {1, &item};
+  AuthorizationRights *copy = NULL;
+  AuthorizationRef author;
+  AuthorizationFlags flags =
+    kAuthorizationFlagExtendRights |
+    kAuthorizationFlagPreAuthorize |
+    kAuthorizationFlagInteractionAllowed;
+
+  st = AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment,
+        flags, &author);
+
+  if (st != errAuthorizationSuccess) {
+    return;
+  }
+
+  st = AuthorizationCopyRights(author, &rights, kAuthorizationEmptyEnvironment,
+        flags, &copy);
+
+  if (st != errAuthorizationSuccess) {
+    return;
+  }
 }
 
 int gimli_attach(int pid)
@@ -188,135 +499,23 @@ int gimli_attach(int pid)
    *
    * See also taskgated(8)
    */
+  make_authz_request();
   target_pid = pid;
   rc = task_for_pid(mach_task_self(), pid, &targetTask);
   if (rc != KERN_SUCCESS) {
     /* this will usually fail unless you call this from the
      * parent of the faulting process, or have root */
-    fprintf(stderr, "task_for_pid returned %d\n", rc);
+    fprintf(stderr, 
+"task_for_pid returned %d\n"
+"One resolution is to run the monitor or glider process with root privileges\n"
+"alternatively, if glider was codesigned at build time, you may use keychain\n"
+"to trust the signing certificate\n", rc);
     return 0;
   }
   got_task = 1;
   task_suspend(targetTask);
 
-  /* lets see if we can figure out what we have loaded and where.
-   * We assume that the address of dyld_all_image_infos in this process
-   * is the same as the target (which should always be true) and
-   * read the info out of the target from that address.
-   * This interface is documented in <mach-o/dyld_images.h>
-   */
-  {
-    struct dyld_all_image_infos infos;
-    struct nlist l[2];
-    int i;
-    char *symoff = NULL;
-
-    memset(&l, 0, sizeof(l));
-    l[0].n_un.n_name = "_dyld_all_image_infos";
-    nlist("/usr/lib/dyld", l);
-    if (l[0].n_value) {
-      gimli_read_mem((void*)l[0].n_value, &infos, sizeof(infos));
-
-      for (i = 0; i < infos.infoArrayCount; i++) {
-        struct dyld_image_info im;
-        char name[PATH_MAX];
-        char rname[PATH_MAX];
-        struct gimli_object_file *of = NULL;
-        gimli_mach_header  mhdr;
-        int n;
-        char *addr = NULL;
-        gimli_segment_command scmd;
-
-        gimli_read_mem((char*)infos.infoArray + (i * sizeof(im)),
-            &im, sizeof(im));
-
-        if (im.imageLoadAddress == 0) {
-          continue;
-        }
-
-        memset(name, 0, sizeof(name));
-        gimli_read_mem((void*)im.imageFilePath, name, sizeof(name));
-        if (!realpath(name, rname)) strcpy(rname, name);
-
-        if (debug) {
-          fprintf(stderr, "%p [%p] %s\n",
-            im.imageLoadAddress, im.imageFilePath, rname);
-        }
-
-        of = gimli_add_object(rname, (void*)im.imageLoadAddress);
-        of->elf = calloc(1, sizeof(*of->elf));
-        of->elf->gobject = of;
-        of->elf->is_exec = 1;
-        of->elf->objname = of->objname;
-
-        /* now, from the mach header, find each segment and its
-         * address range and record the mapping */
-        gimli_read_mem((void*)im.imageLoadAddress, &mhdr, sizeof(mhdr));
-
-        addr = (char*)im.imageLoadAddress;
-        addr += sizeof(mhdr);
-        for (n = 0; n < mhdr.ncmds; n++) {
-          memset(&scmd, 0, sizeof(scmd));
-          gimli_read_mem(addr, &scmd, sizeof(struct load_command));
-          if (scmd.cmd == GIMLI_LC_SEGMENT)
-          {
-            char *mapaddr;
-            gimli_read_mem(addr, &scmd, sizeof(scmd));
-        
-            if (!strcmp("__TEXT", scmd.segname)) {  
-              if ((void*)scmd.vmaddr != im.imageLoadAddress) {
-                of->base_addr = (uint64_t)(intptr_t)im.imageLoadAddress;
-              }
-              gimli_add_mapping(of->objname,
-                (void*)scmd.vmaddr, scmd.vmsize, 0);
-            }
-          }
-
-          if (scmd.cmd == LC_SYMTAB) {
-            struct symtab_command scmd;
-            gimli_nlist nl;
-            int n;
-            char *symaddr;
-
-            if (!gimli_read_mem(addr, &scmd, sizeof(scmd))) {
-              fprintf(stderr, "unable to read symtab_command from %p\n", addr);
-              continue;
-            }
-            symoff = (char*)im.imageLoadAddress + scmd.symoff;
-            for (n = 0; n < scmd.nsyms; n++) {
-              char *straddr;
-              int type;
-
-              symaddr = symoff + (n * sizeof(nl));
-              memset(&nl, 0, sizeof(nl));
-              if (!gimli_read_mem(symaddr, &nl, sizeof(nl))) {
-                fprintf(stderr, "unable to read nlist from %p\n", symaddr);
-                continue;
-              }
-              memset(name, 0, sizeof(name));
-              straddr = (char*)im.imageLoadAddress;
-              straddr += scmd.stroff + nl.n_un.n_strx;
-              gimli_read_mem(straddr, name, sizeof(name));
-              if (!isprint(name[0])) continue;
-              if (nl.n_sect != 1) {
-                continue;
-              }
-              if (nl.n_type == N_UNDF) continue;
-              if (nl.n_un.n_strx == 0) continue;
-              if (nl.n_value == 0) continue;
-              if (!strlen(name)) continue;
-
-              gimli_add_symbol(of, name, (char*)nl.n_value + of->base_addr, 0);
-            }
-          }
-
-          addr += scmd.cmdsize;
-        }
-
-        find_dwarf_dSYM(of);
-      }
-    }
-  }
+  discover_maps();
 
   rc = task_threads(targetTask, &threadlist, &n);
 
@@ -351,31 +550,6 @@ int gimli_init_unwind(struct gimli_unwind_cursor *cur,
   return 1;
 }
 
-#if 0
-int gimli_unwind_next(struct gimli_unwind_cursor *cur)
-{
-  /* generic x86 backtrace */
-  struct x86_frame {
-    struct x86_frame *next;
-    void *retpc;
-  } frame;
-  struct gimli_unwind_cursor c;
-
-  c = *cur;
-
-  if (c.st.fp) {
-    if (gimli_read_mem(c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
-      memset(&frame, 0, sizeof(frame));
-    }
-    if (c.st.fp == frame.next) return 0;
-    cur->st.fp = frame.next;
-    cur->st.pc = frame.retpc;
-    return 1;
-  }
-
-  return 0;
-}
-#endif
 int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 {
   struct {
@@ -410,15 +584,19 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
     return 1;
   }
   if (debug) {
-    fprintf(stderr, "dwarf unwind unsuccessful\n");
+    fprintf(stderr, "dwarf unwind unsuccessful fp=%p\n", cur->st.fp);
   }
 
   if (c.st.fp) {
     if (gimli_read_mem(c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
       memset(&frame, 0, sizeof(frame));
     }
+    if (debug) {
+      fprintf(stderr, "read frame: fp=%p pc=%p\n", frame.fp, frame.pc);
+    }
 
     if (c.st.fp == frame.fp) {
+      if (debug) fprintf(stderr, "next frame fp is same as current\n");
       return 0;
     }
     cur->st.fp = frame.fp;
@@ -430,6 +608,8 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
     cur->st.regs.GIMLI_DARWIN_REGNAME(ebp) = (intptr_t)cur->st.fp;
 #endif
     return 1;
+  } else if (debug) {
+    fprintf(stderr, "no dwarf and fp is nil\n");
   }
   return 0;
 }
@@ -498,6 +678,7 @@ void *gimli_reg_addr(struct gimli_unwind_cursor *cur, int col)
     case 7: return &cur->st.regs.GIMLI_DARWIN_REGNAME(edi);
     /* return address */
     case 8: return &cur->st.regs.GIMLI_DARWIN_REGNAME(eip);
+    case 9: return &cur->st.regs.GIMLI_DARWIN_REGNAME(eflags);
 #else
 # error code me
 #endif

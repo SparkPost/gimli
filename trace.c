@@ -7,6 +7,7 @@
 
 int debug = 0;
 int gimli_nthreads = 0;
+static int max_frames = 256;
 struct gimli_thread_state *gimli_threads = NULL;
 struct gimli_object_file *gimli_files = NULL;
 struct gimli_object_mapping *gimli_mappings = NULL;
@@ -158,170 +159,179 @@ const char *gimli_pc_sym_name(void *addr, char *buf, int buflen)
   return "";
 }
 
-void gimli_stack_trace(int tid)
+void gimli_render_frame(int tid, int nframe, struct gimli_unwind_cursor *frame)
 {
-  struct gimli_thread_state *thr = &gimli_threads[tid];
-  int i;
   const char *name;
   char namebuf[1024];
   char filebuf[1024];
   uint64_t lineno;
-  struct gimli_unwind_cursor cur;
+  struct gimli_unwind_cursor cur = *frame;
 
-  printf("\nThread %d (LWP %d)\n", tid, thr->lwpid);
+  if (gimli_is_signal_frame(&cur)) {
+    if (cur.si.si_signo) {
+      char *source = "";
+      int use_fault_addr = 0;
+      int use_pid = 0;
+      char *signame;
+
+      signame = strsignal(cur.si.si_signo);
+      if (!signame) signame = "Unknown signal";
+
+      if (cur.si.si_code > 0) {
+        /* kernel generated; si_code has additional information */
+        switch (cur.si.si_signo) {
+          case SIGILL:
+            use_fault_addr = 1;
+            switch (cur.si.si_code) {
+              case ILL_ILLOPC: source = "illegal opcode"; break;
+              case ILL_ILLOPN: source = "illegal operand"; break;
+              case ILL_ILLADR: source = "illegal addressing mode"; break;
+              case ILL_ILLTRP: source = "illegal trap"; break;
+              case ILL_PRVOPC: source = "privileged opcode"; break;
+              case ILL_PRVREG: source = "privileged register"; break;
+              case ILL_COPROC: source = "co-processor error"; break;
+              case ILL_BADSTK: source = "internal stack error"; break;
+            }
+            break;
+          case SIGFPE:
+            use_fault_addr = 1;
+            switch (cur.si.si_code) {
+              case FPE_INTDIV: source = "integer divide by zero"; break;
+              case FPE_INTOVF: source = "integer overflow"; break;
+              case FPE_FLTDIV: source = "floating point divide by zero"; break;
+              case FPE_FLTOVF: source = "floating point overflow"; break;
+              case FPE_FLTUND: source = "floating point underflow"; break;
+              case FPE_FLTRES: source = "floating point inexact result"; break;
+              case FPE_FLTINV: source = "floating point invalid operation"; break;
+              case FPE_FLTSUB: source = "subscript out of range"; break;
+            }
+            break;
+          case SIGSEGV:
+            use_fault_addr = 1;
+            switch (cur.si.si_code) {
+              case SEGV_MAPERR: source = "address not mapped to object"; break;
+              case SEGV_ACCERR: source = "invalid permissions for mapped object"; break;
+            }
+            break;
+          case SIGBUS:
+            use_fault_addr = 1;
+            switch (cur.si.si_code) {
+              case BUS_ADRALN: source = "invalid address alignment"; break;
+              case BUS_ADRERR: source = "non-existent physical address"; break;
+              case BUS_OBJERR: source = "object specific hardware error"; break;
+            }
+            break;
+          case SIGTRAP:
+            switch (cur.si.si_code) {
+              case TRAP_BRKPT: source = "process breakpoint"; break;
+              case TRAP_TRACE: source = "process trace trap"; break;
+            }
+            break;
+          case SIGCHLD:
+            use_pid = 1;
+            switch (cur.si.si_code) {
+              case CLD_EXITED: source = "child has exited"; break;
+              case CLD_KILLED: source = "child was killed"; break;
+              case CLD_DUMPED: source = "child terminated abnormally"; break;
+              case CLD_TRAPPED: source = "traced child has trapped"; break;
+              case CLD_STOPPED: source = "child has stopped"; break;
+              case CLD_CONTINUED: source = "stopped child has continued"; break;
+            }
+            break;
+#ifdef SIGPOLL
+          case SIGPOLL:
+            switch (cur.si.si_code) {
+              case POLL_IN: source = "data input available"; break;
+              case POLL_OUT: source = "output buffers available"; break;
+              case POLL_MSG: source = "input message available"; break;
+              case POLL_ERR: source = "I/O error"; break;
+              case POLL_PRI: source = "high priority input available"; break;
+              case POLL_HUP: source = "device disconnected"; break;
+            }
+            break;
+#endif
+
+        }
+      } else {
+        use_pid = 1;
+        switch (cur.si.si_code) {
+#ifdef SI_NOINFO
+          case SI_NOINFO:
+            /* explicitly have no info */
+            use_pid = 0;
+            break;
+#endif
+          case SI_USER:    source = "userspace"; break;
+#ifdef SI_LWP
+          case SI_LWP:     source = "_lwp_kill"; break;
+#endif
+          case SI_QUEUE:   source = "sigqueue"; break;
+          case SI_TIMER:   source = "timer";   break;
+          case SI_ASYNCIO: source = "asyncio"; break;
+          case SI_MESGQ:   source = "mesgq"; break;
+#ifdef SI_KERNEL
+          case SI_KERNEL:  source = "kernel"; break;
+#endif
+#ifdef SI_SIGIO
+          case SI_SIGIO:   source = "sigio"; break;
+#endif
+#ifdef SI_TKILL
+          case SI_TKILL:   source = "tkill"; break;
+#endif
+#ifdef SI_RCTL
+          case SI_RCTL: source = "resource-control"; break;
+#endif
+        }
+      }
+      printf("#%-2d Signal %d: %s. %s",
+          frame, cur.si.si_signo, signame, source);
+
+      if (use_pid) {
+        printf(" pid=%d", cur.si.si_pid);
+      }
+
+      if (use_fault_addr) {
+        name = gimli_pc_sym_name(cur.si.si_addr, namebuf, sizeof(namebuf));
+        if (name && strlen(name)) {
+          printf(" (%s)", name);
+        } else {
+          printf(" (" PTRFMT ")", cur.si.si_addr);
+        }
+      }
+      printf("\n");
+
+    } else {
+      printf("#%-2d signal handler\n", nframe);
+    }
+  } else {
+    name = gimli_pc_sym_name(cur.st.pc, namebuf, sizeof(namebuf));
+    printf("#%-2d " PTRFMT " %s", nframe, cur.st.pc, name);
+    if (dwarf_determine_source_line_number(cur.st.pc,
+          filebuf, sizeof(filebuf), &lineno)) {
+      printf(" (%s:%lld)", filebuf, lineno);
+    }
+    printf("\n");
+    gimli_show_param_info(&cur);
+  }
+}
+
+int gimli_stack_trace(int tid, struct gimli_unwind_cursor *frames, int nframes)
+{
+  struct gimli_thread_state *thr = &gimli_threads[tid];
+  struct gimli_unwind_cursor cur;
+  int i;
+
   memset(&cur, 0, sizeof(cur));
   if (gimli_init_unwind(&cur, thr)) {
     int frame = 0;
     do {
-      if (gimli_is_signal_frame(&cur)) {
-        if (cur.si.si_signo) {
-          char *source = "";
-          int use_fault_addr = 0;
-          int use_pid = 0;
-          char *signame;
-
-          signame = strsignal(cur.si.si_signo);
-          if (!signame) signame = "Unknown signal";
-
-          if (cur.si.si_code > 0) {
-            /* kernel generated; si_code has additional information */
-            switch (cur.si.si_signo) {
-              case SIGILL:
-                use_fault_addr = 1;
-                switch (cur.si.si_code) {
-                  case ILL_ILLOPC: source = "illegal opcode"; break;
-                  case ILL_ILLOPN: source = "illegal operand"; break;
-                  case ILL_ILLADR: source = "illegal addressing mode"; break;
-                  case ILL_ILLTRP: source = "illegal trap"; break;
-                  case ILL_PRVOPC: source = "privileged opcode"; break;
-                  case ILL_PRVREG: source = "privileged register"; break;
-                  case ILL_COPROC: source = "co-processor error"; break;
-                  case ILL_BADSTK: source = "internal stack error"; break;
-                }
-                break;
-              case SIGFPE:
-                use_fault_addr = 1;
-                switch (cur.si.si_code) {
-                  case FPE_INTDIV: source = "integer divide by zero"; break;
-                  case FPE_INTOVF: source = "integer overflow"; break;
-                  case FPE_FLTDIV: source = "floating point divide by zero"; break;
-                  case FPE_FLTOVF: source = "floating point overflow"; break;
-                  case FPE_FLTUND: source = "floating point underflow"; break;
-                  case FPE_FLTRES: source = "floating point inexact result"; break;
-                  case FPE_FLTINV: source = "floating point invalid operation"; break;
-                  case FPE_FLTSUB: source = "subscript out of range"; break;
-                }
-                break;
-              case SIGSEGV:
-                use_fault_addr = 1;
-                switch (cur.si.si_code) {
-                  case SEGV_MAPERR: source = "address not mapped to object"; break;
-                  case SEGV_ACCERR: source = "invalid permissions for mapped object"; break;
-                }
-                break;
-              case SIGBUS:
-                use_fault_addr = 1;
-                switch (cur.si.si_code) {
-                  case BUS_ADRALN: source = "invalid address alignment"; break;
-                  case BUS_ADRERR: source = "non-existent physical address"; break;
-                  case BUS_OBJERR: source = "object specific hardware error"; break;
-                }
-                break;
-              case SIGTRAP:
-                switch (cur.si.si_code) {
-                  case TRAP_BRKPT: source = "process breakpoint"; break;
-                  case TRAP_TRACE: source = "process trace trap"; break;
-                }
-                break;
-              case SIGCHLD:
-                use_pid = 1;
-                switch (cur.si.si_code) {
-                  case CLD_EXITED: source = "child has exited"; break;
-                  case CLD_KILLED: source = "child was killed"; break;
-                  case CLD_DUMPED: source = "child terminated abnormally"; break;
-                  case CLD_TRAPPED: source = "traced child has trapped"; break;
-                  case CLD_STOPPED: source = "child has stopped"; break;
-                  case CLD_CONTINUED: source = "stopped child has continued"; break;
-                }
-                break;
-#ifdef SIGPOLL
-              case SIGPOLL:
-                switch (cur.si.si_code) {
-                  case POLL_IN: source = "data input available"; break;
-                  case POLL_OUT: source = "output buffers available"; break;
-                  case POLL_MSG: source = "input message available"; break;
-                  case POLL_ERR: source = "I/O error"; break;
-                  case POLL_PRI: source = "high priority input available"; break;
-                  case POLL_HUP: source = "device disconnected"; break;
-                }
-                break;
-#endif
-
-            }
-          } else {
-            use_pid = 1;
-            switch (cur.si.si_code) {
-#ifdef SI_NOINFO
-              case SI_NOINFO:
-                /* explicitly have no info */
-                use_pid = 0;
-                break;
-#endif
-              case SI_USER:    source = "userspace"; break;
-#ifdef SI_LWP
-              case SI_LWP:     source = "_lwp_kill"; break;
-#endif
-              case SI_QUEUE:   source = "sigqueue"; break;
-              case SI_TIMER:   source = "timer";   break;
-              case SI_ASYNCIO: source = "asyncio"; break;
-              case SI_MESGQ:   source = "mesgq"; break;
-#ifdef SI_KERNEL
-              case SI_KERNEL:  source = "kernel"; break;
-#endif
-#ifdef SI_SIGIO
-              case SI_SIGIO:   source = "sigio"; break;
-#endif
-#ifdef SI_TKILL
-              case SI_TKILL:   source = "tkill"; break;
-#endif
-#ifdef SI_RCTL
-              case SI_RCTL: source = "resource-control"; break;
-#endif
-            }
-          }
-          printf("#%-2d Signal %d: %s. %s",
-              frame, cur.si.si_signo, signame, source);
-
-          if (use_pid) {
-            printf(" pid=%d", cur.si.si_pid);
-          }
-
-          if (use_fault_addr) {
-            name = gimli_pc_sym_name(cur.si.si_addr, namebuf, sizeof(namebuf));
-            if (name && strlen(name)) {
-              printf(" (%s)", name);
-            } else {
-              printf(" (" PTRFMT ")", cur.si.si_addr);
-            }
-          }
-          printf("\n");
-
-        } else {
-          printf("#%-2d signal handler\n", frame);
-        }
-      } else {
-        name = gimli_pc_sym_name(cur.st.pc, namebuf, sizeof(namebuf));
-        printf("#%-2d " PTRFMT " %s", frame, cur.st.pc, name);
-        if (dwarf_determine_source_line_number(cur.st.pc,
-              filebuf, sizeof(filebuf), &lineno)) {
-          printf(" (%s:%lld)", filebuf, lineno);
-        }
-        printf("\n");
-        gimli_show_param_info(&cur);
-      }
-      frame++;
+      cur.frameno = frame;
+      cur.tid = tid;
+      frames[frame++] = cur;
     } while (cur.st.pc && gimli_unwind_next(&cur) && cur.st.pc);
+    return frame;
   }
+  return 0;
 }
 
 void trace_process(int pid)
@@ -329,6 +339,25 @@ void trace_process(int pid)
   if (gimli_attach(pid)) {
     int i;
     struct gimli_object_file *file;
+    struct gimli_unwind_cursor *frames;
+    void **pcaddrs;
+    void **contexts;
+
+    frames = calloc(max_frames, sizeof(*frames));
+    if (!frames) {
+      fprintf(stderr, "Not enough memory to trace %d frames\n", max_frames);
+      goto out;
+    }
+    pcaddrs = calloc(max_frames, sizeof(*pcaddrs));
+    if (!pcaddrs) {
+      fprintf(stderr, "Not enough memory to trace %d frames\n", max_frames);
+      goto out;
+    }
+    contexts = calloc(max_frames, sizeof(*contexts));
+    if (!contexts) {
+      fprintf(stderr, "Not enough memory to trace %d frames\n", max_frames);
+      goto out;
+    }
 
     for (file = gimli_files; file; file = file->next) {
       /* perform discovery of tracer module */
@@ -371,7 +400,68 @@ void trace_process(int pid)
     }
 
     for (i = 0; i < gimli_nthreads; i++) {
-      gimli_stack_trace(i);
+      int nframes = gimli_stack_trace(i, frames, max_frames);
+      int suppress = 0;
+      int nf;
+
+      for (nf = 0; nf < nframes; nf++) {
+        pcaddrs[nf] = frames[nf].st.pc;
+        contexts[nf] = &frames[nf];
+      }
+
+      for (file = gimli_files; file; file = file->next) {
+        if (file->tracer_module &&
+            file->tracer_module->api_version >= 2 &&
+            file->tracer_module->on_begin_thread_trace) {
+          if (file->tracer_module->on_begin_thread_trace(&ana_api,
+              file->objname, i, nframes, pcaddrs, contexts)
+              == GIMLI_ANA_SUPPRESS) {
+            suppress = 1;
+            break;
+          }
+        }
+      }
+
+      if (!suppress) {
+        struct gimli_thread_state *thr = &gimli_threads[i];
+
+        printf("\nThread %d (LWP %d)\n", i, thr->lwpid);
+        for (nf = 0; nf < nframes; nf++) {
+          suppress = 0;
+          for (file = gimli_files; file; file = file->next) {
+            if (file->tracer_module &&
+                file->tracer_module->api_version >= 2 &&
+                file->tracer_module->before_print_frame) {
+              if (file->tracer_module->before_print_frame(&ana_api,
+                  file->objname, i, nf, pcaddrs[nf], contexts[nf])
+                  == GIMLI_ANA_SUPPRESS) {
+                suppress = 1;
+                break;
+              }
+            }
+          }
+          if (!suppress) {
+            gimli_render_frame(i, nf, frames + nf);
+
+            for (file = gimli_files; file; file = file->next) {
+              if (file->tracer_module &&
+                  file->tracer_module->api_version >= 2 &&
+                  file->tracer_module->after_print_frame) {
+                file->tracer_module->after_print_frame(&ana_api,
+                      file->objname, i, nf, pcaddrs[nf], contexts[nf]);
+              }
+            }
+          }
+        }
+        for (file = gimli_files; file; file = file->next) {
+          if (file->tracer_module &&
+              file->tracer_module->api_version >= 2 &&
+              file->tracer_module->on_end_thread_trace) {
+            file->tracer_module->on_end_thread_trace(&ana_api,
+                file->objname, i, nframes, pcaddrs, contexts);
+          }
+        }
+      }
     }
 
     printf("\n");
@@ -384,8 +474,8 @@ void trace_process(int pid)
       }
     }
 
-
   }
+out:
   gimli_detach();
 }
 
@@ -398,6 +488,10 @@ struct gimli_object_mapping *gimli_add_mapping(
   m->next = gimli_mappings;
   m->base = base;
   m->len = len;
+  if (debug) {
+    fprintf(stderr, "MAP: %p - %p %s\n", (void*)m->base,
+      (void*)(m->base + m->len),  objname);
+  }
   m->offset = offset;
   m->objfile = gimli_find_object(objname);
   if (!m->objfile) {
@@ -424,16 +518,15 @@ struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
   const char *name, void *addr, uint32_t size)
 {
   struct gimli_symbol *s;
+  char buf[1024];
  
   s = calloc(1, sizeof(*s));
 
   s->rawname = strdup(name);
   s->name = s->rawname;
 
-  if (!strncmp(s->name, "_Z", 2)) {
-    /* need to de-mangle, per:
-     * http://www.codesourcery.com/public/cxx-abi/abi.html#mangling
-     */
+  if (gimli_demangle(s->rawname, buf, sizeof(buf))) {
+    s->name = strdup(buf);
   }
 
   s->addr = addr;
@@ -587,6 +680,10 @@ int main(int argc, char *argv[])
         fprintf(stderr, "invalid option %c\n", c);
         return 1;
     }
+  }
+
+  if (getenv("GIMLI_DWARF_DEBUG")) {
+    debug = 1;
   }
 
   if (optind < argc) {

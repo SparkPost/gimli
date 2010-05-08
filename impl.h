@@ -72,6 +72,7 @@ extern "C" {
 struct gimli_dwarf_reg_column {
   int rule; /* DW_RULE_XXX */
   uint64_t value; /* operand */
+  const uint8_t *ops;
 };
 
 #define GIMLI_MAX_DWARF_REGS 42
@@ -110,6 +111,9 @@ struct gimli_unwind_cursor {
   struct gimli_dwarf_unwind_state dw;
   /* if a signal frame, the signal that triggered it */
   siginfo_t si;
+  int frameno;
+  int tid;
+  int dwarffail;
 };
 
 struct dw_secinfo {
@@ -134,7 +138,7 @@ typedef struct gimli_elf_ehdr gimli_object_file_t;
 
 struct gimli_section_data {
   char *name;
-  char *data;
+  uint8_t *data;
   uint64_t size;
   uint64_t offset;
   uint64_t addr;
@@ -237,7 +241,11 @@ char **gimli_init_proctitle(int argc, char **argv);
 void gimli_set_proctitle(const char *fmt, ...);
 void gimli_set_proctitlev(const char *fmt, va_list ap);
 
+extern struct gimli_ana_api ana_api;
+
 int process_args(int *argc, char **argv[]);
+
+int gimli_demangle(const char *mangled, char *out, int out_size);
 
 const char *gimli_pc_sym_name(void *addr, char *buf, int buflen);
 int gimli_read_mem(void *src, void *dest, int len);
