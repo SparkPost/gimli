@@ -14,6 +14,10 @@
 #include <libgen.h>
 #include <Security/Authorization.h>
 
+#if defined(__ppc__)
+# error this code assumes intel architecture
+#endif
+
 #if __DARWIN_UNIX03 /* Leopard and up */
 #define GIMLI_DARWIN_REGNAME(x)  __##x
 #else
@@ -34,9 +38,39 @@ static const cpu_type_t whatami =
 #endif
       ;
 
+/* offset from fp to get to mcontext and siginfo_t in a signal frame.
+ * There's a chance that these need to be corrected for the amd64 16-byte
+ * alignment requirements */
+#define GIMLI_KERNEL_MCTX64 44
+#define GIMLI_KERNEL_SIGINFO64 0x2f0
+
+#if 0 /* this seems funky; probably padding related */
+struct gimli_kernel_sigframe64 {
+  char pad[40];
+  _STRUCT_MCONTEXT64 mctx;
+  siginfo_t si;
+  ucontext64_t uc;
+  /* redzone goes here */
+};
+#endif
+
+struct gimli_kernel_sigframe32 {
+  char pad[24];
+  int retaddr;
+  sig_t catcher;
+  int sigstyle;
+  int sig;
+  siginfo_t *sinfo;
+  _STRUCT_UCONTEXT *uctx;
+  _STRUCT_MCONTEXT32 mctx;
+  siginfo_t si;
+  _STRUCT_UCONTEXT uc;
+};
+
 static int target_pid;
 static int got_task = 0;
 static task_t targetTask;
+static void *sigtramp = NULL;
 
 /* Given a path to an image file, open it, find the correct architecture
  * portion for the header, populate rethdr with it and return the file
@@ -128,6 +162,9 @@ static void find_dwarf_dSYM(struct gimli_object_file *of)
     fprintf(stderr, "dsym: trying %s\n", dsym);
   }
   fd = read_mach_header(dsym, &hdr_offset, &hdr);
+  if (debug) {
+    fprintf(stderr, "dsym: %s: %s\n", dsym, fd == -1 ? "failed" : "got it");
+  }
   if (fd == -1) return;
 
   container = calloc(1, sizeof(*container));
@@ -193,7 +230,14 @@ struct gimli_section_data *gimli_get_section_by_name(
   return NULL;
 }
 
-static void read_symtab(struct gimli_object_file *of,
+typedef int (*symcallback)(
+  gimli_mach_header *mhdr,
+  void *context,
+  const char *strtab, gimli_nlist *nsym);
+
+
+
+static void walk_symtab(void *context, symcallback cb,
   int fd, uint32_t cmd_offset, uint32_t file_off,
   gimli_mach_header *mhdr)
 {
@@ -206,6 +250,19 @@ static void read_symtab(struct gimli_object_file *of,
   char *strtab;
   int i;
 
+  if (cmd_offset == 0) {
+    /* find the symtab */
+    gimli_segment_command seg;
+
+    cmd_offset = file_off + sizeof(*mhdr);
+    for (n = 0; n < mhdr->ncmds; n++, cmd_offset += seg.cmdsize) {
+      pread(fd, &seg, sizeof(struct load_command), cmd_offset);
+      if (seg.cmd == LC_SYMTAB) {
+        break;
+      }
+    }
+  }
+
   if (pread(fd, &scmd, sizeof(scmd), cmd_offset) != sizeof(scmd)) {
     fprintf(stderr, "pread failed %s\n", strerror(errno));
     return;
@@ -217,10 +274,6 @@ static void read_symtab(struct gimli_object_file *of,
 
   strtab = malloc(scmd.strsize + 1);
   strtab[scmd.strsize] = '\0';
-  if (debug) {
-    printf("%s: symoff %x %d\n", of->objname, scmd.symoff, scmd.symoff);
-    printf("%s: stroff %x %d\n", of->objname, scmd.stroff, scmd.stroff);
-  }
   if (pread(fd, strtab, scmd.strsize, scmd.stroff) != scmd.strsize) {
     fprintf(stderr, "failed to read string tab\n");
     return;
@@ -243,49 +296,105 @@ static void read_symtab(struct gimli_object_file *of,
     for (i = 0; i < n; i++) {
       gimli_nlist *nsym = &nl[i];
 
-      if (nsym->n_value != 0 && nsym->n_type != N_UNDF &&
-          nsym->n_un.n_strx > 0 && nsym->n_un.n_strx < scmd.strsize &&
-          strtab[nsym->n_un.n_strx] != '\0') {
-        int want_symbol = 0;
-
-        if (nsym->n_type & N_STAB) {
-          switch (nsym->n_type) {
-            case N_GSYM:
-            case N_FNAME:
-            case N_FUN: /* may have line numbers */
-            case N_LSYM:
-              want_symbol = 1;
-              break;
-            default:
-              want_symbol = 0;
-              //printf("        stab:%x\n", nsym->n_type);
-          }
-        } else if (nsym->n_type & N_PEXT) {
-          want_symbol = 0;
-        } else {
-          want_symbol = 1;
-#if 0
-          printf("sym %d: %.*s\n", i, 8, strtab + nsym->n_un.n_strx);
-          printf("        stab:%x pext:%d type:%x ext:%d\n",
-            nsym->n_type & N_STAB,
-            (nsym->n_type & N_PEXT) == N_PEXT ? 1 : 0,
-            nsym->n_type & N_TYPE,
-            (nsym->n_type & N_EXT) == N_EXT ? 1 : 0);
-#endif
+      if (nsym->n_un.n_strx > 0 && nsym->n_un.n_strx < scmd.strsize) {
+        if (!cb(mhdr, context, strtab, nsym)) {
+          return;
         }
-        if (want_symbol) {
-          void *value = (void*)(intptr_t)nsym->n_value;
-
-          if (mhdr->filetype != MH_EXECUTE) {
-            value += of->base_addr;
-          }
-//          printf("sym: %s %p\n", strtab + nsym->n_un.n_strx, (char*)value);
-          gimli_add_symbol(of, strtab + nsym->n_un.n_strx, value, 0);
-        }
-
       }
     }
   }
+}
+
+static int add_symbol(gimli_mach_header *mhdr, void *context,
+  const char *strtab, gimli_nlist *nsym)
+{
+  struct gimli_object_file *of = context;
+
+  if (nsym->n_value != 0 && nsym->n_type != N_UNDF &&
+      strtab[nsym->n_un.n_strx] != '\0') {
+    int want_symbol = 0;
+
+    if (nsym->n_type & N_STAB) {
+      switch (nsym->n_type) {
+        case N_GSYM:
+        case N_FNAME:
+        case N_FUN: /* may have line numbers */
+        case N_LSYM:
+          want_symbol = 1;
+          break;
+        default:
+          want_symbol = 0;
+          //printf("        stab:%x\n", nsym->n_type);
+      }
+    } else if (nsym->n_type & N_PEXT) {
+      want_symbol = 0;
+    } else {
+      want_symbol = 1;
+#if 0
+      printf("sym %d: %.*s\n", i, 8, strtab + nsym->n_un.n_strx);
+      printf("        stab:%x pext:%d type:%x ext:%d\n",
+          nsym->n_type & N_STAB,
+          (nsym->n_type & N_PEXT) == N_PEXT ? 1 : 0,
+          nsym->n_type & N_TYPE,
+          (nsym->n_type & N_EXT) == N_EXT ? 1 : 0);
+#endif
+    }
+    if (want_symbol) {
+      void *value = (void*)(intptr_t)nsym->n_value;
+
+      if (mhdr->filetype != MH_EXECUTE) {
+        value += of->base_addr;
+      }
+      //          printf("sym: %s %p\n", strtab + nsym->n_un.n_strx, (char*)value);
+      gimli_add_symbol(of, strtab + nsym->n_un.n_strx, value, 0);
+
+      if (sigtramp == NULL &&
+          !strcmp(strtab + nsym->n_un.n_strx, "__sigtramp")) {
+        sigtramp = value;
+      }
+    }
+  }
+  return 1;
+}
+
+static void read_symtab(struct gimli_object_file *of,
+  int fd, uint32_t cmd_offset, uint32_t file_off,
+  gimli_mach_header *mhdr)
+{
+  walk_symtab(of, add_symbol, fd, cmd_offset, file_off, mhdr);
+}
+
+/* dyld bootstrap.
+ * For whatever reason, the libc only provides a 32-bit implementation of
+ * the nlist() library routine, so we need to manually grub around in dyld
+ * to find the dyld symbols we need for discover_maps. */
+struct gimli_dyld_bootstrap {
+  void *info;
+  void *cache;
+};
+
+static int find_dyld_symbols(gimli_mach_header *mhdr, void *context,
+  const char *strtab, gimli_nlist *nsym)
+{
+  struct gimli_dyld_bootstrap *dyld = context;
+  const char *name = strtab + nsym->n_un.n_strx;
+
+  if (!dyld->info) {
+    if (!strcmp(name, "_dyld_all_image_infos")) {
+      dyld->info = (void*)nsym->n_value;
+      return 1;
+    }
+  }
+  if (dyld->cache) {
+    if (!strcmp(name, "_dyld_shared_region_ranges")) {
+      dyld->cache = (void*)nsym->n_value;
+      return 1;
+    }
+  }
+  if (dyld->cache && dyld->info) {
+    return 0;
+  }
+  return 1;
 }
 
 /* lets see if we can figure out what we have loaded and where.  We assume that
@@ -295,7 +404,6 @@ static void read_symtab(struct gimli_object_file *of,
  */
 static void discover_maps(void)
 {
-  struct nlist l[3];
   int i;
   char *symoff = NULL;
   struct dyld_shared_cache_ranges shared_cache;
@@ -303,24 +411,29 @@ static void discover_maps(void)
   int have_shared_cache;
   int in_shared_cache;
   gimli_mach_header hdr;
+  struct gimli_dyld_bootstrap dyld;
+  int fd;
+  uint32_t hdr_offset = 0;
 
-  memset(&l, 0, sizeof(l));
-  l[0].n_un.n_name = "_dyld_all_image_infos";
-  l[1].n_un.n_name = "_dyld_shared_region_ranges";
-  nlist("/usr/lib/dyld", l);
-    
-  if (!l[0].n_value) {
-    fprintf(stderr,
-      "DYLD: could not locate dyld_all_image_infos\n");
+  fd = read_mach_header("/usr/lib/dyld", &hdr_offset, &hdr);
+  if (fd == -1) {
     return;
   }
-  gimli_read_mem((void*)l[0].n_value, &infos, sizeof(infos));
+  memset(&dyld, 0, sizeof(dyld));
+  walk_symtab(&dyld, find_dyld_symbols, fd, 0, hdr_offset, &hdr);
+
+  if (dyld.info) {
+    gimli_read_mem(dyld.info, &infos, sizeof(infos));
+  } else {
+    fprintf(stderr, "DYLD: unable to locate _dyld_all_image_infos\n");
+    return;
+  }
 
   /* 10.5 introduces a shared cache; when processing images, if the image
    * addresses match against the shared cache, then we need to perform
    * an additional computation to obtain the relocated address in the target */
-  if (l[1].n_value) {
-    gimli_read_mem((void*)l[1].n_value, &shared_cache, sizeof(shared_cache));
+  if (dyld.cache) {
+    gimli_read_mem(dyld.cache, &shared_cache, sizeof(shared_cache));
     have_shared_cache = 1;
   } else {
     have_shared_cache = 0;
@@ -523,19 +636,35 @@ int gimli_attach(int pid)
     threads = calloc(n, sizeof(*threads));
 
     for (i = 0; i < n; i++) {
-#if defined(__LP64__) || defined(__ppc__)
-# error this code assumes 32-bit intel
-#endif
-      x86_thread_state32_t ts32;
-      mach_msg_type_number_t count = x86_THREAD_STATE32_COUNT;
-      memset(&ts32, 0, sizeof(ts32));
-      rc = thread_get_state(threadlist[i], x86_THREAD_STATE32,
-          (thread_state_t)&ts32, &count);
+#ifdef __x86_64__
+      x86_thread_state64_t ts;
+      mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
+
+      memset(&ts, 0, sizeof(ts));
+      rc = thread_get_state(threadlist[i], x86_THREAD_STATE64,
+          (thread_state_t)&ts, &count);
       if (rc == KERN_SUCCESS) {
-        threads[i].pc = (void*)ts32.GIMLI_DARWIN_REGNAME(eip);
-        threads[i].fp = (void*)ts32.GIMLI_DARWIN_REGNAME(ebp);
-        threads[i].sp = (void*)ts32.GIMLI_DARWIN_REGNAME(esp);
+        memcpy(&threads[i].regs, &ts, sizeof(ts));
+        threads[i].pc = (void*)ts.GIMLI_DARWIN_REGNAME(rip);
+        threads[i].fp = (void*)ts.GIMLI_DARWIN_REGNAME(rbp);
+        threads[i].sp = (void*)ts.GIMLI_DARWIN_REGNAME(rsp);
       }
+#elif defined(__i386__)
+      x86_thread_state32_t ts;
+      mach_msg_type_number_t count = x86_THREAD_STATE32_COUNT;
+
+      memset(&ts, 0, sizeof(ts));
+      rc = thread_get_state(threadlist[i], x86_THREAD_STATE32,
+          (thread_state_t)&ts, &count);
+      if (rc == KERN_SUCCESS) {
+        memcpy(&threads[i].regs, &ts, sizeof(ts));
+        threads[i].pc = (void*)ts.GIMLI_DARWIN_REGNAME(eip);
+        threads[i].fp = (void*)ts.GIMLI_DARWIN_REGNAME(ebp);
+        threads[i].sp = (void*)ts.GIMLI_DARWIN_REGNAME(esp);
+      }
+#else
+# error unknown architecture
+#endif
     }
     gimli_nthreads = n;
     gimli_threads = threads;
@@ -557,30 +686,65 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
     void *pc;
   } frame;
   struct gimli_unwind_cursor c;
-  
-#if 0
-  if (gimli_is_signal_frame(cur)) {
-    ucontext_t uc;
 
-    if (gimli_read_mem((void*)cur->st.lwpst.pr_oldcontext, &uc, sizeof(uc)) !=
-        sizeof(uc)) {
+  if (gimli_is_signal_frame(cur)) {
+#if defined(__x86_64__)
+    _STRUCT_MCONTEXT64 mctx;
+    
+    if (gimli_read_mem(cur->st.fp + GIMLI_KERNEL_MCTX64, &mctx,
+        sizeof(mctx)) != sizeof(mctx)) {
       fprintf(stderr, "unable to read old context\n");
       return 0;
     }
-    /* update to next in chain */
-    cur->st.lwpst.pr_oldcontext = (intptr_t)uc.uc_link;
-    /* copy out register set */
-    memcpy(cur->st.regs, uc.uc_mcontext.gregs, sizeof(cur->st.regs));
-    /* update local copy */
-    cur->st.fp = (void*)cur->st.regs[R_FP];
-    cur->st.pc = (void*)cur->st.regs[R_PC];
-    cur->st.sp = (void*)cur->st.regs[R_SP];
-    return 1;
-  }
+#if 0
+#define SHOWREG(n) fprintf(stderr, #n ": %p\n", mctx.GIMLI_DARWIN_REGNAME(ss).GIMLI_DARWIN_REGNAME(n));
+    SHOWREG(rax);
+    SHOWREG(rbx);
+    SHOWREG(rcx);
+    SHOWREG(rdx);
+    SHOWREG(rdi);
+    SHOWREG(rsi);
+    SHOWREG(rbp);
+    SHOWREG(rsp);
+    SHOWREG(r8);
+    SHOWREG(r9);
+    SHOWREG(r10);
+    SHOWREG(r11);
+    SHOWREG(r12);
+    SHOWREG(r13);
+    SHOWREG(r14);
+    SHOWREG(r15);
+    SHOWREG(rip);
 #endif
+
+    memcpy(&cur->st.regs, &mctx.GIMLI_DARWIN_REGNAME(ss),
+      sizeof(cur->st.regs));
+    cur->st.pc = (void*)cur->st.regs.GIMLI_DARWIN_REGNAME(rip);
+    cur->st.fp = (void*)cur->st.regs.GIMLI_DARWIN_REGNAME(rbp);
+    cur->st.sp = (void*)cur->st.regs.GIMLI_DARWIN_REGNAME(rsp);
+    return 1;
+#elif defined(__i386__)
+    struct gimli_kernel_sigframe32 f;
+    if (gimli_read_mem(cur->st.fp, &f, sizeof(f)) != sizeof(f)) {
+      fprintf(stderr, "unable to read old context\n");
+      return 0;
+    };
+    memcpy(&cur->st.regs, &f.mctx.GIMLI_DARWIN_REGNAME(ss),
+      sizeof(cur->st.regs));
+    cur->st.pc = (void*)cur->st.regs.GIMLI_DARWIN_REGNAME(eip);
+    cur->st.fp = (void*)cur->st.regs.GIMLI_DARWIN_REGNAME(ebp);
+    cur->st.sp = (void*)cur->st.regs.GIMLI_DARWIN_REGNAME(esp);
+    return 1;
+#else
+# error code me
+#endif
+  }
 
   c = *cur;
   if (gimli_dwarf_unwind_next(cur) && cur->st.pc) {
+#if defined(__x86_64__)
+//    cur->st.regs.GIMLI_DARWIN_REGNAME(rsp) = (intptr_t)cur->st.fp;
+#endif
     return 1;
   }
   if (debug) {
@@ -606,6 +770,10 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
     }
 #ifdef __i386__
     cur->st.regs.GIMLI_DARWIN_REGNAME(ebp) = (intptr_t)cur->st.fp;
+#elif defined(__x86_64__)
+    cur->st.regs.GIMLI_DARWIN_REGNAME(rbp) = (intptr_t)cur->st.fp;
+#else
+# error code me
 #endif
     return 1;
   } else if (debug) {
@@ -613,6 +781,7 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
   }
   return 0;
 }
+
 int gimli_detach(void)
 {
   if (got_task) {
@@ -625,7 +794,7 @@ int gimli_detach(void)
 int gimli_read_mem(void *src, void *dest, int len)
 {
   kern_return_t rc;
-  mach_msg_type_number_t dataCnt = len;
+  vm_size_t dataCnt = len;
 
   rc = vm_read_overwrite(targetTask, (vm_address_t)src, len,
           (vm_address_t)dest, &dataCnt);
@@ -646,13 +815,12 @@ int gimli_read_mem(void *src, void *dest, int len)
 
 void *gimli_reg_addr(struct gimli_unwind_cursor *cur, int col)
 {
-  /* See http://wikis.sun.com/display/SunStudio/Dwarf+Register+Numbering */
   switch (col) {
 #ifdef __x86_64__
     case 0: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rax);
-    case 1: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rdx);
+    case 1: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rbx);
     case 2: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rcx);
-    case 3: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rbx);
+    case 3: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rdx);
     case 4: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rsi);
     case 5: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rdi);
     case 6: return &cur->st.regs.GIMLI_DARWIN_REGNAME(rbp);
@@ -685,9 +853,37 @@ void *gimli_reg_addr(struct gimli_unwind_cursor *cur, int col)
     default: return 0;
   }
 }
+
 int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
 {
   if (cur->st.pc == (void*)-1) {
+    memset(&cur->si, 0, sizeof(cur->si));
+    return 1;
+  }
+  if (sigtramp && cur->st.pc >= sigtramp && cur->st.pc <= sigtramp + 0xff) {
+#if defined(__x86_64__)
+#if 0
+    /* riddle me this: why is this cur->st.fp here, but cur->st.fp + 4 in
+     * the unwind call? Is there some weird padding issue going on? */
+    struct gimli_kernel_sigframe64 *s = cur->st.fp;
+    fprintf(stderr, "is? SI addr is %p (diff=%x)\n", &s->si, (intptr_t)&s->si - (intptr_t)cur->st.fp);
+    gimli_read_mem(&s->si, &cur->si, sizeof(cur->si));
+#else
+    if (gimli_read_mem(cur->st.fp + GIMLI_KERNEL_SIGINFO64,
+        &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
+      memset(&cur->si, 0, sizeof(cur->si));
+    }
+    return 1;
+#endif
+#elif defined(__i386__)
+    struct gimli_kernel_sigframe32 *f = cur->st.fp;
+    if (gimli_read_mem(&f->si, &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
+      memset(&cur->si, 0, sizeof(cur->si));
+    }
+    return 1;
+#else
+# error no si handler
+#endif
     return 1;
   }
   return 0;

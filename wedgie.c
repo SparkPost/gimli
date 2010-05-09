@@ -44,6 +44,8 @@ static void handler(int signo, siginfo_t *si, void *v)
   printf("pid: %d signal handler invoked signo=%d si=%p v=%p\n", getpid(), signo, si, v);
   printf("top of stack %p\n", &signo);
   snprintf(buf, sizeof(buf)-1, "./glider %d", getpid());
+//  snprintf(buf, sizeof(buf)-1, "gdb .libs/wedgie %d", getpid());
+
 //  snprintf(buf, sizeof(buf)-1, "/opt/msys/gimli/bin/glider %d", getpid());
 //  snprintf(buf, sizeof(buf)-1, "gstack %d", getpid());
   system(buf);
@@ -53,7 +55,7 @@ static void handler(int signo, siginfo_t *si, void *v)
 
 static void mr_wedge(struct wedgie_data *data, int port)
 {
-  fprintf(stderr, "taking a nap\n");
+  fprintf(stderr, "taking a nap in func %p\n", mr_wedge);
   sleep(2);
   *(long*)42 = 42;
   sleep(10);

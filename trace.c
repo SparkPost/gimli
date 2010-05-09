@@ -284,7 +284,7 @@ void gimli_render_frame(int tid, int nframe, struct gimli_unwind_cursor *frame)
         }
       }
       printf("#%-2d Signal %d: %s. %s",
-          frame, cur.si.si_signo, signame, source);
+          nframe, cur.si.si_signo, signame, source);
 
       if (use_pid) {
         printf(" pid=%d", cur.si.si_pid);
@@ -535,7 +535,7 @@ struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
   s->next = f->symroot;
   f->symroot = s;
 
-  if (debug) {
+  if (debug && 0) {
     printf("add symbol: %s`%s = %p (%d)\n",
       f->objname, s->name, s->addr, s->size);
   }

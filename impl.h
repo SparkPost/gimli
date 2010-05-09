@@ -9,6 +9,13 @@
 #ifdef __linux__
 # define _GNU_SOURCE 1
 #endif
+#ifdef __MACH__
+/* in what looks like an honest omission, signal.h only requests 64-bit
+ * ucontext structures on ppc platforms, so let's poke these defines to
+ * force them to appear */
+# define __need_mcontext64_t
+# define __need_ucontext64_t
+#endif
 
 #include <signal.h>
 #include <sys/types.h>

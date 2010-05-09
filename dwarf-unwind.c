@@ -613,7 +613,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
       continue;
     }
     if (debug) {
-      printf("Using %s for unwind data for %s, %x bytes offset %x\n",
+      fprintf(stderr, "Using %s for unwind data for %s, %x bytes offset %x\n",
           s->name, s->container->objname, s->size, s->offset);
     }
 
@@ -627,7 +627,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
       uint64_t cie_id;
       const uint8_t *aug;
 
-      if (debug) printf("offset: %p\n", eh_frame - eh_start);
+      if (debug) fprintf(stderr, "offset: %p\n", eh_frame - eh_start);
       memcpy(&len, eh_frame, sizeof(len));
       if (len == 0 && is_eh_frame) {
         break;
@@ -642,10 +642,6 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
         initlen = len;
       }
       next = eh_frame + initlen;
-if (debug) {
-  printf("initlen: %lx (next = %lx) is64=%d\n",
-    (long)initlen, (long)(next - eh_start), is_64);
-}
       if (is_64) {
         memcpy(&cie_id, eh_frame, sizeof(cie_id));
         eh_frame += sizeof(cie_id);
@@ -657,6 +653,11 @@ if (debug) {
           cie_id = 0xffffffffffffffffULL;
         }
       }
+if (debug) {
+  fprintf(stderr, "initlen: %lx (next = %lx) is64=%d cie_id=%llx\n",
+    (long)initlen, (long)(next - eh_start), is_64,
+    (long long)cie_id);
+}
       if ((is_eh_frame && cie_id == 0) ||
           (!is_eh_frame && cie_id == 0xffffffffffffffffULL)) {
         uint8_t ver;
@@ -733,7 +734,7 @@ if (debug) {
         }
 
         if (debug) {
-          printf("\n\nReading CIE, len is %ju, ver=%d aug=%s\n"
+          fprintf(stderr, "\n\nReading CIE, len is %ju, ver=%d aug=%s\n"
               "code_align=%jd data_align=%jd ret_addr=%ju\n",
               initlen, ver, cie.aug,
               cie.code_align, cie.data_align, cie.ret_addr);
@@ -759,7 +760,7 @@ if (debug) {
           return 0;
         }
         if (debug) {
-          printf("FDE: addr_range raw=%p\ninit_loc=%p addr=%p\n", 
+          fprintf(stderr, "FDE: addr_range raw=%p\ninit_loc=%p addr=%p\n", 
             (void*)(intptr_t)fde.addr_range,
             (void*)(intptr_t)fde.initial_loc,
             s->addr);
@@ -769,7 +770,7 @@ if (debug) {
           char name[1024];
           const char *sym = gimli_pc_sym_name(
               (void*)(intptr_t)fde.initial_loc, name, sizeof(name));
-          printf("FDE: init=%p-%p %s\npc=%p aug=%s\n",
+          fprintf(stderr, "FDE: init=%p-%p %s\npc=%p aug=%s\n",
               (char*)(intptr_t)fde.initial_loc,
               (char*)(intptr_t)(fde.initial_loc + fde.addr_range),
               sym,
@@ -833,6 +834,10 @@ if (debug) {
       }
 
       eh_frame = next;
+    }
+    if (debug) {
+      fprintf(stderr, "did not find what I was looking for in %s@%s\n",
+          s->name, s->container->objname);
     }
   }
 
