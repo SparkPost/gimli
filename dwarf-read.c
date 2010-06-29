@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2009-2010 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://labs.omniti.com/gimli/trunk/LICENSE
  */
@@ -1799,6 +1799,95 @@ static int show_param(struct gimli_unwind_cursor *cur,
     }
   } else {
     printf("no type information\n");
+  }
+  return 0;
+}
+
+int gimli_get_parameter(void *context, const char *varname,
+  const char **datatype, void **addr, uint64_t *size)
+{
+  struct gimli_unwind_cursor *cur = context;
+  struct gimli_dwarf_die *die = gimli_dwarf_get_die_for_pc(cur);
+  struct gimli_dwarf_die *td;
+  uint64_t frame_base = 0;
+  uint64_t res;
+  uint64_t comp_unit_base = 0;
+  struct gimli_dwarf_attr *location, *type;
+  struct gimli_dwarf_attr *name, *frame_base_attr;
+  struct gimli_object_mapping *m = gimli_mapping_for_addr(cur->st.pc);
+  int had_params = 0;
+  int is_stack = 0;
+
+  if (!die) {
+    return 0;
+  }
+
+  if (die->parent->tag == DW_TAG_compile_unit) {
+    gimli_dwarf_die_get_uint64_t_attr(die->parent, 
+      DW_AT_low_pc, &comp_unit_base);
+  }
+
+  frame_base_attr = gimli_dwarf_die_get_attr(die, DW_AT_frame_base);
+  if (frame_base_attr) {
+    switch (frame_base_attr->form) {
+      case DW_FORM_block:
+        dw_eval_expr(cur, (uint8_t*)frame_base_attr->ptr, frame_base_attr->code,
+            0, &frame_base, NULL, &is_stack);
+        break;
+      case DW_FORM_data8:
+        dw_calc_location(cur, comp_unit_base, m,
+            frame_base_attr->code, &frame_base, NULL, &is_stack);
+        break;
+      default:
+        printf("Unhandled frame base form %llx\n",
+            frame_base_attr->form);
+    }
+  } 
+
+  for (die = die->kids; die; die = die->next) {
+    if (die->tag == DW_TAG_formal_parameter) {
+      name = gimli_dwarf_die_get_attr(die, DW_AT_name);
+      if (!name) continue;
+      if (strcmp(name->ptr, varname)) continue;
+
+      location = gimli_dwarf_die_get_attr(die, DW_AT_location);
+      type = gimli_dwarf_die_get_attr(die, DW_AT_type);
+
+      res = 0;
+      is_stack = 1;
+      if (location) {
+        switch (location->form) {
+          case DW_FORM_block:
+            if (!dw_eval_expr(cur, (uint8_t*)location->ptr, location->code,
+                frame_base, &res, NULL, &is_stack)) {
+              res = 0;
+            }
+            break;
+          case DW_FORM_data8:
+            if (!dw_calc_location(cur, comp_unit_base, m,
+                location->code, &res, NULL, &is_stack)) {
+              res = 0;
+            }
+            break;
+          default:
+            printf("Unhandled location form %llx\n", location->form);
+        }
+      } else {
+        printf("no location attribute for parameter %s die->offset=%llx %s\n",
+          name ? (char*)name->ptr : "?", die->offset, m->objfile->objname);
+      }
+
+      if (res) {
+        struct gimli_dwarf_die *td;
+
+        *datatype = resolve_type_name(m->objfile, type);
+        *addr = (void*)(intptr_t)res;
+        td = gimli_dwarf_get_die(m->objfile, type->code);
+        gimli_dwarf_die_get_uint64_t_attr(td, DW_AT_byte_size, size);
+        return 1;
+      }
+      return 0;
+    }
   }
   return 0;
 }

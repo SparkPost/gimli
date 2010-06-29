@@ -19,13 +19,24 @@ struct gimli_symbol {
   char *name;
   /** raw, un-mangled symbol name */
   char *rawname;
+  /** resolved address in the target process */
   void *addr;
+  /** size of the symbol. Not all systems provide this information
+   * for all symbols */
   uint32_t size;
+  /** do not use */
   uint32_t ordinality;
+  /** do not use */
   struct gimli_symbol *next;
 };
 
 #define GIMLI_ANA_API_VERSION 2
+
+struct gimli_proc_stat {
+  pid_t pid;
+  size_t pr_size;
+  size_t pr_rssize;
+};
 
 struct gimli_ana_api {
   int api_version;
@@ -43,11 +54,47 @@ struct gimli_ana_api {
    * The caller must free() the memory when it is no longer required */
   char *(*read_string)(void *src);
 
+/* API Version 2 begins here */
+
+  /** determine the source filename and line number information
+   * for a given code address.
+   * Returns 1 if the source information is found, 0 otherwise.
+   * Populates filebuf and lineno if the source is found. */
+  int (*get_source_info)(void *addr, char *buf, int buflen, int *lineno);
+
+  /** Given a context, locate a named parameter and return its
+   * C-style datatype name, address and size.  Returns 1 if located.
+   * 0 otherwise. */
+  int (*get_parameter)(void *context, const char *varname,
+    const char **datatype, void **addr, uint64_t *size);
+
+  /** Lookup a symbol, treat it as a char* in the target and
+   * return a copy of the NUL-terminated string to which it points.
+   * This is logically equivalent to sym_lookup, deref'ing the
+   * result, and then read_string'ing the result of that.
+   * The caller must free() the return memory when it is no longer
+   * required. */
+  char *(*get_string_symbol)(const char *obj, const char *name);
+
+  /** Lookup a symbol and copy its target into a caller provided
+   * buffer.
+   * If deref is non-zero, the symbol value is treated as pointer
+   * with that many levels of indirection; this function will
+   * de-reference each of those levels to arrive at a final address.
+   * SIZE bytes of data will then be read from the final address
+   * and copied in the the caller provided buffer.
+   * Returns 0 if SIZE could not be read completely, 1 on success */
+  int (*copy_from_symbol)(const char *obj, const char *name,
+    int deref, void *addr, uint32_t size);
+
+  /* returns process status information for the target process */
+  const struct gimli_proc_stat *(*get_proc_status)(void);
 };
 
 struct gimli_ana_module {
   int api_version;
   void (*perform_trace)(const struct gimli_ana_api *api, const char *object);
+/* API Version 2 begins here */
 #define GIMLI_ANA_SUPPRESS 0
 #define GIMLI_ANA_CONTINUE 1
   /* inform a module that we're about to trace a thread.

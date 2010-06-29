@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2009 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2007-2010 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://labs.omniti.com/gimli/trunk/LICENSE
  */
@@ -12,12 +12,70 @@ struct gimli_thread_state *gimli_threads = NULL;
 struct gimli_object_file *gimli_files = NULL;
 struct gimli_object_mapping *gimli_mappings = NULL;
 
+static struct gimli_proc_stat proc_stat = { 0, };
+
+static const struct gimli_proc_stat *gimli_get_proc_stat(void)
+{
+  return &proc_stat;
+}
+
+static int gimli_get_source_info(void *addr, char *buf,
+  int buflen, int *lineno)
+{
+  uint64_t l;
+  int ret = dwarf_determine_source_line_number(addr, buf, buflen, &l);
+  if (ret) {
+    *lineno = (int)l;
+  }
+  return ret;
+}
+
+static char *gimli_get_string_symbol(const char *obj, const char *name)
+{
+  struct gimli_symbol *sym;
+
+  sym = gimli_sym_lookup(obj, name);
+  if (sym) {
+    void *addr;
+
+    if (gimli_read_mem(sym->addr, &addr, sizeof(addr)) == sizeof(addr)) {
+      return gimli_read_string(addr);
+    }
+  }
+  return NULL;
+}
+
+static int gimli_copy_from_symbol(const char *obj, const char *name,
+  int deref, void *buf, uint32_t size)
+{
+  struct gimli_symbol *sym;
+
+  sym = gimli_sym_lookup(obj, name);
+  if (sym) {
+    void *addr = sym->addr;
+
+    while (deref--) {
+      if (gimli_read_mem(addr, &addr, sizeof(addr)) != sizeof(addr)) {
+        return 0;
+      }
+    }
+
+    return gimli_read_mem(addr, buf, size) == size;
+  }
+  return 0;
+}
+
 struct gimli_ana_api ana_api = {
   GIMLI_ANA_API_VERSION,
   gimli_sym_lookup,
   gimli_pc_sym_name,
   gimli_read_mem,
-  gimli_read_string
+  gimli_read_string,
+  gimli_get_source_info,
+  gimli_get_parameter,
+  gimli_get_string_symbol,
+  gimli_copy_from_symbol,
+  gimli_get_proc_stat,
 };
 
 char *gimli_read_string(void *addr)
@@ -334,6 +392,46 @@ int gimli_stack_trace(int tid, struct gimli_unwind_cursor *frames, int nframes)
   return 0;
 }
 
+static void populate_proc_stat(int pid)
+{
+  int fd, ret;
+  char buffer[1024];
+
+#ifdef __linux__
+  /* see proc(5) for details on statm */
+  snprintf(buffer, sizeof(buffer), "/proc/%d/statm", pid);
+  fd = open(buffer, O_RDONLY);
+  if (fd >= 0) {
+    ret = read(fd, buffer, sizeof(buffer));
+    if (ret > 0) {
+      unsigned long a, b;
+
+      buffer[ret] = '\0';
+      /* want first two fields */
+      if (sscanf(buffer, "%lu %lu", &a, &b) == 2) {
+        proc_stat.pr_size = a * PAGE_SIZE;
+        proc_stat.pr_rssize = b * PAGE_SIZE;
+      }
+    }
+    close(fd);
+  }
+#elif defined(sun)
+  psinfo_t info;
+
+  snprintf(buffer, sizeof(buffer), "/proc/%d/psinfo", pid);
+  fd = open(buffer, O_RDONLY);
+  if (fd >= 0) {
+    ret = read(fd, &info, sizeof(info));
+    if (ret == sizeof(info)) {
+      proc_stat.pr_size = info.pr_size * 1024;
+      proc_stat.pr_rssize = info.pr_rssize * 1024;
+    }
+    close(fd);
+  }
+#endif
+  proc_stat.pid = pid;
+}
+
 void trace_process(int pid)
 {
   if (gimli_attach(pid)) {
@@ -342,6 +440,8 @@ void trace_process(int pid)
     struct gimli_unwind_cursor *frames;
     void **pcaddrs;
     void **contexts;
+
+    populate_proc_stat(pid);
 
     frames = calloc(max_frames, sizeof(*frames));
     if (!frames) {
@@ -425,7 +525,7 @@ void trace_process(int pid)
       if (!suppress) {
         struct gimli_thread_state *thr = &gimli_threads[i];
 
-        printf("\nThread %d (LWP %d)\n", i, thr->lwpid);
+        printf("Thread %d (LWP %d)\n", i, thr->lwpid);
         for (nf = 0; nf < nframes; nf++) {
           suppress = 0;
           for (file = gimli_files; file; file = file->next) {
@@ -461,6 +561,7 @@ void trace_process(int pid)
                 file->objname, i, nframes, pcaddrs, contexts);
           }
         }
+        printf("\n");
       }
     }
 

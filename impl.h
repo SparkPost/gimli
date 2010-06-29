@@ -258,6 +258,8 @@ const char *gimli_pc_sym_name(void *addr, char *buf, int buflen);
 int gimli_read_mem(void *src, void *dest, int len);
 struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name);
 char *gimli_read_string(void *addr);
+int gimli_get_parameter(void *context, const char *varname,
+  const char **datatype, void **addr, uint64_t *size);
 
 #ifdef __cplusplus
 }
