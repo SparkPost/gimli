@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2008-2009 Message Systems, Inc. All rights reserved
  * For licensing information, see:
- * https://labs.omniti.com/gimli/trunk/LICENSE
+ * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
 #ifndef LIBGIMLI_H
 #define LIBGIMLI_H
