@@ -5,6 +5,7 @@
  */
 #include "impl.h"
 
+static gimli_shutdown_func_t shutdown_func = NULL;
 static volatile struct gimli_heartbeat *hb = NULL;
 
 /* this apparently redundant function is present to help ensure that
@@ -37,7 +38,10 @@ static void gimli_signal_handler(int signo, siginfo_t *si, void *unused)
   /* if we get here, it is because the trace completed and SIGCONT'd
    * us as part of its detach */
 
-  /* FIXME: should invoke an application supplied shutdown handler */
+  /* invoke an application supplied shutdown handler */
+  if (shutdown_func) {
+    shutdown_func(signo, si);
+  }
   gimli_heartbeat_set(hb, GIMLI_HB_STOPPING);
 
   /* and now we want to exit, preserving the original exit status.
@@ -106,6 +110,11 @@ void gimli_heartbeat_set(volatile struct gimli_heartbeat *hb, int state)
 {
   hb->state = state;
   hb->ticks++;
+}
+
+void gimli_set_shutdown_func(gimli_shutdown_func_t func)
+{
+  shutdown_func = func;
 }
 
 /* vim:ts=2:sw=2:et:

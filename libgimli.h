@@ -1,10 +1,12 @@
 /*
- * Copyright (c) 2008-2009 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2008-2010 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
 #ifndef LIBGIMLI_H
 #define LIBGIMLI_H
+
+#include <signal.h>
 
 /* This header file defines the interface that a child process may optionally
  * use to notify the gimli monitor process that it is up and running and in a
@@ -53,6 +55,13 @@ void gimli_establish_signal_handlers(void);
 
 /** modifies the heartbeat state, and increment the ticks */
 void gimli_heartbeat_set(volatile struct gimli_heartbeat *hb, int state);
+
+/** the prototype of a function to be called before terminating in the
+ * event of receiving a fatal signal. */
+typedef void (*gimli_shutdown_func_t)(int signo, siginfo_t *si);
+
+/** register a shutdown function */
+void gimli_set_shutdown_func(gimli_shutdown_func_t func);
 
 #ifdef __cplusplus
 }
