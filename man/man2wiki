@@ -1,0 +1,72 @@
+#!/usr/bin/perl
+# vim:ts=2:sw=2:et:
+# This script converts the subset of {n,g,t}roff macros used in the gimli
+# man pages into a fairly decent Creole wiki equivalent
+use strict;
+use File::Basename;
+use IO::File;
+
+sub unesc {
+  my ($arg) = @_;
+  $arg =~ s/\\-/-/g;
+  return $arg;
+}
+
+sub man2wiki {
+  my ($filename) = @_;
+  my $fh = IO::File->new($filename);
+  my $name = basename($filename);
+  my $wikiname = ucfirst($name);
+  $wikiname =~ s/\.\d$//;
+  $wikiname .= '.wiki';
+  $wikiname = "../gimli-wiki/$wikiname";
+
+  my $out = IO::File->new($wikiname, ">") or die "$!";
+
+  print $out "This page was automatically generated from $name\n\n";
+
+  while (<$fh>) {
+    chomp(my $line = $_);
+
+    if ($line =~ m/^\.\\\"/) {
+      next;
+    }
+
+    if ($line eq '.TP') {
+      chomp(my $title = <$fh>);
+      $title =~ s/^\.B //;
+      print $out "\n; **$title**\n: ";
+      next;
+    }
+
+    if ($line =~ m/^\.TH\s+(\S+)\s+(\S+)\s+\"(.*)\"$/) {
+      next;
+    }
+
+    if ($line =~ m/^\.SH\s+("?)(.*)(\1)\s*$/) {
+      print $out "\n\n== " . unesc($2) . " ==\n\n";
+      next;
+    }
+
+    if ($line =~ m/^\.R?B\s+(.*)\s*$/) {
+      print $out "**" . unesc($1) . "** ";
+      next;
+    }
+    if ($line =~ m/^\.I\s+(.*)\s*$/) {
+      print $out "//" . unesc($1) . "// ";
+      next;
+    }
+    if ($line eq '.PP' or $line eq '.TP') {
+      print $out "\n\n";
+      next;
+    }
+
+    print $out unesc($line) . " ";
+  }
+  print $out "\n";
+}
+
+for my $name ('man/monitor.1', 'man/glider.1') {
+  man2wiki($name);
+}
+
