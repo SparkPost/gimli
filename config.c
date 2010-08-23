@@ -36,6 +36,7 @@ static struct option {
   { "uid", "GIMLI_UID", OPT_INTEGER, &run_as_uid },
   { "gid", "GIMLI_GID", OPT_INTEGER, &run_as_gid },
   { "arg0", "GIMLI_ARG0", OPT_STRING, &arg0 },
+  { "run-once", "GIMLI_RUN_ONCE", OPT_INTEGER, &run_only_once },
   { NULL }
 };
 

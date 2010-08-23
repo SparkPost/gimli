@@ -6,6 +6,7 @@
 #include "impl.h"
 
 int respawn = 1;
+int run_only_once = 0;
 int should_exit = 0;
 int debug = 0;
 int quiet = 0;
@@ -373,7 +374,9 @@ static void setup_signal_handlers(int is_child)
   signal(SIGTERM, handler);
   signal(SIGINT, handler);
   signal(SIGQUIT, handler);
-  signal(SIGHUP, catch_hup);
+  if (!run_only_once) {
+    signal(SIGHUP, catch_hup);
+  }
   signal(SIGCHLD, is_child ? SIG_DFL : catch_sigchld);
   signal(SIGUSR1, is_child ? SIG_DFL : catch_usr1);
 }
@@ -699,6 +702,9 @@ int main(int argc, char *argv[])
         WEXITSTATUS(p->exit_status) : 0;
       fprintf(stderr, "child exited with return %d\n", ret);
       exit(ret);
+    }
+    if (run_only_once) {
+      respawn = 0;
     }
   }
   while (1) {

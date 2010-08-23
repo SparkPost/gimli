@@ -191,6 +191,7 @@ struct gimli_object_mapping {
 
 extern int debug, quiet, detach, watchdog_interval, watchdog_start_interval,
   watchdog_stop_interval, do_setsid, respawn_frequency;
+extern int run_only_once;
 extern int run_as_uid, run_as_gid;
 extern char *glider_path, *trace_dir, *gimli_progname, *pidfile, *arg0;
 extern int gimli_nthreads;
