@@ -496,8 +496,13 @@ trace:
   if (p->running && hb.state != GIMLI_HB_NOT_SUPP &&
       heartbeat->state == hb.state &&
       heartbeat->ticks == hb.ticks) {
-    p->watchdog = 1;
+    /* watchdog triggered.
+     * It is possible to get here if the watchdog interval is small
+     * and if we are tracing the child; to avoid erroneously detecting
+     * this event as a watchdog, we make setting the watchdog flag
+     * contingent on us not being in the middle of a trace. */
     if (p->should_trace == TRACE_NONE) {
+      p->watchdog = 1;
       p->should_trace = TRACE_ME;
     }
   }
