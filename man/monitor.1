@@ -191,6 +191,13 @@ event of a critical system resource shortage or in the case of a brown
 paper bag configuration change.  The default value is 15 seconds.
 The corresponding environmental variable is
 .B GIMLI_RESPAWN_FREQUENCY
+.TP
+.B run-once=1
+Will monitor the child, tracing it in the event of a fault, but will not
+restart the child once it terminates.  This is useful primarily for fault
+capture in scenarios where some other machinery will ensure that work is
+resumed and completed.  The corresponding environmental variable is
+.B GIMLI_RUN_ONCE
 
 .SH TRACING
 When
