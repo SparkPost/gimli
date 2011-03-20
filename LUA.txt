@@ -1,0 +1,109 @@
+
+Notes on expanded debugging and macro facilities using the Lua language.
+
+Need a supporting API to make this easy.
+
+Some objects/types:
+
+Proc:
+	represents the attached process.
+	properties:
+		pid - the process id
+		threads - returns list of threads
+		objects - enumerates mapped object files
+		pr_size - system mem stats
+		pr_rssize - system mem stats
+	methods:
+		read(addr, len) - returns a buffer object for a region of mem
+		write(addr, buf [, len]) - writes a buffer object to a region
+		search(addr, len, pattern) - search in a region for something.
+			pattern is a string, an array (of bytes) or a buffer returned
+			from read().
+		sym(name [, obj]) - resolve a symbol to a Value
+		symname(addr) - determine name for an address
+		readstr(addr) - returns a c string at specified address
+		srcinfo(addr) - returns SourceInfo for specified address
+
+
+Buffer:
+	represents a region of memory in the process
+	properties:
+		start - the start of the region
+		len - the size of the region
+	dimension access: returns the byte at the specified offset
+	methods:
+		dump - returns an escaped string representing the binary
+				data in the region
+		bytes(len) - returns a table containing integers of the bytes
+		             from the start up to the specified len
+	    bytes(start, len) - as above, but with a specified starting point
+		cstring([len]) - looks for trailing nul and returns the buffer contents
+		                 as a C string. If len is specified and no nul is found
+						 then len indicates the end of the string
+	__tostring: returns dump()
+
+
+Thread:
+	represents a thread in a process
+	properties:
+		tid - the thread id
+		frames - an array of stack frames, 1 is top of stack, with
+			increasing numbers going further up the stack
+
+
+Frame:
+	a stack frame
+	properties:
+		num - which frame (1 is top of stack)
+		thread - associated thread
+		pc - pc at this frame
+		block - info about the containing scope/function for the pc
+		up - locates the frame with num + 1
+		down - locates the frame with num - 1
+		source - returns source/line info
+		is_sig - indicates if this is a signal frame
+		??? - bits that describe the signal frame
+		regs - a table holding the registers
+	methods:
+		param(name) - return Value object corresponding to named param
+
+
+
+SourceInfo:
+	represents information about a location in the source
+	properties:
+		file - the name of the source file
+		line - the line number of that location
+		obj - refers to the object-file associated with this position
+		pc - the pc address
+	__tostring: returns a readable representation of the location
+
+Block:
+	an executable scope, may be a function or an anonymous block
+	properties:
+		start - starting pc
+		end - ending pc
+		function - refers to function, may be nil
+		parent - containing block, may be nil
+		??? - enumerate locals
+		??? - enumerate function parameters
+
+Symbol:
+	info about a named symbol
+	properties:
+		mangled - the raw name
+		name - readable name
+		type - what type of thing does this refer to?
+		??? - some way to refer to it
+
+Value:
+automagically bind to instances of structures; given datatype information and
+an address in the target, create a magical wrapper object that maps dimension
+accesses to the offset in the underlying buffer object and returns the same
+type of object mapping.
+
+For pointer types, have a "deref" method to de-reference and get to the next
+item in the chain of pointers, ultimately landing at the right value.
+
+Need a way to access the underlying type.
+

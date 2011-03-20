@@ -59,6 +59,37 @@ AC_SUBST(DARWIN_CODESIGN)
 AC_CHECK_LIB(dl, dlopen)
 
 AC_CHECK_SIZEOF(void*)
+
+AC_DEFINE(LUA_USE_POSIX, 1, [Use POSIX functions])
+AC_DEFINE(LUA_USE_DLOPEN, 1, [Use dlopen for loading modules])
+AC_DEFINE_UNQUOTED(LUA_ROOT, "$prefix/", [Installation prefix])
+AC_DEFINE(LUA_VERMAJORMINOR, "5.1", [First two version number octets])
+AC_SUBST(PACKAGE_VERMAJORMINOR, 5.1)
+
+AC_ARG_WITH(readline,
+[  --with-readline   link ldb against libreadline],
+[
+  LDFLAGS_SAVE="$LDFLAGS"
+  LDFLAGS="-L$withval"
+  AC_CHECK_LIB(readline, readline, [
+    AC_SUBST(RL_LDFLAGS, "-lreadline")
+    AC_SUBST(RL_CFLAGS, "-DLUA_USE_READLINE")
+  ])
+  LDFLAGS="$LDFLAGS_SAVE"
+])
+
+AC_ARG_WITH(libedit,
+[  --with-libedit    link ldb against libedit],
+[
+  LDFLAGS_SAVE="$LDFLAGS"
+  LDFLAGS="-L$withval"
+  AC_CHECK_LIB(edit, readline, [
+    AC_SUBST(RL_LDFLAGS, "-ledit")
+    AC_SUBST(RL_CFLAGS, "-DLUA_USE_READLINE")
+  ])
+  LDFLAGS="$LDFLAGS_SAVE"
+])
+
 AC_CONFIG_HEADERS(gimli_config.h)
 AC_CONFIG_FILES(Makefile)
 AC_OUTPUT

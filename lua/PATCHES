@@ -1,0 +1,37 @@
+This version of lua has the following patches applied:
+
+-----
+
+A patch to allow "\xAA" as a means for specifying 8-bit hex constants
+in strings, where "AA" is a two digit hex number.
+
+The same patch also enables "\uAAAA" and "\uBBBBBB" as a means for
+specifying unicode code points.  These are 4 and 6 digit hex numbers.
+The code points are internally encoded as a UTF-8 encoded byte sequence.
+
+This patch is inspired by 
+svn://slugak.dyndns.org/public/lua-patches/literals.patch
+
+(see changeset [19])
+
+-----
+
+A patch to recognize octal numbers when they have a leading 0
+(see changeset [16])
+
+-----
+
+http://darkmist.newmail.ru/bitwise_operators_for_lua_5.1.3.patch
+
+Infix bitwise operators for AND (&, __and), OR (|, __or), XOR (^^, __xor).
+Infix bitwise operators for SHIFT LEFT (<<, __shl) and SHIFT RIGHT (>>, __shr).
+Unary bitwise negation operator (~, __not).
+Infix arithmetic operator for INTEGER DIVISION (\, __intdiv).
+accepts both ~= and != for comparison.
+All these features can be disabled with undefining LUA_BITWISE_OPERATORS in
+luaconf.h.
+
+Bitwise operators first convert a lua_Number to a lua_Integer and convert back
+the result to a lua_Number.
+
+(see changeset [15])
