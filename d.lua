@@ -14,6 +14,7 @@ for thr in threads do
 		print("frame", f);
 		print("  up", f.up);
 		print("  down", f.down);
+		print("  pc", f.pc);
 	end
 	print("now trying to index frame 0");
 	print(frames[0]);

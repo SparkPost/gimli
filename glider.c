@@ -29,7 +29,6 @@ void trace_process(int pid)
       fprintf(stderr, "Not enough memory to trace %d frames\n", max_frames);
       goto out;
     }
-
     for (file = gimli_files; file; file = file->next) {
       /* perform discovery of tracer module */
       struct gimli_symbol *sym;
@@ -56,7 +55,7 @@ void trace_process(int pid)
           gimli_module_init_func func = (gimli_module_init_func)
             dlsym(h, "gimli_ana_init");
           if (func) {
-            file->tracer_module = (*func)(&ana_api); 
+            file->tracer_module = (*func)(&ana_api);
           }
         } else {
           printf("Unable to load library: %s: %s\n", buf2, dlerror());
@@ -66,10 +65,7 @@ void trace_process(int pid)
             file->objname, buf2, strerror(errno));
       }
 
-      gimli_process_dwarf(file);
-      gimli_bake_symtab(file);
     }
-
     for (i = 0; i < gimli_nthreads; i++) {
       int nframes = gimli_stack_trace(i, frames, max_frames);
       int suppress = 0;

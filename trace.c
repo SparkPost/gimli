@@ -108,7 +108,7 @@ char *gimli_read_string(void *addr)
 static int calc_readability(const char *name)
 {
   int start = 1;
-  int value = 0; 
+  int value = 0;
   while (*name) {
     if (*name == '_') {
       if (start) {
@@ -472,7 +472,7 @@ struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
 {
   struct gimli_symbol *s;
   char buf[1024];
- 
+
   s = calloc(1, sizeof(*s));
 
   s->rawname = strdup(name);
@@ -574,7 +574,7 @@ struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name)
   f = gimli_find_object(obj);
   if (!f) {
     char buf[1024];
-    
+
     /* we may have just been given the basename of the object, in which
      * case, we need to run through the list and match on basenames */
     for (f = gimli_files; f; f = f->next) {
@@ -622,7 +622,13 @@ int tracer_attach(int pid)
 {
   atexit(detachatexit);
   if (gimli_attach(pid)) {
+    struct gimli_object_file *file;
     populate_proc_stat(pid);
+
+    for (file = gimli_files; file; file = file->next) {
+      gimli_process_dwarf(file);
+      gimli_bake_symtab(file);
+    }
     return 1;
   }
   gimli_detach();

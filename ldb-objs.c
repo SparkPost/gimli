@@ -41,9 +41,8 @@ static struct ldb_frame *make_frame(lua_State *L,
   if (nframe < 0 || nframe >= thr->nframes) {
     luaL_error(L, "frame %d is outside range 0-%d", nframe, thr->nframes - 1);
   }
-
-  /* copy the contents of the cursor */
   f->frame = thr->frames[nframe];
+  gimli_is_signal_frame(&f->frame);
 
   return f;
 }
@@ -100,7 +99,16 @@ static int ldb_frame_index(lua_State *L)
     lua_pop(L, 1);
     return ldb_frame_from_frame(L, -1);
   }
-  luaL_error(L, "no such property frame.%s", what);
+  if (!strcmp(what, "pc")) {
+    char pcbuf[30];
+    snprintf(pcbuf, sizeof(pcbuf), PTRFMT, (PTRFMT_T)f->frame.st.pc);
+    lua_pushstring(L, pcbuf);
+    return 1;
+  }
+  /* fall back to other methods in the metatable */
+  lua_getmetatable(L, 1);
+  lua_pushvalue(L, 2);
+  lua_gettable(L, -2);
   return 0;
 }
 
