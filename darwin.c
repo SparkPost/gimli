@@ -9,6 +9,7 @@
 
 /* http://www.omnigroup.com/mailman/archive/macosx-dev/2000-June/014178.html
  * http://web.mit.edu/darwin/src/modules/xnu/osfmk/man/vm_read.html
+ * http://developer.apple.com/library/mac/#documentation/Security/Conceptual/CodeSigningGuide/Procedures/Procedures.html#//apple_ref/doc/uid/TP40005929-CH4-SW1
  */
 
 #include <libgen.h>
@@ -622,7 +623,9 @@ int gimli_attach(int pid)
 "task_for_pid returned %d\n"
 "One resolution is to run the monitor or glider process with root privileges\n"
 "alternatively, if glider was codesigned at build time, you may use keychain\n"
-"to trust the signing certificate\n", rc);
+"to trust the signing certificate\n"
+"http://developer.apple.com/library/mac/#documentation/Security/Conceptual/CodeSigningGuide/Procedures/Procedures.html#//apple_ref/doc/uid/TP40005929-CH4-SW1\n"
+, rc);
     return 0;
   }
   got_task = 1;

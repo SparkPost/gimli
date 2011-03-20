@@ -195,6 +195,7 @@ extern int run_only_once;
 extern int run_as_uid, run_as_gid;
 extern char *glider_path, *trace_dir, *gimli_progname, *pidfile, *arg0;
 extern int gimli_nthreads;
+extern int max_frames;
 extern struct gimli_thread_state *gimli_threads;
 extern struct gimli_object_file *gimli_files;
 extern struct gimli_object_mapping *gimli_mappings;
@@ -231,8 +232,10 @@ int gimli_hash_insert(gimli_hash_t h, const char *k, void *item);
 
 #if SIZEOF_VOIDP == 8
 # define PTRFMT "0x%016llx"
+# define PTRFMT_T uint64_t
 #else
 # define PTRFMT "0x%08lx"
+# define PTRFMT_T uint32_t
 #endif 
 
 int gimli_process_elf(struct gimli_object_file *f);
@@ -254,6 +257,9 @@ extern struct gimli_ana_api ana_api;
 int process_args(int *argc, char **argv[]);
 
 int gimli_demangle(const char *mangled, char *out, int out_size);
+
+int gimli_attach(int pid);
+int gimli_detach(void);
 
 const char *gimli_pc_sym_name(void *addr, char *buf, int buflen);
 int gimli_read_mem(void *src, void *dest, int len);

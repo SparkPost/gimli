@@ -763,7 +763,7 @@ if (debug) {
           fprintf(stderr, "FDE: addr_range raw=%p\ninit_loc=%p addr=%p\n", 
             (void*)(intptr_t)fde.addr_range,
             (void*)(intptr_t)fde.initial_loc,
-            s->addr);
+            (void*)s->addr);
         }
         fde.initial_loc += m->objfile->base_addr;
         if (debug) {
@@ -792,9 +792,9 @@ if (debug) {
           if (debug) {
             fprintf(stderr, "This is the FDE for the current PC\n");
             fprintf(stderr, "FDE: init=" PTRFMT "-" PTRFMT " pc=" PTRFMT "\n",
-                (void*)(intptr_t)fde.initial_loc,
-                (void*)(intptr_t)fde.addr_range,
-                (void*)cur->st.pc);
+                (PTRFMT_T)(intptr_t)fde.initial_loc,
+                (PTRFMT_T)(intptr_t)fde.addr_range,
+                (PTRFMT_T)cur->st.pc);
           }
 
           /* run initial instructions */
