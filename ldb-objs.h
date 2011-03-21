@@ -4,6 +4,7 @@
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
+#include "gimli_dwarf.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -44,6 +45,42 @@ struct ldb_frames {
   int nframe;
 };
 #define LDB_FRAMES "ldb.frames"
+
+/* iterator/access for variables in a frame */
+struct ldb_vars {
+  struct gimli_unwind_cursor cur;
+  struct gimli_dwarf_die *die;
+  struct gimli_dwarf_die *iter;
+  uint64_t frame_base;
+  uint64_t comp_unit_base;
+  struct gimli_object_mapping *m;
+};
+#define LDB_VARS "ldb.vars"
+
+/* represents a variable in the target */
+struct ldb_var {
+  struct gimli_unwind_cursor cur;
+  struct gimli_dwarf_die *die;
+  uint64_t frame_base;
+  uint64_t comp_unit_base;
+  struct gimli_object_mapping *m;
+  int is_stack;
+  struct gimli_dwarf_attr *type;
+  struct gimli_dwarf_attr *name;
+  uint64_t location;
+};
+#define LDB_VAR "ldb.var"
+
+/* represents the value of a variable in the target.
+ * This is basically a thin layer over an ldb_var. */
+struct ldb_value {
+  struct ldb_var var;
+  struct gimli_dwarf_die *iter, *td;
+  struct gimli_dwarf_attr *type;
+  /* for bitfields */
+  int mask, shift;
+};
+#define LDB_VALUE "ldb.value"
 
 void ldb_register(lua_State *L);
 

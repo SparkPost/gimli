@@ -64,6 +64,7 @@ Frame:
 		is_sig - indicates if this is a signal frame
 		??? - bits that describe the signal frame
 		regs - a table holding the registers
+		vars - access variables in the frame
 	methods:
 		param(name) - return Value object corresponding to named param
 
