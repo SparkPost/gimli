@@ -122,21 +122,158 @@ static int resolve_numeric(lua_State *L, struct ldb_value *val,
           return 1;
       }
   }
-  printf("resolve_value: td->tag=%llu\n", val->td->tag);
+  printf("\nresolve_value: td->tag=%llu\n", val->td->tag);
   /* not numeric */
   return 0;
 }
 
+static int make_child_value(lua_State *L,
+  struct ldb_value *val, struct gimli_dwarf_die *kid)
+{
+  int is_stack;
+  struct gimli_dwarf_attr *loc;
+  uint64_t root;
+  int mask, shift;
+  uint64_t u64;
+  struct ldb_value *member;
+
+  loc = gimli_dwarf_die_get_attr(kid, DW_AT_data_member_location);
+  is_stack = 1;
+  root = (uint64_t)(intptr_t)val->var.location;
+
+  if (loc) {
+    if (loc->form != DW_FORM_block) {
+      fprintf(stderr, "unhandled loc->form %lld for struct member",
+          loc->form);
+      return 0;
+    }
+    if (!dw_eval_expr(&val->var.cur, loc->ptr, loc->code, 0,
+          &root, &root, &is_stack)) {
+      return 0;
+    }
+  } /* else: occupies start of element */
+
+  if (gimli_dwarf_die_get_uint64_t_attr(kid, DW_AT_bit_size, &u64)) {
+    /* it's a bit field */
+    uint64_t size = u64;
+    uint64_t off;
+
+    if (!gimli_dwarf_die_get_uint64_t_attr(kid,
+          DW_AT_bit_offset, &off)) {
+      off = 1;
+    }
+    gimli_dwarf_die_get_uint64_t_attr(kid, DW_AT_byte_size, &u64);
+
+    /* offset is number of bits from MSB for that storage type.
+     * Let's flip that around so that it is the offset from the
+     * LSB */
+    off = ((u64 * 8) - 1) - off;
+    mask = (1 << size) - 1;
+    shift = off - (size - 1);
+
+  } else {
+    mask = 0;
+    shift = 0;
+  }
+  member = lua_newuserdata(L, sizeof(*member));
+  memcpy(member, val, sizeof(*val));
+  luaL_getmetatable(L, LDB_VALUE);
+  lua_setmetatable(L, -2);
+
+  /* update to reflect this member */
+  member->var.name = gimli_dwarf_die_get_attr(kid, DW_AT_name);
+  member->var.type = gimli_dwarf_die_get_attr(kid, DW_AT_type);
+  member->var.is_stack = is_stack;
+  member->var.location = root;
+  member->var.die = kid;
+  member->mask = mask;
+  member->shift = shift;
+  member->type = NULL;
+  member->iter = NULL;
+  member->td = NULL;
+
+  return 1;
+}
+
 static int ldb_value_index(lua_State *L)
 {
-  // TODO
+  struct ldb_value *val = luaL_checkudata(L, 1, LDB_VALUE);
+
+  resolve_value(L, val);
+  switch (val->td->tag) {
+    case DW_TAG_structure_type:
+    case DW_TAG_union_type:
+    {
+      struct gimli_dwarf_die *kid;
+      struct gimli_dwarf_attr *mname;
+      const char *what = luaL_checkstring(L, 2);
+
+      /* find matching child element */
+      for (kid = val->td->kids; kid; kid = kid->next) {
+        if (kid->tag != DW_TAG_member) continue;
+
+        mname = gimli_dwarf_die_get_attr(kid, DW_AT_name);
+        if (!mname) continue;
+        if (strcmp(mname->ptr, what)) continue;
+        break;
+      }
+      if (!kid) {
+        luaL_error(L, "no such element %s", what);
+      }
+      if (!make_child_value(L, val, kid)) {
+        lua_pushnil(L);
+      }
+      return 1;
+    }
+    case DW_TAG_array_type:
+      luaL_error(L, "FIXME: implement array access");
+      break;
+    default:
+      luaL_error(L, "attempt to index a non-structured type");
+  }
   return 0;
 }
 
 static int ldb_value_iter(lua_State *L)
 {
-  // TODO: iterate structure members
-  return 0;
+  struct ldb_value *val = luaL_checkudata(L, 1, LDB_VALUE);
+
+  if (!val->iter) {
+    resolve_value(L, val);
+    switch (val->td->tag) {
+      case DW_TAG_structure_type:
+      case DW_TAG_union_type:
+        val->iter = val->td->kids;
+        break;
+      default:
+        lua_pushnil(L);
+        return 1;
+    }
+  } else {
+    val->iter = val->iter->next;
+  }
+
+  while (val->iter) {
+    struct gimli_dwarf_attr *mname;
+
+    if (val->iter->tag != DW_TAG_member) {
+      val->iter = val->iter->next;
+      continue;
+    }
+    mname = gimli_dwarf_die_get_attr(val->iter, DW_AT_name);
+    if (mname) {
+      lua_pushstring(L, mname->ptr);
+    } else {
+      lua_pushnil(L);
+    }
+    if (!make_child_value(L, val, val->iter)) {
+      lua_pushnil(L);
+    }
+    return 2;
+  }
+
+  lua_pushnil(L);
+  return 1;
 }
 
 static int ldb_value_tostring(lua_State *L)

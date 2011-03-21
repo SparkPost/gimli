@@ -29,6 +29,10 @@ for thr in threads do
 				print("deref pointer");
 				local ref = var.deref;
 				print("deref", ref.ctype, ref.tag, ref.typename, ref.addr);
+				print("ref.value.si_signo", ref.value.si_signo);
+				for k, v in ref.value do
+					print("si", k, v);
+				end
 			end
 			if varname == "signo" then
 				local val = var.value;
