@@ -583,8 +583,11 @@ static int ldb_vars_iter(lua_State *L)
     struct gimli_dwarf_attr *name;
 
     name = gimli_dwarf_die_get_attr(vars->iter, DW_AT_name);
-
-    lua_pushstring(L, name->ptr);
+    if (name) {
+      lua_pushstring(L, name->ptr);
+    } else {
+      lua_pushnil(L);
+    }
     /* TODO: look at all possible types here; do we want to restrict iter
      * by type? have a frame.params vs frame.locals instead?
      */
