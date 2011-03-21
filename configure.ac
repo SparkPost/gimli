@@ -57,6 +57,8 @@ AC_SUBST(DARWIN_DSYMUTIL)
 AC_SUBST(DARWIN_CODESIGN)
 
 AC_CHECK_LIB(dl, dlopen)
+AC_CHECK_LIB(m, floor)
+AC_CHECK_LIB(crypt, crypt)
 AC_CHECK_FUNCS(clock_gettime)
 
 AC_CHECK_SIZEOF(void*)
