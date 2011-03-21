@@ -475,6 +475,8 @@ static int ldb_var_index(lua_State *L)
     return 1;
   }
   if (!strcmp(what, "value")) {
+    // TODO: move most of the above into ldb.type(val) and just make the
+    // default accessors operate on the value
     /* var.value => an object representing the value.
      * For structured types, you may index or iterate this to visit the
      * contained values.

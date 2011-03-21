@@ -26,7 +26,7 @@ liblua_la_SOURCES = \
 	lua/lparser.c lua/lstate.c lua/lstring.c lua/ltable.c lua/ltm.c  \
 	lua/lundump.c lua/lvm.c lua/lzio.c lua/lauxlib.c lua/lbaselib.c \
 	lua/ldblib.c lua/liolib.c lua/lmathlib.c lua/loslib.c lua/ltablib.c \
-	lua/lstrlib.c lua/loadlib.c lua/linit.c
+	lua/lstrlib.c lua/loadlib.c lua/linit.c lua/lposix.c
 
 ldb_SOURCES = ldb.c ldb-objs.c
 ldb_CPPFLAGS = -Ilua $(RLCFLAGS)
