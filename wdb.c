@@ -114,7 +114,7 @@ static int docall (lua_State *L, int narg, int clear) {
 
 static void print_version (void) {
   l_message(NULL,
-"ldb (" PACKAGE_STRING ") by Wez Furlong\n"
+"wdb (" PACKAGE_STRING ") by Wez Furlong\n"
 "Copyright (C) 2011 Message Systems, Inc."
 );
 }
