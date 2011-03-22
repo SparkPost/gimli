@@ -976,7 +976,7 @@ void wdb_register(lua_State *L)
   lua_createtable(L, 0, 0);
   luaL_getmetatable(L, WDB_META);
   lua_setmetatable(L, -2);
-  lua_setglobal(L, "ldb");
+  lua_setglobal(L, "db");
 
   newmeta(L, WDB_THREADS, wdb_threads_funcs);
   newmeta(L, WDB_THREAD, wdb_thread_funcs);

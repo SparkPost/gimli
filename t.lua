@@ -15,9 +15,9 @@ print("Running wedgie, waiting for it to wedge");
 posix.sleep(4);
 
 print("Attaching to pid", pid);
-ldb.attach(pid);
+db.attach(pid);
 
-for thr in ldb.threads do
+for thr in db.threads do
 	print(thr)
 	for f in thr.frames do
 		if f.is_signal then
@@ -25,10 +25,10 @@ for thr in ldb.threads do
 		else
 			print(f.label)
 			for varname, isparam, var in f.vars do
-				print(varname, isparam, ldb.type_c(var))
+				print(varname, isparam, db.type_c(var))
 				if varname == "si" then
 					print("looking in struct siginfo")
-					for k, v in ldb.deref(var) do
+					for k, v in db.deref(var) do
 						print("", k, v)
 					end
 				end
