@@ -31,24 +31,24 @@ static void ldb_push_address(lua_State *L, uint64_t addr)
 /* resolve a value down to the significant portion of its type.
  * This modifies the value struct so that this doesn't have to be
  * repeated again for the same value */
-static void resolve_value(lua_State *L, struct ldb_value *val)
+static void resolve_value(lua_State *L, struct ldb_var *var)
 {
   struct gimli_dwarf_die *td;
   struct gimli_dwarf_attr *type;
 
-  if (val->td) {
+  if (var->td) {
     /* already resolved */
     return;
   }
-  type = val->var.type;
+  type = var->type;
 
-  do {
-    td = gimli_dwarf_get_die(val->var.m->objfile, type->code);
+  while (type) {
+    td = gimli_dwarf_get_die(var->m->objfile, type->code);
     if (!td) {
       return;
     }
-    val->td = td;
-    val->type = type;
+    var->td = td;
+    var->type = type;
 
     switch (td->tag) {
       case DW_TAG_typedef:
@@ -61,12 +61,12 @@ static void resolve_value(lua_State *L, struct ldb_value *val)
       default:
         type = NULL;
     }
-  } while (type);
+  }
 
 }
 
 /* resolve a value to an integer numeric */
-static int resolve_numeric(lua_State *L, struct ldb_value *val,
+static int resolve_numeric(lua_State *L, struct ldb_var *var,
   uintmax_t *n, int *is_signed)
 {
   uint64_t ate, size;
@@ -77,13 +77,13 @@ static int resolve_numeric(lua_State *L, struct ldb_value *val,
 
   *is_signed = 0;
 
-  switch (val->td->tag) {
+  switch (var->td->tag) {
     case DW_TAG_base_type:
     case DW_TAG_enumeration_type:
-      if (!gimli_dwarf_die_get_uint64_t_attr(val->td, DW_AT_encoding, &ate)) {
+      if (!gimli_dwarf_die_get_uint64_t_attr(var->td, DW_AT_encoding, &ate)) {
         ate = DW_ATE_signed;
       }
-      gimli_dwarf_die_get_uint64_t_attr(val->td, DW_AT_byte_size, &size);
+      gimli_dwarf_die_get_uint64_t_attr(var->td, DW_AT_byte_size, &size);
       switch (ate) {
         case DW_ATE_signed:
         case DW_ATE_signed_char:
@@ -93,53 +93,53 @@ static int resolve_numeric(lua_State *L, struct ldb_value *val,
         case DW_ATE_unsigned_char:
           switch (size) {
             case 8:
-              gimli_dwarf_read_value((void*)val->var.location,
-                val->var.is_stack, &u64, size);
+              gimli_dwarf_read_value((void*)var->location,
+                var->is_stack, &u64, size);
               *n = (uintmax_t)u64;
               break;
             case 4:
-              gimli_dwarf_read_value((void*)val->var.location,
-                val->var.is_stack, &u32, size);
+              gimli_dwarf_read_value((void*)var->location,
+                var->is_stack, &u32, size);
               *n = (uintmax_t)u32;
               break;
             case 2:
-              gimli_dwarf_read_value((void*)val->var.location,
-                val->var.is_stack, &u16, size);
+              gimli_dwarf_read_value((void*)var->location,
+                var->is_stack, &u16, size);
               *n = (uintmax_t)u16;
               break;
             case 1:
-              gimli_dwarf_read_value((void*)val->var.location,
-                val->var.is_stack, &u8, size);
+              gimli_dwarf_read_value((void*)var->location,
+                var->is_stack, &u8, size);
               *n = (uintmax_t)u16;
               break;
             default:
               luaL_error(L, "invalid byte size %d", size);
           }
-          if (val->mask) {
-            *n >>= val->shift;
-            *n &= val->mask;
+          if (var->mask) {
+            *n >>= var->shift;
+            *n &= var->mask;
           }
           return 1;
       }
   }
-  printf("\nresolve_value: td->tag=%llu\n", val->td->tag);
+  printf("\nresolve_value: td->tag=%llu\n", var->td->tag);
   /* not numeric */
   return 0;
 }
 
 static int make_child_value(lua_State *L,
-  struct ldb_value *val, struct gimli_dwarf_die *kid)
+  struct ldb_var *var, struct gimli_dwarf_die *kid)
 {
   int is_stack;
   struct gimli_dwarf_attr *loc;
   uint64_t root;
   int mask, shift;
   uint64_t u64;
-  struct ldb_value *member;
+  struct ldb_var *member;
 
   loc = gimli_dwarf_die_get_attr(kid, DW_AT_data_member_location);
   is_stack = 1;
-  root = (uint64_t)(intptr_t)val->var.location;
+  root = (uint64_t)(intptr_t)var->location;
 
   if (loc) {
     if (loc->form != DW_FORM_block) {
@@ -147,7 +147,7 @@ static int make_child_value(lua_State *L,
           loc->form);
       return 0;
     }
-    if (!dw_eval_expr(&val->var.cur, loc->ptr, loc->code, 0,
+    if (!dw_eval_expr(&var->cur, loc->ptr, loc->code, 0,
           &root, &root, &is_stack)) {
       return 0;
     }
@@ -176,31 +176,30 @@ static int make_child_value(lua_State *L,
     shift = 0;
   }
   member = lua_newuserdata(L, sizeof(*member));
-  memcpy(member, val, sizeof(*val));
-  luaL_getmetatable(L, LDB_VALUE);
+  memcpy(member, var, sizeof(*var));
+  luaL_getmetatable(L, LDB_VAR);
   lua_setmetatable(L, -2);
 
   /* update to reflect this member */
-  member->var.name = gimli_dwarf_die_get_attr(kid, DW_AT_name);
-  member->var.type = gimli_dwarf_die_get_attr(kid, DW_AT_type);
-  member->var.is_stack = is_stack;
-  member->var.location = root;
-  member->var.die = kid;
+  member->name = gimli_dwarf_die_get_attr(kid, DW_AT_name);
+  member->type = gimli_dwarf_die_get_attr(kid, DW_AT_type);
+  member->is_stack = is_stack;
+  member->location = root;
+  member->die = kid;
   member->mask = mask;
   member->shift = shift;
-  member->type = NULL;
   member->iter = NULL;
   member->td = NULL;
 
   return 1;
 }
 
-static int ldb_value_index(lua_State *L)
+static int ldb_var_index(lua_State *L)
 {
-  struct ldb_value *val = luaL_checkudata(L, 1, LDB_VALUE);
+  struct ldb_var *var = luaL_checkudata(L, 1, LDB_VAR);
 
-  resolve_value(L, val);
-  switch (val->td->tag) {
+  resolve_value(L, var);
+  switch (var->td->tag) {
     case DW_TAG_structure_type:
     case DW_TAG_union_type:
     {
@@ -209,7 +208,7 @@ static int ldb_value_index(lua_State *L)
       const char *what = luaL_checkstring(L, 2);
 
       /* find matching child element */
-      for (kid = val->td->kids; kid; kid = kid->next) {
+      for (kid = var->td->kids; kid; kid = kid->next) {
         if (kid->tag != DW_TAG_member) continue;
 
         mname = gimli_dwarf_die_get_attr(kid, DW_AT_name);
@@ -220,7 +219,7 @@ static int ldb_value_index(lua_State *L)
       if (!kid) {
         luaL_error(L, "no such element %s", what);
       }
-      if (!make_child_value(L, val, kid)) {
+      if (!make_child_value(L, var, kid)) {
         lua_pushnil(L);
       }
       return 1;
@@ -234,39 +233,39 @@ static int ldb_value_index(lua_State *L)
   return 0;
 }
 
-static int ldb_value_iter(lua_State *L)
+static int ldb_var_iter(lua_State *L)
 {
-  struct ldb_value *val = luaL_checkudata(L, 1, LDB_VALUE);
+  struct ldb_var *var = luaL_checkudata(L, 1, LDB_VAR);
 
-  if (!val->iter) {
-    resolve_value(L, val);
-    switch (val->td->tag) {
+  if (!var->iter) {
+    resolve_value(L, var);
+    switch (var->td->tag) {
       case DW_TAG_structure_type:
       case DW_TAG_union_type:
-        val->iter = val->td->kids;
+        var->iter = var->td->kids;
         break;
       default:
         lua_pushnil(L);
         return 1;
     }
   } else {
-    val->iter = val->iter->next;
+    var->iter = var->iter->next;
   }
 
-  while (val->iter) {
+  while (var->iter) {
     struct gimli_dwarf_attr *mname;
 
-    if (val->iter->tag != DW_TAG_member) {
-      val->iter = val->iter->next;
+    if (var->iter->tag != DW_TAG_member) {
+      var->iter = var->iter->next;
       continue;
     }
-    mname = gimli_dwarf_die_get_attr(val->iter, DW_AT_name);
+    mname = gimli_dwarf_die_get_attr(var->iter, DW_AT_name);
     if (mname) {
       lua_pushstring(L, mname->ptr);
     } else {
       lua_pushnil(L);
     }
-    if (!make_child_value(L, val, val->iter)) {
+    if (!make_child_value(L, var, var->iter)) {
       lua_pushnil(L);
     }
     return 2;
@@ -276,15 +275,15 @@ static int ldb_value_iter(lua_State *L)
   return 1;
 }
 
-static int ldb_value_tostring(lua_State *L)
+static int ldb_var_tostring(lua_State *L)
 {
-  struct ldb_value *val = luaL_checkudata(L, 1, LDB_VALUE);
+  struct ldb_var *var = luaL_checkudata(L, 1, LDB_VAR);
   uintmax_t num;
   int is_signed;
 
-  resolve_value(L, val);
+  resolve_value(L, var);
 
-  if (resolve_numeric(L, val, &num, &is_signed)) {
+  if (resolve_numeric(L, var, &num, &is_signed)) {
     char nbuf[32];
 
     if (is_signed) {
@@ -303,202 +302,190 @@ static int ldb_value_tostring(lua_State *L)
   return 1;
 }
 
-static const luaL_Reg ldb_value_funcs[] = {
-  {"__index", ldb_value_index},
-  {"__call", ldb_value_iter},
-  {"__tostring", ldb_value_tostring},
-  {NULL, NULL}
-};
-
-static int ldb_var_index(lua_State *L)
-{
-  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
-  const char *what = luaL_checkstring(L, 2);
-
-  if (!strcmp(what, "ctype")) {
-    /* var.ctype => the "C" type name */
-    lua_pushstring(L, gimli_dwarf_resolve_type_name(v->m->objfile, v->type));
-    return 1;
-  }
-  if (!strcmp(what, "tag")) {
-    /* var.tag => the dwarf type tag, as a string */
-    struct gimli_dwarf_die *td;
-
-    td = gimli_dwarf_get_die(v->m->objfile, v->type->code);
-    if (!td) {
-      lua_pushnil(L);
-      return 1;
-    }
-    /* {{{ switch on td->tag, return string rep. */
-    switch (td->tag) {
-      case DW_TAG_base_type:
-        lua_pushstring(L, "base");
-        return 1;
-      case DW_TAG_typedef:
-        lua_pushstring(L, "typedef");
-        return 1;
-      case DW_TAG_enumeration_type:
-        lua_pushstring(L, "enum");
-        return 1;
-      case DW_TAG_structure_type:
-        lua_pushstring(L, "struct");
-        return 1;
-      case DW_TAG_union_type:
-        lua_pushstring(L, "union");
-        return 1;
-      case DW_TAG_pointer_type:
-        lua_pushstring(L, "pointer");
-        return 1;
-      case DW_TAG_subroutine_type:
-        lua_pushstring(L, "subroutine");
-        return 1;
-      case DW_TAG_const_type:
-        lua_pushstring(L, "const");
-        return 1;
-      case DW_TAG_array_type:
-        lua_pushstring(L, "array");
-        return 1;
-      case DW_TAG_class_type:
-        lua_pushstring(L, "class");
-        return 1;
-      case DW_TAG_reference_type:
-        lua_pushstring(L, "reference");
-        return 1;
-      case DW_TAG_string_type:
-        lua_pushstring(L, "string");
-        return 1;
-      case DW_TAG_ptr_to_member_type:
-        lua_pushstring(L, "ptr_to_member");
-        return 1;
-      case DW_TAG_set_type:
-        lua_pushstring(L, "set");
-        return 1;
-      case DW_TAG_subrange_type:
-        lua_pushstring(L, "subrange");
-        return 1;
-      case DW_TAG_file_type:
-        lua_pushstring(L, "file");
-        return 1;
-      case DW_TAG_packed_type:
-        lua_pushstring(L, "packed");
-        return 1;
-      case DW_TAG_template_type_parameter:
-        lua_pushstring(L, "template_type");
-        return 1;
-      case DW_TAG_thrown_type:
-        lua_pushstring(L, "thrown");
-        return 1;
-      case DW_TAG_volatile_type:
-        lua_pushstring(L, "volatile");
-        return 1;
-      case DW_TAG_restrict_type:
-        lua_pushstring(L, "restrict");
-        return 1;
-      case DW_TAG_interface_type:
-        lua_pushstring(L, "interface");
-        return 1;
-      case DW_TAG_unspecified_type:
-        lua_pushstring(L, "unspecified");
-        return 1;
-      case DW_TAG_shared_type:
-        lua_pushstring(L, "shared");
-        return 1;
-      default:
-        /* Shouldn't happen */
-        lua_pushfstring(L, "tag=%llx", td->tag);
-        return 1;
-    }
-    /* }}} */
-    return 1;
-  }
-  if (!strcmp(what, "typename")) {
-    /* var.typename => the dwarf type name, as a string */
-    struct gimli_dwarf_die *td;
-
-    td = gimli_dwarf_get_die(v->m->objfile, v->type->code);
-    if (!td) {
-      lua_pushnil(L);
-    } else {
-      struct gimli_dwarf_attr *name = gimli_dwarf_die_get_attr(td, DW_AT_name);
-
-      if (name) {
-        lua_pushstring(L, name->ptr);
-      } else {
-        lua_pushnil(L);
-      }
-    }
-    return 1;
-  }
-  if (!strcmp(what, "addr")) {
-    /* var.addr => the address of this instance in the target */
-    ldb_push_address(L, v->location);
-    return 1;
-  }
-  if (!strcmp(what, "deref")) {
-    /* var.deref => if a pointer, follow the pointer to the next level var */
-    struct gimli_dwarf_die *td;
-    struct ldb_var *deref;
-    struct gimli_dwarf_attr *type;
-    uint64_t u64, size;
-    uint32_t u32;
-
-    td = gimli_dwarf_get_die(v->m->objfile, v->type->code);
-    if (!td) {
-      lua_pushnil(L);
-      return 1;
-    }
-    if (td->tag != DW_TAG_pointer_type) {
-      luaL_error(L, "Attempt to dereference a non-pointer");
-    }
-    type = gimli_dwarf_die_get_attr(td, DW_AT_type);
-    if (!type) {
-      // TODO: allow this by returning a var (with an address) that
-      // can be cast to another type (make other accessors safe)
-      luaL_error(L, "Attempt to dereference a void pointer");
-    }
-
-    deref = lua_newuserdata(L, sizeof(*v));
-    memset(deref, 0, sizeof(*deref));
-    luaL_getmetatable(L, LDB_VAR);
-    lua_setmetatable(L, -2);
-    memcpy(deref, v, sizeof(*v));
-
-    deref->type = type;
-    gimli_dwarf_die_get_uint64_t_attr(td, DW_AT_byte_size, &size);
-    if (size == 4) {
-      gimli_dwarf_read_value((void*)v->location, v->is_stack, &u32, size);
-      deref->location = (intptr_t)u32;
-    } else {
-      gimli_dwarf_read_value((void*)v->location, v->is_stack, &u64, size);
-      deref->location = (intptr_t)u64;
-    }
-    return 1;
-  }
-  if (!strcmp(what, "value")) {
-    // TODO: move most of the above into ldb.type(val) and just make the
-    // default accessors operate on the value
-    /* var.value => an object representing the value.
-     * For structured types, you may index or iterate this to visit the
-     * contained values.
-     * For other types, you may use them in a scalar context to see their
-     * values. */
-    struct ldb_value *val = lua_newuserdata(L, sizeof(*val));
-
-    memset(val, 0, sizeof(*val));
-    luaL_getmetatable(L, LDB_VALUE);
-    lua_setmetatable(L, -2);
-    memcpy(&val->var, v, sizeof(*v));
-    val->iter = NULL;
-    return 1;
-  }
-
-  return 0;
-}
-
 static const luaL_Reg ldb_var_funcs[] = {
   {"__index", ldb_var_index},
+  {"__call", ldb_var_iter},
+  {"__tostring", ldb_var_tostring},
   {NULL, NULL}
 };
+
+static int ldb_var_ctype(lua_State *L)
+{
+  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
+  /* the "C" type name */
+  lua_pushstring(L, gimli_dwarf_resolve_type_name(v->m->objfile, v->type));
+  return 1;
+}
+
+static int ldb_var_tag(lua_State *L)
+{
+  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
+
+  /* var.tag => the dwarf type tag, as a string */
+  struct gimli_dwarf_die *td;
+
+  td = gimli_dwarf_get_die(v->m->objfile, v->type->code);
+  if (!td) {
+    lua_pushnil(L);
+    return 1;
+  }
+  /* {{{ switch on td->tag, return string rep. */
+  switch (td->tag) {
+    case DW_TAG_base_type:
+      lua_pushstring(L, "base");
+      return 1;
+    case DW_TAG_typedef:
+      lua_pushstring(L, "typedef");
+      return 1;
+    case DW_TAG_enumeration_type:
+      lua_pushstring(L, "enum");
+      return 1;
+    case DW_TAG_structure_type:
+      lua_pushstring(L, "struct");
+      return 1;
+    case DW_TAG_union_type:
+      lua_pushstring(L, "union");
+      return 1;
+    case DW_TAG_pointer_type:
+      lua_pushstring(L, "pointer");
+      return 1;
+    case DW_TAG_subroutine_type:
+      lua_pushstring(L, "subroutine");
+      return 1;
+    case DW_TAG_const_type:
+      lua_pushstring(L, "const");
+      return 1;
+    case DW_TAG_array_type:
+      lua_pushstring(L, "array");
+      return 1;
+    case DW_TAG_class_type:
+      lua_pushstring(L, "class");
+      return 1;
+    case DW_TAG_reference_type:
+      lua_pushstring(L, "reference");
+      return 1;
+    case DW_TAG_string_type:
+      lua_pushstring(L, "string");
+      return 1;
+    case DW_TAG_ptr_to_member_type:
+      lua_pushstring(L, "ptr_to_member");
+      return 1;
+    case DW_TAG_set_type:
+      lua_pushstring(L, "set");
+      return 1;
+    case DW_TAG_subrange_type:
+      lua_pushstring(L, "subrange");
+      return 1;
+    case DW_TAG_file_type:
+      lua_pushstring(L, "file");
+      return 1;
+    case DW_TAG_packed_type:
+      lua_pushstring(L, "packed");
+      return 1;
+    case DW_TAG_template_type_parameter:
+      lua_pushstring(L, "template_type");
+      return 1;
+    case DW_TAG_thrown_type:
+      lua_pushstring(L, "thrown");
+      return 1;
+    case DW_TAG_volatile_type:
+      lua_pushstring(L, "volatile");
+      return 1;
+    case DW_TAG_restrict_type:
+      lua_pushstring(L, "restrict");
+      return 1;
+    case DW_TAG_interface_type:
+      lua_pushstring(L, "interface");
+      return 1;
+    case DW_TAG_unspecified_type:
+      lua_pushstring(L, "unspecified");
+      return 1;
+    case DW_TAG_shared_type:
+      lua_pushstring(L, "shared");
+      return 1;
+    default:
+      /* Shouldn't happen */
+      lua_pushfstring(L, "tag=%llx", td->tag);
+      return 1;
+  }
+  /* }}} */
+  return 1;
+}
+
+static int ldb_var_name(lua_State *L)
+{
+  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
+
+  /* var.typename => the dwarf type name, as a string */
+  struct gimli_dwarf_die *td;
+
+  td = gimli_dwarf_get_die(v->m->objfile, v->type->code);
+  if (!td) {
+    lua_pushnil(L);
+  } else {
+    struct gimli_dwarf_attr *name = gimli_dwarf_die_get_attr(td, DW_AT_name);
+
+    if (name) {
+      lua_pushstring(L, name->ptr);
+    } else {
+      lua_pushnil(L);
+    }
+  }
+  return 1;
+}
+
+static int ldb_var_deref(lua_State *L)
+{
+  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
+
+  /* var.deref => if a pointer, follow the pointer to the next level var */
+  struct gimli_dwarf_die *td;
+  struct ldb_var *deref;
+  struct gimli_dwarf_attr *type;
+  uint64_t u64, size;
+  uint32_t u32;
+
+  td = gimli_dwarf_get_die(v->m->objfile, v->type->code);
+  if (!td) {
+    lua_pushnil(L);
+    return 1;
+  }
+  if (td->tag != DW_TAG_pointer_type) {
+    luaL_error(L, "Attempt to dereference a non-pointer");
+  }
+  type = gimli_dwarf_die_get_attr(td, DW_AT_type);
+  if (!type) {
+    // TODO: allow this by returning a var (with an address) that
+    // can be cast to another type (make other accessors safe)
+    luaL_error(L, "Attempt to dereference a void pointer");
+  }
+
+  deref = lua_newuserdata(L, sizeof(*v));
+  memset(deref, 0, sizeof(*deref));
+  luaL_getmetatable(L, LDB_VAR);
+  lua_setmetatable(L, -2);
+  memcpy(deref, v, sizeof(*v));
+
+  deref->type = type;
+  gimli_dwarf_die_get_uint64_t_attr(td, DW_AT_byte_size, &size);
+  if (size == 4) {
+    gimli_dwarf_read_value((void*)v->location, v->is_stack, &u32, size);
+    deref->location = (intptr_t)u32;
+  } else {
+    gimli_dwarf_read_value((void*)v->location, v->is_stack, &u64, size);
+    deref->location = (intptr_t)u64;
+  }
+  return 1;
+}
+
+static int ldb_var_addr(lua_State *L)
+{
+  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
+
+  /* var.addr => the address of this instance in the target */
+  ldb_push_address(L, v->location);
+  return 1;
+}
 
 /* make a variable instance from a die */
 static void make_var(lua_State *L, struct ldb_vars *vars,
@@ -966,6 +953,11 @@ static int ldb_index(lua_State *L)
 
 static const luaL_Reg ldb_funcs[] = {
   {"attach", ldb_attach},
+  {"type_tag", ldb_var_tag},
+  {"type_c", ldb_var_ctype},
+  {"type_name", ldb_var_name},
+  {"addr", ldb_var_addr},
+  {"deref", ldb_var_deref},
   {"__index", ldb_index},
   {NULL, NULL},
 };
@@ -992,7 +984,6 @@ void ldb_register(lua_State *L)
   newmeta(L, LDB_FRAME, ldb_frame_funcs);
   newmeta(L, LDB_VARS, ldb_vars_funcs);
   newmeta(L, LDB_VAR, ldb_var_funcs);
-  newmeta(L, LDB_VALUE, ldb_value_funcs);
 }
 
 

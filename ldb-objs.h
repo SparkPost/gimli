@@ -68,9 +68,14 @@ struct ldb_var {
   struct gimli_dwarf_attr *type;
   struct gimli_dwarf_attr *name;
   uint64_t location;
+
+  struct gimli_dwarf_die *iter, *td;
+  /* for bitfields */
+  int mask, shift;
 };
 #define LDB_VAR "ldb.var"
 
+#if 0
 /* represents the value of a variable in the target.
  * This is basically a thin layer over an ldb_var. */
 struct ldb_value {
@@ -81,6 +86,7 @@ struct ldb_value {
   int mask, shift;
 };
 #define LDB_VALUE "ldb.value"
+#endif
 
 void ldb_register(lua_State *L);
 

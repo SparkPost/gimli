@@ -25,7 +25,13 @@ for thr in ldb.threads do
 		else
 			print(f.label)
 			for varname, isparam, var in f.vars do
-				print(varname, isparam, var.ctype)
+				print(varname, isparam, ldb.type_c(var))
+				if varname == "si" then
+					print("looking in struct siginfo")
+					for k, v in ldb.deref(var) do
+						print("", k, v)
+					end
+				end
 			end
 		end
 	end
