@@ -5,11 +5,11 @@
  */
 
 #include "impl.h"
-#include "ldb-objs.h"
+#include "wdb-objs.h"
 
-#define LDB_META "ldb.meta"
+#define WDB_META "wdb.meta"
 
-static int ldb_attach(lua_State *L)
+static int wdb_attach(lua_State *L)
 {
   int pid = luaL_checkint(L, 1);
 
@@ -20,7 +20,7 @@ static int ldb_attach(lua_State *L)
   return 0;
 }
 
-static void ldb_push_address(lua_State *L, uint64_t addr)
+static void wdb_push_address(lua_State *L, uint64_t addr)
 {
   char pcbuf[30];
 
@@ -31,7 +31,7 @@ static void ldb_push_address(lua_State *L, uint64_t addr)
 /* resolve a value down to the significant portion of its type.
  * This modifies the value struct so that this doesn't have to be
  * repeated again for the same value */
-static void resolve_value(lua_State *L, struct ldb_var *var)
+static void resolve_value(lua_State *L, struct wdb_var *var)
 {
   struct gimli_dwarf_die *td;
   struct gimli_dwarf_attr *type;
@@ -66,7 +66,7 @@ static void resolve_value(lua_State *L, struct ldb_var *var)
 }
 
 /* resolve a value to an integer numeric */
-static int resolve_numeric(lua_State *L, struct ldb_var *var,
+static int resolve_numeric(lua_State *L, struct wdb_var *var,
   uintmax_t *n, int *is_signed)
 {
   uint64_t ate, size;
@@ -128,14 +128,14 @@ static int resolve_numeric(lua_State *L, struct ldb_var *var,
 }
 
 static int make_child_value(lua_State *L,
-  struct ldb_var *var, struct gimli_dwarf_die *kid)
+  struct wdb_var *var, struct gimli_dwarf_die *kid)
 {
   int is_stack;
   struct gimli_dwarf_attr *loc;
   uint64_t root;
   int mask, shift;
   uint64_t u64;
-  struct ldb_var *member;
+  struct wdb_var *member;
 
   loc = gimli_dwarf_die_get_attr(kid, DW_AT_data_member_location);
   is_stack = 1;
@@ -177,7 +177,7 @@ static int make_child_value(lua_State *L,
   }
   member = lua_newuserdata(L, sizeof(*member));
   memcpy(member, var, sizeof(*var));
-  luaL_getmetatable(L, LDB_VAR);
+  luaL_getmetatable(L, WDB_VAR);
   lua_setmetatable(L, -2);
 
   /* update to reflect this member */
@@ -194,9 +194,9 @@ static int make_child_value(lua_State *L,
   return 1;
 }
 
-static int ldb_var_index(lua_State *L)
+static int wdb_var_index(lua_State *L)
 {
-  struct ldb_var *var = luaL_checkudata(L, 1, LDB_VAR);
+  struct wdb_var *var = luaL_checkudata(L, 1, WDB_VAR);
 
   resolve_value(L, var);
   switch (var->td->tag) {
@@ -233,9 +233,9 @@ static int ldb_var_index(lua_State *L)
   return 0;
 }
 
-static int ldb_var_iter(lua_State *L)
+static int wdb_var_iter(lua_State *L)
 {
-  struct ldb_var *var = luaL_checkudata(L, 1, LDB_VAR);
+  struct wdb_var *var = luaL_checkudata(L, 1, WDB_VAR);
 
   if (!var->iter) {
     resolve_value(L, var);
@@ -275,9 +275,9 @@ static int ldb_var_iter(lua_State *L)
   return 1;
 }
 
-static int ldb_var_tostring(lua_State *L)
+static int wdb_var_tostring(lua_State *L)
 {
-  struct ldb_var *var = luaL_checkudata(L, 1, LDB_VAR);
+  struct wdb_var *var = luaL_checkudata(L, 1, WDB_VAR);
   uintmax_t num;
   int is_signed;
 
@@ -302,24 +302,24 @@ static int ldb_var_tostring(lua_State *L)
   return 1;
 }
 
-static const luaL_Reg ldb_var_funcs[] = {
-  {"__index", ldb_var_index},
-  {"__call", ldb_var_iter},
-  {"__tostring", ldb_var_tostring},
+static const luaL_Reg wdb_var_funcs[] = {
+  {"__index", wdb_var_index},
+  {"__call", wdb_var_iter},
+  {"__tostring", wdb_var_tostring},
   {NULL, NULL}
 };
 
-static int ldb_var_ctype(lua_State *L)
+static int wdb_var_ctype(lua_State *L)
 {
-  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
+  struct wdb_var *v = luaL_checkudata(L, 1, WDB_VAR);
   /* the "C" type name */
   lua_pushstring(L, gimli_dwarf_resolve_type_name(v->m->objfile, v->type));
   return 1;
 }
 
-static int ldb_var_tag(lua_State *L)
+static int wdb_var_tag(lua_State *L)
 {
-  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
+  struct wdb_var *v = luaL_checkudata(L, 1, WDB_VAR);
 
   /* var.tag => the dwarf type tag, as a string */
   struct gimli_dwarf_die *td;
@@ -412,9 +412,9 @@ static int ldb_var_tag(lua_State *L)
   return 1;
 }
 
-static int ldb_var_name(lua_State *L)
+static int wdb_var_name(lua_State *L)
 {
-  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
+  struct wdb_var *v = luaL_checkudata(L, 1, WDB_VAR);
 
   /* var.typename => the dwarf type name, as a string */
   struct gimli_dwarf_die *td;
@@ -434,13 +434,13 @@ static int ldb_var_name(lua_State *L)
   return 1;
 }
 
-static int ldb_var_deref(lua_State *L)
+static int wdb_var_deref(lua_State *L)
 {
-  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
+  struct wdb_var *v = luaL_checkudata(L, 1, WDB_VAR);
 
   /* var.deref => if a pointer, follow the pointer to the next level var */
   struct gimli_dwarf_die *td;
-  struct ldb_var *deref;
+  struct wdb_var *deref;
   struct gimli_dwarf_attr *type;
   uint64_t u64, size;
   uint32_t u32;
@@ -462,7 +462,7 @@ static int ldb_var_deref(lua_State *L)
 
   deref = lua_newuserdata(L, sizeof(*v));
   memset(deref, 0, sizeof(*deref));
-  luaL_getmetatable(L, LDB_VAR);
+  luaL_getmetatable(L, WDB_VAR);
   lua_setmetatable(L, -2);
   memcpy(deref, v, sizeof(*v));
 
@@ -478,24 +478,24 @@ static int ldb_var_deref(lua_State *L)
   return 1;
 }
 
-static int ldb_var_addr(lua_State *L)
+static int wdb_var_addr(lua_State *L)
 {
-  struct ldb_var *v = luaL_checkudata(L, 1, LDB_VAR);
+  struct wdb_var *v = luaL_checkudata(L, 1, WDB_VAR);
 
   /* var.addr => the address of this instance in the target */
-  ldb_push_address(L, v->location);
+  wdb_push_address(L, v->location);
   return 1;
 }
 
 /* make a variable instance from a die */
-static void make_var(lua_State *L, struct ldb_vars *vars,
+static void make_var(lua_State *L, struct wdb_vars *vars,
   struct gimli_dwarf_die *die)
 {
-  struct ldb_var *v = lua_newuserdata(L, sizeof(*v));
+  struct wdb_var *v = lua_newuserdata(L, sizeof(*v));
   struct gimli_dwarf_attr *location;
 
   memset(v, 0, sizeof(*v));
-  luaL_getmetatable(L, LDB_VAR);
+  luaL_getmetatable(L, WDB_VAR);
   lua_setmetatable(L, -2);
 
   v->cur = vars->cur;
@@ -531,9 +531,9 @@ static void make_var(lua_State *L, struct ldb_vars *vars,
 }
 
 
-static int ldb_vars_index(lua_State *L)
+static int wdb_vars_index(lua_State *L)
 {
-  struct ldb_vars *vars = luaL_checkudata(L, 1, LDB_VARS);
+  struct wdb_vars *vars = luaL_checkudata(L, 1, WDB_VARS);
   const char *what = luaL_checkstring(L, 2);
   struct gimli_dwarf_die *die;
 
@@ -562,9 +562,9 @@ static int ldb_vars_index(lua_State *L)
 /* iterates the parameters in a frame.
  * This generator returns (name, isparam, var)
  */
-static int ldb_vars_iter(lua_State *L)
+static int wdb_vars_iter(lua_State *L)
 {
-  struct ldb_vars *vars = luaL_checkudata(L, 1, LDB_VARS);
+  struct wdb_vars *vars = luaL_checkudata(L, 1, WDB_VARS);
 
   if (vars->iter) {
     struct gimli_dwarf_attr *name;
@@ -590,15 +590,15 @@ static int ldb_vars_iter(lua_State *L)
   return 1;
 }
 
-static const luaL_Reg ldb_vars_funcs[] = {
-  {"__index", ldb_vars_index},
-  {"__call", ldb_vars_iter},
+static const luaL_Reg wdb_vars_funcs[] = {
+  {"__index", wdb_vars_index},
+  {"__call", wdb_vars_iter},
   {NULL, NULL}
 };
 
-static void make_vars(lua_State *L, struct ldb_frame *f)
+static void make_vars(lua_State *L, struct wdb_frame *f)
 {
-  struct ldb_vars *vars = lua_newuserdata(L, sizeof(*vars));
+  struct wdb_vars *vars = lua_newuserdata(L, sizeof(*vars));
   struct gimli_dwarf_attr *frame_base_attr;
   int tmp;
 
@@ -639,18 +639,18 @@ static void make_vars(lua_State *L, struct ldb_frame *f)
     }
   }
 
-  luaL_getmetatable(L, LDB_VARS);
+  luaL_getmetatable(L, WDB_VARS);
   lua_setmetatable(L, -2);
 }
 
-/* to call, an instance of ldb_thread must be on top of the stack;
+/* to call, an instance of wdb_thread must be on top of the stack;
  * it will be popped */
-static struct ldb_frame *make_frame(lua_State *L,
+static struct wdb_frame *make_frame(lua_State *L,
   int nframe)
 {
-  struct ldb_thread *thr = luaL_checkudata(L, -1, LDB_THREAD);
+  struct wdb_thread *thr = luaL_checkudata(L, -1, WDB_THREAD);
   int ref;
-  struct ldb_frame *f;
+  struct wdb_frame *f;
 
   /* pop thr, make a ref to it */
   ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -659,7 +659,7 @@ static struct ldb_frame *make_frame(lua_State *L,
   f->thread_ref = ref;
   f->thr = thr;
   f->nframe = nframe;
-  luaL_getmetatable(L, LDB_FRAME);
+  luaL_getmetatable(L, WDB_FRAME);
   lua_setmetatable(L, -2);
 
   if (nframe < 0 || nframe >= thr->nframes) {
@@ -670,9 +670,9 @@ static struct ldb_frame *make_frame(lua_State *L,
   return f;
 }
 
-static int ldb_frame_gc(lua_State *L)
+static int wdb_frame_gc(lua_State *L)
 {
-  struct ldb_frame *f = luaL_checkudata(L, -1, LDB_FRAME);
+  struct wdb_frame *f = luaL_checkudata(L, -1, WDB_FRAME);
 
   luaL_unref(L, LUA_REGISTRYINDEX, f->thread_ref);
   f->thread_ref = LUA_NOREF;
@@ -681,9 +681,9 @@ static int ldb_frame_gc(lua_State *L)
   return 0;
 }
 
-static int ldb_frame_tostring(lua_State *L)
+static int wdb_frame_tostring(lua_State *L)
 {
-  struct ldb_frame *f = luaL_checkudata(L, -1, LDB_FRAME);
+  struct wdb_frame *f = luaL_checkudata(L, -1, WDB_FRAME);
 
   if (f->thr) {
     lua_pushfstring(L, "frame #%d of LWP %d", f->nframe, f->thr->st->lwpid);
@@ -694,9 +694,9 @@ static int ldb_frame_tostring(lua_State *L)
   return 1;
 }
 
-static int ldb_frame_from_frame(lua_State *L, int up)
+static int wdb_frame_from_frame(lua_State *L, int up)
 {
-  struct ldb_frame *f = luaL_checkudata(L, -1, LDB_FRAME);
+  struct wdb_frame *f = luaL_checkudata(L, -1, WDB_FRAME);
   int nframe = f->nframe + up;
 
   if (nframe < 0 || nframe >= f->thr->nframes) {
@@ -709,21 +709,21 @@ static int ldb_frame_from_frame(lua_State *L, int up)
   return 1;
 }
 
-static int ldb_frame_index(lua_State *L)
+static int wdb_frame_index(lua_State *L)
 {
-  struct ldb_frame *f = luaL_checkudata(L, 1, LDB_FRAME);
+  struct wdb_frame *f = luaL_checkudata(L, 1, WDB_FRAME);
   const char *what = luaL_checkstring(L, 2);
 
   if (!strcmp(what, "up")) {
     lua_pop(L, 1);
-    return ldb_frame_from_frame(L, 1);
+    return wdb_frame_from_frame(L, 1);
   }
   if (!strcmp(what, "down")) {
     lua_pop(L, 1);
-    return ldb_frame_from_frame(L, -1);
+    return wdb_frame_from_frame(L, -1);
   }
   if (!strcmp(what, "pc")) {
-    ldb_push_address(L, (uintptr_t)f->frame.st.pc);
+    wdb_push_address(L, (uintptr_t)f->frame.st.pc);
     return 1;
   }
   if (!strcmp(what, "is_signal")) {
@@ -777,16 +777,16 @@ static int ldb_frame_index(lua_State *L)
   return 0;
 }
 
-static const luaL_Reg ldb_frame_funcs[] = {
-  {"__gc", ldb_frame_gc},
-  {"__tostring", ldb_frame_tostring},
-  {"__index", ldb_frame_index},
+static const luaL_Reg wdb_frame_funcs[] = {
+  {"__gc", wdb_frame_gc},
+  {"__tostring", wdb_frame_tostring},
+  {"__index", wdb_frame_index},
   {NULL, NULL}
 };
 
-static int ldb_frames_gc(lua_State *L)
+static int wdb_frames_gc(lua_State *L)
 {
-  struct ldb_frames *f = luaL_checkudata(L, 1, LDB_FRAMES);
+  struct wdb_frames *f = luaL_checkudata(L, 1, WDB_FRAMES);
 
   luaL_unref(L, LUA_REGISTRYINDEX, f->thread_ref);
   f->thread_ref = LUA_NOREF;
@@ -795,9 +795,9 @@ static int ldb_frames_gc(lua_State *L)
   return 0;
 }
 
-static int ldb_frames_index(lua_State *L)
+static int wdb_frames_index(lua_State *L)
 {
-  struct ldb_frames *f = luaL_checkudata(L, 1, LDB_FRAMES);
+  struct wdb_frames *f = luaL_checkudata(L, 1, WDB_FRAMES);
   int nframe = luaL_checkint(L, 2);
 
   /* push thread on to stack for make_frame */
@@ -806,9 +806,9 @@ static int ldb_frames_index(lua_State *L)
   return 1;
 }
 
-static int ldb_frames_iter(lua_State *L)
+static int wdb_frames_iter(lua_State *L)
 {
-  struct ldb_frames *f = luaL_checkudata(L, 1, LDB_FRAMES);
+  struct wdb_frames *f = luaL_checkudata(L, 1, WDB_FRAMES);
 
   if (f->nframe >= f->thr->nframes) {
     lua_pushnil(L);
@@ -822,25 +822,25 @@ static int ldb_frames_iter(lua_State *L)
   return 1;
 }
 
-static const luaL_Reg ldb_frames_funcs[] = {
-  {"__gc", ldb_frames_gc},
-  {"__index", ldb_frames_index},
-  {"__call", ldb_frames_iter},
+static const luaL_Reg wdb_frames_funcs[] = {
+  {"__gc", wdb_frames_gc},
+  {"__index", wdb_frames_index},
+  {"__call", wdb_frames_iter},
   {NULL, NULL}
 };
 
-static int ldb_thread_tostring(lua_State *L)
+static int wdb_thread_tostring(lua_State *L)
 {
-  struct ldb_thread *thr = luaL_checkudata(L, 1, LDB_THREAD);
+  struct wdb_thread *thr = luaL_checkudata(L, 1, WDB_THREAD);
   lua_pushfstring(L, "thread:tid=%d:LWP=%d:frames=%d",
     thr->tid, thr->st->lwpid, thr->nframes);
   return 1;
 }
 
-static int ldb_thread_frames(lua_State *L)
+static int wdb_thread_frames(lua_State *L)
 {
-  struct ldb_thread *thr = luaL_checkudata(L, 1, LDB_THREAD);
-  struct ldb_frames *frames;
+  struct wdb_thread *thr = luaL_checkudata(L, 1, WDB_THREAD);
+  struct wdb_frames *frames;
   int ref;
 
   /* pop off the name "frames" */
@@ -849,7 +849,7 @@ static int ldb_thread_frames(lua_State *L)
 
   frames = lua_newuserdata(L, sizeof(*frames));
   memset(frames, 0, sizeof(*frames));
-  luaL_getmetatable(L, LDB_FRAMES);
+  luaL_getmetatable(L, WDB_FRAMES);
   lua_setmetatable(L, -2);
   frames->thr = thr;
   /* make a ref to thr */
@@ -860,27 +860,27 @@ static int ldb_thread_frames(lua_State *L)
   return 1;
 }
 
-static int ldb_thread_index(lua_State *L)
+static int wdb_thread_index(lua_State *L)
 {
-  struct ldb_thread *f = luaL_checkudata(L, 1, LDB_THREAD);
+  struct wdb_thread *f = luaL_checkudata(L, 1, WDB_THREAD);
   const char *what = luaL_checkstring(L, 2);
 
   if (!strcmp(what, "frames")) {
-    return ldb_thread_frames(L);
+    return wdb_thread_frames(L);
   }
   luaL_error(L, "no such property frame.%s", what);
   return 0;
 }
 
-static const luaL_Reg ldb_thread_funcs[] = {
-  {"__tostring", ldb_thread_tostring},
-  {"__index", ldb_thread_index},
+static const luaL_Reg wdb_thread_funcs[] = {
+  {"__tostring", wdb_thread_tostring},
+  {"__index", wdb_thread_index},
   {NULL, NULL},
 };
 
 static void make_thread(lua_State *L, int i)
 {
-  struct ldb_thread *thr;
+  struct wdb_thread *thr;
   int nf;
 
   if (i < 0 || i >= gimli_nthreads) {
@@ -890,19 +890,19 @@ static void make_thread(lua_State *L, int i)
 
   thr = lua_newuserdata(L, sizeof(*thr));
   memset(thr, 0, sizeof(*thr));
-  luaL_getmetatable(L, LDB_THREAD);
+  luaL_getmetatable(L, WDB_THREAD);
   lua_setmetatable(L, -2);
 
   thr->tid = i;
   thr->st = &gimli_threads[i];
-  thr->nframes = gimli_stack_trace(i, thr->frames, LDB_MAX_FRAMES);
+  thr->nframes = gimli_stack_trace(i, thr->frames, WDB_MAX_FRAMES);
   for (nf = 0; nf < thr->nframes; nf++) {
     thr->pcaddrs[nf] = thr->frames[nf].st.pc;
     thr->contexts[nf] = &thr->frames[nf];
   }
 }
 
-static int ldb_threads_index(lua_State *L)
+static int wdb_threads_index(lua_State *L)
 {
   int nthr = luaL_checkint(L, 2);
 
@@ -910,9 +910,9 @@ static int ldb_threads_index(lua_State *L)
   return 1;
 }
 
-static int ldb_threads_iter(lua_State *L)
+static int wdb_threads_iter(lua_State *L)
 {
-  struct ldb_threads *thr = luaL_checkudata(L, 1, LDB_THREADS);
+  struct wdb_threads *thr = luaL_checkudata(L, 1, WDB_THREADS);
 
   if (thr->nthr >= gimli_nthreads) {
     lua_pushnil(L);
@@ -924,22 +924,22 @@ static int ldb_threads_iter(lua_State *L)
   return 1;
 }
 
-static const luaL_Reg ldb_threads_funcs[] = {
-  {"__index", ldb_threads_index},
-  {"__call", ldb_threads_iter},
+static const luaL_Reg wdb_threads_funcs[] = {
+  {"__index", wdb_threads_index},
+  {"__call", wdb_threads_iter},
   {NULL, NULL}
 };
 
-static int ldb_index(lua_State *L)
+static int wdb_index(lua_State *L)
 {
   const char *what = luaL_checkstring(L, 2);
 
   if (!strcmp(what, "threads")) {
-    struct ldb_threads *t = lua_newuserdata(L, sizeof(*t));
+    struct wdb_threads *t = lua_newuserdata(L, sizeof(*t));
 
     memset(t, 0, sizeof(*t));
     t->nthr = 0;
-    luaL_getmetatable(L, LDB_THREADS);
+    luaL_getmetatable(L, WDB_THREADS);
     lua_setmetatable(L, -2);
     return 1;
   }
@@ -951,14 +951,14 @@ static int ldb_index(lua_State *L)
   return 1;
 }
 
-static const luaL_Reg ldb_funcs[] = {
-  {"attach", ldb_attach},
-  {"type_tag", ldb_var_tag},
-  {"type_c", ldb_var_ctype},
-  {"type_name", ldb_var_name},
-  {"addr", ldb_var_addr},
-  {"deref", ldb_var_deref},
-  {"__index", ldb_index},
+static const luaL_Reg wdb_funcs[] = {
+  {"attach", wdb_attach},
+  {"type_tag", wdb_var_tag},
+  {"type_c", wdb_var_ctype},
+  {"type_name", wdb_var_name},
+  {"addr", wdb_var_addr},
+  {"deref", wdb_var_deref},
+  {"__index", wdb_index},
   {NULL, NULL},
 };
 
@@ -970,20 +970,20 @@ static void newmeta(lua_State *L, const char *id, const struct luaL_Reg *funcs)
   luaL_register(L, NULL, funcs);
 }
 
-void ldb_register(lua_State *L)
+void wdb_register(lua_State *L)
 {
-  newmeta(L, LDB_META, ldb_funcs);
+  newmeta(L, WDB_META, wdb_funcs);
   lua_createtable(L, 0, 0);
-  luaL_getmetatable(L, LDB_META);
+  luaL_getmetatable(L, WDB_META);
   lua_setmetatable(L, -2);
   lua_setglobal(L, "ldb");
 
-  newmeta(L, LDB_THREADS, ldb_threads_funcs);
-  newmeta(L, LDB_THREAD, ldb_thread_funcs);
-  newmeta(L, LDB_FRAMES, ldb_frames_funcs);
-  newmeta(L, LDB_FRAME, ldb_frame_funcs);
-  newmeta(L, LDB_VARS, ldb_vars_funcs);
-  newmeta(L, LDB_VAR, ldb_var_funcs);
+  newmeta(L, WDB_THREADS, wdb_threads_funcs);
+  newmeta(L, WDB_THREAD, wdb_thread_funcs);
+  newmeta(L, WDB_FRAMES, wdb_frames_funcs);
+  newmeta(L, WDB_FRAME, wdb_frame_funcs);
+  newmeta(L, WDB_VARS, wdb_vars_funcs);
+  newmeta(L, WDB_VAR, wdb_var_funcs);
 }
 
 

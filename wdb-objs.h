@@ -1,5 +1,5 @@
-#ifndef LDB_OBJS_H
-#define LDB_OBJS_H
+#ifndef WDB_OBJS_H
+#define WDB_OBJS_H
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -10,44 +10,44 @@
 extern "C" {
 #endif
 
-#define LDB_MAX_FRAMES 256
+#define WDB_MAX_FRAMES 256
 
 /* represents a thread */
-struct ldb_thread {
+struct wdb_thread {
   int tid;
   int nframes;
   struct gimli_thread_state *st;
-  struct gimli_unwind_cursor frames[LDB_MAX_FRAMES];
-  void *pcaddrs[LDB_MAX_FRAMES];
-  void *contexts[LDB_MAX_FRAMES];
+  struct gimli_unwind_cursor frames[WDB_MAX_FRAMES];
+  void *pcaddrs[WDB_MAX_FRAMES];
+  void *contexts[WDB_MAX_FRAMES];
 };
-#define LDB_THREAD "ldb.thread"
+#define WDB_THREAD "wdb.thread"
 
 /* iterator/accessor for threads */
-struct ldb_threads {
+struct wdb_threads {
   int nthr;
 };
-#define LDB_THREADS "ldb.threads"
+#define WDB_THREADS "wdb.threads"
 
 /* represents a frame */
-struct ldb_frame {
+struct wdb_frame {
   int thread_ref;
-  struct ldb_thread *thr;
+  struct wdb_thread *thr;
   int nframe;
   struct gimli_unwind_cursor frame;
 };
-#define LDB_FRAME "ldb.frame"
+#define WDB_FRAME "wdb.frame"
 
 /* iterator/accessor for frames */
-struct ldb_frames {
+struct wdb_frames {
   int thread_ref;
-  struct ldb_thread *thr;
+  struct wdb_thread *thr;
   int nframe;
 };
-#define LDB_FRAMES "ldb.frames"
+#define WDB_FRAMES "wdb.frames"
 
 /* iterator/access for variables in a frame */
-struct ldb_vars {
+struct wdb_vars {
   struct gimli_unwind_cursor cur;
   struct gimli_dwarf_die *die;
   struct gimli_dwarf_die *iter;
@@ -55,10 +55,10 @@ struct ldb_vars {
   uint64_t comp_unit_base;
   struct gimli_object_mapping *m;
 };
-#define LDB_VARS "ldb.vars"
+#define WDB_VARS "wdb.vars"
 
 /* represents a variable in the target */
-struct ldb_var {
+struct wdb_var {
   struct gimli_unwind_cursor cur;
   struct gimli_dwarf_die *die;
   uint64_t frame_base;
@@ -73,22 +73,22 @@ struct ldb_var {
   /* for bitfields */
   int mask, shift;
 };
-#define LDB_VAR "ldb.var"
+#define WDB_VAR "wdb.var"
 
 #if 0
 /* represents the value of a variable in the target.
- * This is basically a thin layer over an ldb_var. */
-struct ldb_value {
-  struct ldb_var var;
+ * This is basically a thin layer over an wdb_var. */
+struct wdb_value {
+  struct wdb_var var;
   struct gimli_dwarf_die *iter, *td;
   struct gimli_dwarf_attr *type;
   /* for bitfields */
   int mask, shift;
 };
-#define LDB_VALUE "ldb.value"
+#define WDB_VALUE "wdb.value"
 #endif
 
-void ldb_register(lua_State *L);
+void wdb_register(lua_State *L);
 
 
 #ifdef __cplusplus

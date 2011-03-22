@@ -2,7 +2,7 @@ AUTOMAKE_OPTIONS = subdir-objects
 RLLDFLAGS = @RL_LDFLAGS@
 RLCFLAGS = @RL_CFLAGS@
 TRACELDFLAGS = @CORONER_LDFLAGS@
-bin_PROGRAMS = monitor glider ldb
+bin_PROGRAMS = monitor glider wdb
 noinst_PROGRAMS = wedgie
 lib_LTLIBRARIES = libgimli.la
 noinst_LTLIBRARIES = liblua.la libtrace.la
@@ -28,9 +28,9 @@ liblua_la_SOURCES = \
 	lua/ldblib.c lua/liolib.c lua/lmathlib.c lua/loslib.c lua/ltablib.c \
 	lua/lstrlib.c lua/loadlib.c lua/linit.c lua/lposix.c
 
-ldb_SOURCES = ldb.c ldb-objs.c
-ldb_CPPFLAGS = -Ilua $(RLCFLAGS)
-ldb_LDADD = libtrace.la liblua.la $(RLLDFLAGS) $(TRACELDFLAGS)
+wdb_SOURCES = wdb.c wdb-objs.c
+wdb_CPPFLAGS = -Ilua $(RLCFLAGS)
+wdb_LDADD = libtrace.la liblua.la $(RLLDFLAGS) $(TRACELDFLAGS)
 
 wedgie_SOURCES = wedgie.c
 wedgie_LDADD = libgimli.la -lpthread
