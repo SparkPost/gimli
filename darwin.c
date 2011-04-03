@@ -865,19 +865,11 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
   }
   if (sigtramp && cur->st.pc >= sigtramp && cur->st.pc <= sigtramp + 0xff) {
 #if defined(__x86_64__)
-#if 0
-    /* riddle me this: why is this cur->st.fp here, but cur->st.fp + 4 in
-     * the unwind call? Is there some weird padding issue going on? */
-    struct gimli_kernel_sigframe64 *s = cur->st.fp;
-    fprintf(stderr, "is? SI addr is %p (diff=%x)\n", &s->si, (intptr_t)&s->si - (intptr_t)cur->st.fp);
-    gimli_read_mem(&s->si, &cur->si, sizeof(cur->si));
-#else
     if (gimli_read_mem(cur->st.fp + GIMLI_KERNEL_SIGINFO64,
         &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
       memset(&cur->si, 0, sizeof(cur->si));
     }
     return 1;
-#endif
 #elif defined(__i386__)
     struct gimli_kernel_sigframe32 *f = cur->st.fp;
     if (gimli_read_mem(&f->si, &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {

@@ -15,7 +15,7 @@ glider_LDADD = libtrace.la liblua.la $(TRACELDFLAGS)
 
 libtrace_la_SOURCES = \
 	trace.c linux.c elf.c hash.c elf-read.c dwarf-read.c dwarf-unwind.c \
-	dwarf-expr.c darwin.c solaris.c demangle.c 
+	dwarf-expr.c darwin.c solaris.c demangle.c freebsd.c
 
 libgimli_la_SOURCES = \
   heartbeat.c

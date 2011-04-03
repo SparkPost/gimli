@@ -10,6 +10,7 @@ int gimli_nthreads = 0;
 int max_frames = 256;
 struct gimli_thread_state *gimli_threads = NULL;
 struct gimli_object_file *gimli_files = NULL;
+static struct gimli_object_file *first_file = NULL;
 struct gimli_object_mapping *gimli_mappings = NULL;
 
 static struct gimli_proc_stat proc_stat = { 0, };
@@ -459,6 +460,10 @@ struct gimli_object_file *gimli_find_object(
 {
   struct gimli_object_file *f;
 
+  if (objname == NULL) {
+    return first_file;
+  }
+
   for (f = gimli_files; f; f = f->next) {
     if (!strcmp(f->objname, objname)) {
       return f;
@@ -548,6 +553,10 @@ struct gimli_object_file *gimli_add_object(
   f->sections = gimli_hash_new(NULL);
   gimli_files = f;
 
+  if (first_file == NULL) {
+    first_file = f;
+  }
+
 #ifndef __MACH__
   f->elf = gimli_elf_open(f->objname);
   if (f->elf) {
@@ -570,6 +579,20 @@ struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name)
 {
   struct gimli_object_file *f;
   struct gimli_symbol *sym = NULL;
+
+  /* if obj is NULL, we're looking for it anywhere we can find it */
+  if (obj == NULL) {
+    for (f = gimli_files; f; f = f->next) {
+      if (!gimli_hash_find(f->symbols, name, (void**)&sym)) {
+        sym = NULL;
+      }
+      if (debug) {
+        printf("sym_lookup: %s`%s => %p\n", obj, name, sym ? sym->addr : 0);
+      }
+      return sym;
+    }
+    return NULL;
+  }
 
   f = gimli_find_object(obj);
   if (!f) {

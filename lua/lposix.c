@@ -1441,8 +1441,10 @@ static int get_clk_id_const(const char *str)
 		return CLOCK_REALTIME;
 	else if (strcmp(str, "monotonic") == 0)
 		return CLOCK_MONOTONIC;
+#ifdef CLOCK_PROCESS_CPUTIME_ID
 	else if (strcmp(str, "process_cputime_id") == 0)
 		return CLOCK_PROCESS_CPUTIME_ID;
+#endif
 	else if (strcmp(str, "thread_cputime_id") == 0)
 		return CLOCK_THREAD_CPUTIME_ID;
 	else
@@ -1758,7 +1760,9 @@ LUALIB_API int luaopen_posix (lua_State *L)
 	set_const("ENETUNREACH", ENETUNREACH);
 	set_const("ENFILE", ENFILE);
 	set_const("ENOBUFS", ENOBUFS);
+#ifdef ENODATA
 	set_const("ENODATA", ENODATA);
+#endif
 	set_const("ENODEV", ENODEV);
 	set_const("ENOENT", ENOENT);
 	set_const("ENOEXEC", ENOEXEC);
@@ -1767,8 +1771,12 @@ LUALIB_API int luaopen_posix (lua_State *L)
 	set_const("ENOMSG", ENOMSG);
 	set_const("ENOPROTOOPT", ENOPROTOOPT);
 	set_const("ENOSPC", ENOSPC);
+#ifdef ENOSR
 	set_const("ENOSR", ENOSR);
+#endif
+#ifdef ENOSTR
 	set_const("ENOSTR", ENOSTR);
+#endif
 	set_const("ENOSYS", ENOSYS);
 	set_const("ENOTCONN", ENOTCONN);
 	set_const("ENOTDIR", ENOTDIR);
@@ -1788,7 +1796,9 @@ LUALIB_API int luaopen_posix (lua_State *L)
 	set_const("EROFS", EROFS);
 	set_const("ESPIPE", ESPIPE);
 	set_const("ESRCH", ESRCH);
+#ifdef ETIME
 	set_const("ETIME", ETIME);
+#endif
 	set_const("ETIMEDOUT", ETIMEDOUT);
 	set_const("ETXTBSY", ETXTBSY);
 	set_const("EWOULDBLOCK", EWOULDBLOCK);

@@ -39,6 +39,9 @@
 #include <sys/stat.h>
 #include <sys/frame.h>
 #endif
+#ifdef __FreeBSD__
+#include <sys/procfs.h>
+#endif
 
 #ifdef __MACH__
 #include <stdbool.h>
@@ -53,13 +56,13 @@
 #include <mach-o/fat.h>
 #include <mach-o/dyld_images.h>
 #endif
-#ifdef __linux__
+#if defined(__linux__) || defined(__FreeBSD__)
 #include <sys/ptrace.h>
 #endif
-#ifdef sun
+#if defined(sun) || defined(__FreeBSD__)
 #include <proc_service.h>
 #endif
-#if defined(sun) || defined(__linux__)
+#if defined(sun) || defined(__linux__) || defined(__FreeBSD__)
 #include <thread_db.h>
 #endif
 #include <stdarg.h>
@@ -107,6 +110,8 @@ struct gimli_thread_state {
 #elif defined(sun)
   gregset_t regs;
   lwpstatus_t lwpst; 
+#elif defined(__FreeBSD__)
+  gregset_t regs;
 #elif defined(__MACH__) && defined(__x86_64__)
   x86_thread_state64_t regs;
 #elif defined(__MACH__)

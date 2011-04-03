@@ -35,6 +35,10 @@ case $host in
     CORONER_LDFLAGS="-lthread_db -lpthread"
     RLDPATH="-Wl,-rpath="
     ;;
+  *freebsd*)
+    CORONER_LDFLAGS="-lthread_db -lpthread"
+    RLDPATH="-Wl,-rpath="
+    ;;
   *solaris*)
     RLDPATH="-R"
     case $CC in
