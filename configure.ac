@@ -16,7 +16,7 @@ DWARF_DEBUG_FLAGS="-gdwarf-2 -g3"
 AC_ARG_WITH(codesign,[
   --with-codesign=certname     Mac OS/X: name of a code signing certificate
                                to use to authorize the glider as a debugger],[
-  DARWIN_CODESIGN="codesign -s \"$withval\" glider"
+  DARWIN_CODESIGN="codesign -s \"$withval\" -f --continue glider wdb"
 ],[
   DARWIN_CODESIGN="echo"
 ])

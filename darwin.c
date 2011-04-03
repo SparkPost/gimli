@@ -623,7 +623,9 @@ int gimli_attach(int pid)
 "task_for_pid returned %d\n"
 "One resolution is to run the monitor or glider process with root privileges\n"
 "alternatively, if glider was codesigned at build time, you may use keychain\n"
-"to trust the signing certificate\n"
+"to trust the signing certificate, so long as that certificate is placed in\n"
+"the System keychain.  For more informatio, see:\n"
+"http://sourceware.org/gdb/wiki/BuildingOnDarwin\n"
 "http://developer.apple.com/library/mac/#documentation/Security/Conceptual/CodeSigningGuide/Procedures/Procedures.html#//apple_ref/doc/uid/TP40005929-CH4-SW1\n"
 , rc);
     return 0;
