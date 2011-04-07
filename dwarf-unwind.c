@@ -168,6 +168,19 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         set_rule(cur, GIMLI_DWARF_CFA_REG, DW_RULE_REG, regnum);
         set_rule(cur, GIMLI_DWARF_CFA_OFF, 0, arg);
         break;
+      case DW_CFA_def_cfa_sf:
+      {
+        int64_t sarg;
+        regnum = dw_read_uleb128(&insns, insn_end);
+        arg = dw_read_leb128(&insns, insn_end);
+        if (debug) {
+          fprintf(stderr, "CFA_def_cfa_sf: regnum=%lld arg=%lld\n",
+            regnum, sarg);
+        }
+        set_rule(cur, GIMLI_DWARF_CFA_REG, DW_RULE_REG, regnum);
+        set_rule(cur, GIMLI_DWARF_CFA_OFF, 0, sarg * cie->data_align);
+        break;
+      }
       case DW_CFA_def_cfa_offset:
         /* non-factored, no need for data_align */
         arg = dw_read_uleb128(&insns, insn_end);
@@ -312,7 +325,9 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         exprop = insns;
         insns += arg;
 
-        fprintf(stderr, "DW_CFA_expression regnum=%d\n", regnum);
+        if (debug) {
+          fprintf(stderr, "DW_CFA_expression regnum=%d\n", regnum);
+        }
         set_expr(cur, regnum, DW_RULE_EXPR, exprop, arg);
         break;
       }
@@ -328,7 +343,9 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         exprop = insns;
         insns += arg;
 
-        fprintf(stderr, "DW_CFA_val_expression regnum=%d\n", regnum);
+        if (debug) {
+          fprintf(stderr, "DW_CFA_val_expression regnum=%d\n", regnum);
+        }
         set_expr(cur, regnum, DW_RULE_VAL_EXPR, exprop, arg);
         break;
       }
@@ -343,7 +360,9 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         exprop = insns;
         insns += arg;
 
-        fprintf(stderr, "DW_CFA_def_cfa_expression\n");
+        if (debug) {
+          fprintf(stderr, "DW_CFA_def_cfa_expression\n");
+        }
         set_expr(cur, GIMLI_DWARF_CFA_REG, DW_RULE_EXPR, exprop, arg);
         set_rule(cur, GIMLI_DWARF_CFA_OFF, 0, 0);
         break;
