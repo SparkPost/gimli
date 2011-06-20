@@ -193,6 +193,9 @@ static int prep(void)
   memset(addr, 0, sizeof(*heartbeat));
   heartbeat = addr;
 
+  /* prefer to keep the heartbeat page resident */
+  mlock(addr, sizeof(*heartbeat));
+
   /* allow child to find the segment */
   snprintf(var, sizeof(var), "GIMLI_HB_FD=%d", fd);
   putenv(strdup(var));
