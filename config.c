@@ -37,6 +37,7 @@ static struct option {
   { "gid", "GIMLI_GID", OPT_INTEGER, &run_as_gid },
   { "arg0", "GIMLI_ARG0", OPT_STRING, &arg0 },
   { "run-once", "GIMLI_RUN_ONCE", OPT_INTEGER, &run_only_once },
+  { "immortal", "GIMLI_IMMORTAL", OPT_INTEGER, &immortal_child },
   { NULL }
 };
 

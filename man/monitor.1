@@ -181,6 +181,13 @@ If specified, the monitor will attempt to setgid to the specified numeric group
 id.  The corresponding environmental variable is
 .B GIMLI_GID
 .TP
+.B immortal=1
+Will monitor the child, tracing it in the event of a fault, and will restart
+the child regardless of how the child is terminated; whether it was due
+to abnormal termination or due to the child process exiting.
+The corresponding environmental variable is
+.B GIMLI_IMMORTAL
+.TP
 .B respawn-frequency=seconds
 In the event that
 .B monitor

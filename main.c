@@ -7,6 +7,7 @@
 
 int respawn = 1;
 int run_only_once = 0;
+int immortal_child = 0;
 int should_exit = 0;
 int debug = 0;
 int quiet = 0;
@@ -678,7 +679,7 @@ int main(int argc, char *argv[])
     }
     time(&last_spawn);
     wait_for_child(p);
-    if (p->force_respawn) {
+    if (p->force_respawn || immortal_child) {
       respawn = 1;
       free(p);
     } else if (WIFSIGNALED(p->exit_status) && (
