@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2009 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2008-2011 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
@@ -190,15 +190,18 @@ struct gimli_object_mapping {
 };
 
 extern int debug, quiet, detach, watchdog_interval, watchdog_start_interval,
-  watchdog_stop_interval, do_setsid, respawn_frequency;
+  watchdog_stop_interval, do_setsid, respawn_frequency, trace_interval;
 extern int run_only_once;
 extern int immortal_child;
 extern int run_as_uid, run_as_gid;
 extern char *glider_path, *trace_dir, *gimli_progname, *pidfile, *arg0;
+extern char *log_file;
 extern int gimli_nthreads;
 extern struct gimli_thread_state *gimli_threads;
 extern struct gimli_object_file *gimli_files;
 extern struct gimli_object_mapping *gimli_mappings;
+
+extern void logprint(const char *fmt, ...);
 
 struct gimli_object_mapping *gimli_add_mapping(
   const char *objname, void *base, unsigned long len,
