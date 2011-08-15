@@ -126,6 +126,10 @@ static void catch_hup(int sig_num)
 {
   struct kid_proc *p;
 
+  if (should_exit) {
+    return;
+  }
+
   logprint("caught signal %s, restarting child\n",
     strsignal(sig_num));
 
@@ -136,7 +140,6 @@ static void catch_hup(int sig_num)
     }
   }
   respawn = 1;
-  should_exit = 0;
   signal(SIGHUP, catch_hup);
 }
 
@@ -736,7 +739,7 @@ int main(int argc, char *argv[])
 
   setup_signal_handlers(0);
 
-  while (respawn) {
+  while (respawn && !should_exit) {
     int diff;
 
     diff = time(NULL) - last_spawn;
