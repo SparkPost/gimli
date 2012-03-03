@@ -88,7 +88,9 @@ long gimli_ptrace(int cmd, int pid, void *addr, void *data)
   int tries = 5;
   long ret;
 
+  errno = 0;
   ret = ptrace(cmd, pid, addr, data);
+
   if (ret == 0) return 0;
 
   if (cmd == PTRACE_GETREGS) {
@@ -115,32 +117,27 @@ int gimli_read_mem(void *src, void *dest, int len)
 {
   long word;
   int nread = 0;
+  unsigned char *destptr = (unsigned char *)dest;
+  unsigned char *srcptr = (unsigned char*)src;
 
   do {
     int x = sizeof(word);
-    word = gimli_ptrace(PTRACE_PEEKDATA, targetph.pid, src, NULL);
+    int got;
+
+    word = gimli_ptrace(PTRACE_PEEKDATA, targetph.pid, srcptr, NULL);
     if (errno) {
       fprintf(stdout, "readmem: unable to read %d bytes at %p: %s\n",
           x, src, strerror(errno));
       return 0;
     }
-    if (x > len) {
-      char *sptr = (char*)&word;
-      char *dptr = dest;
-      while (len) {
-        *dptr = *sptr;
-        dptr++;
-        sptr++;
-        len--;
-        nread++;
-      }
-    } else {
-      *(long*)dest = word;
-      src += x;
-      dest += x;
-      len -= x;
-      nread += x;
-    }
+
+    got = x > len ? len : x;
+    memcpy(destptr, &word, got);
+    destptr += got;
+    srcptr += got;
+    len -= got;
+    nread += got;
+
   } while (len > 0);
   return nread;
 }
@@ -543,7 +540,9 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
     }
 #endif
   }
-  if (gimli_dwarf_unwind_next(cur)) {
+
+  /* sanity check that dwarf made progress relative to the starting pc */
+  if (gimli_dwarf_unwind_next(cur) && cur->st.pc && cur->st.pc != c.st.pc) {
 //    printf("dwarf unwound to fp=%p sp=%p pc=%p\n", cur->st.fp, cur->st.sp, cur->st.pc);
 #if defined(__x86_64__)
     cur->st.regs.rsp = (intptr_t)cur->st.fp;
@@ -558,7 +557,11 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
       memset(&frame, 0, sizeof(frame));
     }
 //    printf("read frame: fp=%p pc=%p\n", frame.next, frame.retpc);
-    if (c.st.fp == frame.next || frame.next == 0) return 0;
+    /* If we don't appear to be making progress, or we end up in page 0,
+     * then assume we're done */
+    if (c.st.fp == frame.next || frame.next == 0 || frame.retpc < 1024) {
+      return 0;
+    }
     cur->st.fp = frame.next;
     cur->st.pc = frame.retpc;
     if (cur->st.pc > 0 && !gimli_is_signal_frame(cur)) {
@@ -573,6 +576,18 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
   return 0;
 }
 
+static child_stopped = 0;
+
+static void child_handler(int signo)
+{
+  int p;
+  int status;
+
+  child_stopped = 1;
+
+  p = waitpid(-1, &status, WNOHANG);
+}
+
 int gimli_attach(int pid)
 {
   long ret;
@@ -581,6 +596,8 @@ int gimli_attach(int pid)
   struct user_regs_struct ur;
   int i;
   int done = 0;
+
+  signal(SIGCHLD, child_handler);
   
   ret = gimli_ptrace(PTRACE_ATTACH, pid, NULL, NULL);
   if (ret != 0) {
@@ -591,8 +608,14 @@ int gimli_attach(int pid)
 
   targetph.pid = pid;
   status = 0;
-  while (waitpid(pid, &status, 0) == -1 && errno == EINTR)
-    ;
+  for (i = 0; i < 60; i++) {
+    if (child_stopped) {
+      break;
+    }
+    fprintf(stderr, "waiting for pid %d to stop\n", pid);
+    sleep(1);
+  }
+  signal(SIGCHLD, SIG_DFL);
 
   read_maps(pid);
 
