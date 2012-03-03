@@ -97,13 +97,31 @@ static void catch_sigchld(int sig_num)
     for (p = procs; p; p = p->next) {
       if (dead_pid == p->pid) {
         p->exit_status = status;
+#ifdef WIFCONTINUED
+        if (WIFCONTINUED(status)) {
+          gimli_set_proctitle("child pid %d continued", dead_pid);
+          break;
+        }
+#endif
         if (WIFSTOPPED(status)) {
           gimli_set_proctitle("child pid %d stopped", dead_pid);
-          if (!p->should_trace) {
-            p->should_trace = TRACE_ME;
+          switch (p->should_trace) {
+            case TRACE_NONE:
+              p->should_trace = TRACE_ME;
+              break;
+            case TRACE_DONE:
+              /* it was already traced by watchdog; then we sent it
+               * SIGABRT and it STOP'd itself, so we should wake it
+               * back up with a SIGCONT and let it call its shutdown
+               * function */
+              gimli_set_proctitle("child pid %d continuing", dead_pid);
+              p->exit_status = 0;
+              kill(p->pid, SIGCONT);
+              break;
           }
         } else {
-          gimli_set_proctitle("child pid %d exited", dead_pid);
+          gimli_set_proctitle("child pid %d exited (status=%x)",
+              dead_pid, status);
           p->running = 0;
         }
         break;
@@ -590,6 +608,18 @@ trace:
     p->exit_status = 0;
     if (p->should_trace == TRACE_ME) {
       trace_child(p);
+      /* sleep for a few moments, otherwise we will terminate the
+       * child too quickly; in the event of a watchdog we have a sequence
+       * like:
+       * <wedge>
+       * <trace>
+       * <continue>
+       * <child stops self>
+       * <monitor continues child>
+       * <child runs shutdown handler>
+       * Without the sleep here, we can decide that the child is dead
+       * before it gets to its shutdown handler */
+      sleep(4);
     }
 
     wait_for_exit(p, watchdog_stop_interval);
