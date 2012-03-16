@@ -1047,7 +1047,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(struct gimli_object_file *f,
 
       memcpy(&ver, data, sizeof(ver));
       data += sizeof(ver);
-      if (ver != 2) {
+      if (ver < 2 || ver > 3) {
         printf("Encountered a compilation unit with dwarf version %d; ending processing\n", ver);
 
         break;

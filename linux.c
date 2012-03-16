@@ -612,10 +612,20 @@ int gimli_attach(int pid)
     if (child_stopped) {
       break;
     }
+
+    if (waitpid(pid, &status, WNOHANG) == pid) {
+      child_stopped = 1;
+      break;
+    }
+
     fprintf(stderr, "waiting for pid %d to stop\n", pid);
     sleep(1);
   }
   signal(SIGCHLD, SIG_DFL);
+  if (!child_stopped) {
+    fprintf(stderr, "child didn't stop in 60 seconds\n");
+    return 0;
+  }
 
   read_maps(pid);
 

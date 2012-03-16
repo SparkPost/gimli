@@ -34,7 +34,8 @@ static time_t last_spawn = 0;
 
 #define TRACE_NONE 0
 #define TRACE_ME   1
-#define TRACE_DONE 2
+#define TRACE_ING  2
+#define TRACE_DONE 3
 
 struct kid_proc {
   pid_t pid;
@@ -361,7 +362,7 @@ static void trace_child(struct kid_proc *p)
   } else {
     gimli_set_proctitle("fault detected: tracing %d", p->pid);
   }
-  p->should_trace = TRACE_DONE;
+  p->should_trace = TRACE_ING;
 
   trc = calloc(1, sizeof(*trc));
   trc->tracer_for = p->pid;
@@ -450,6 +451,7 @@ static void trace_child(struct kid_proc *p)
           wait_for_exit(trc, 2);
         }
       }
+      p->should_trace = TRACE_DONE;
     }
 
     close(tracefd);
