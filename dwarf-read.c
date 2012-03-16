@@ -414,7 +414,7 @@ static int process_line_numbers(struct gimli_object_file *f)
           default:
             fprintf(stderr,
               "DWARF: line nos.: unhandled extended op=%02x, len=%llu\n",
-              op, len);
+              op, initlen);
             ;
         }
         data = next;
@@ -1970,8 +1970,8 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
       if (res) {
         had_params++;
 //        printf("type=%p %llx form %llx ind=%d\n", type, type->code, type->form, is_stack);
-        if (!show_param(cur, m->objfile, type,
-            (void*)(intptr_t)res, is_stack, (char*)name->ptr, NULL, 2, 0, 0)) {
+        if (type && !show_param(cur, m->objfile, type,
+            (void*)(intptr_t)res, is_stack, name ? (char*)name->ptr : "?", NULL, 2, 0, 0)) {
           printf("    %s @ %llx (type data @ %llx)\n",
             name->ptr, res, type->code);
         }

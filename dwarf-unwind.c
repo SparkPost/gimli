@@ -122,7 +122,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
       case DW_CFA_advance_loc:
         pc += oprand * cie->code_align;
         if (debug) {
-          fprintf(stderr, "CFA_advance_loc: pc now %p\n", pc);
+          fprintf(stderr, "CFA_advance_loc: pc += (%d * %d) => %p\n", oprand, cie->code_align, pc);
         }
         break;
       case DW_CFA_advance_loc1:
@@ -746,6 +746,17 @@ if (debug) {
             memcpy(&cie.code_enc, eh_frame, sizeof(cie.code_enc));
             eh_frame += sizeof(cie.code_enc);
           } else if (*aug == 'L') {
+            /* A 'L' may be present at any position after the first character
+             * of the string. This character may only be present if 'z' is the
+             * first character of the string. If present, it indicates the
+             * presence of one argument in the Augmentation Data of the CIE,
+             * and a corresponding argument in the Augmentation Data of the
+             * FDE. The argument in the Augmentation Data of the CIE is 1-byte
+             * and represents the pointer encoding used for the argument in the
+             * Augmentation Data of the FDE, which is the address of a
+             * language-specific data area (LSDA). The size of the LSDA pointer
+             * is specified by the pointer encoding used.
+             */
             memcpy(&cie.lsda_enc, eh_frame, sizeof(cie.lsda_enc));
             eh_frame += sizeof(cie.lsda_enc);
           }
@@ -795,13 +806,19 @@ if (debug) {
               sym,
               cur->st.pc, cie.aug);
         }
+#if 0
         if (cie.lsda_enc != DW_EH_PE_omit) {
+          fprintf(stderr, "*** Reading an LSDA enc thingy\n");
+          // FIXME: reading this LSDA thing here causes us to miss
+          // unwind instructions; need to re-read the ABI spec for
+          // the L augmentation to handle this properly.
           if (!dw_read_encptr(cie.lsda_enc, &eh_frame, end,
                 s->addr + eh_frame - eh_start, &fde.lsda_ptr)) {
             fprintf(stderr, "Error while reading lsda pointer\n");
             return 0;
           }
         }
+#endif
 
         fde.insns = eh_frame;
         fde.insn_end = next;
