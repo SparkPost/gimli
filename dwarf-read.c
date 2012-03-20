@@ -981,6 +981,15 @@ static struct gimli_dwarf_die *process_die(
     }
   }
 
+#if 0 /* we could collect type info here */
+  if (die->tag == DW_TAG_structure_type) {
+    struct gimli_dwarf_attr *name = gimli_dwarf_die_get_attr(die, DW_AT_name);
+    if (name) {
+      printf("struct %s\n", (char*)name->ptr);
+    }
+  }
+#endif
+
   *datap = data;
   return die;
 }

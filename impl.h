@@ -271,6 +271,8 @@ int gimli_get_parameter(void *context, const char *varname,
   const char **datatype, void **addr, uint64_t *size);
 extern struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,
   void *addr);
+struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
+  struct gimli_dwarf_die *die, uint64_t attrcode);
 
 #ifdef __cplusplus
 }
