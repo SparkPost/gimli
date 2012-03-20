@@ -1471,8 +1471,8 @@ static int show_param(struct gimli_unwind_cursor *cur,
   uint16_t u16;
   uint8_t u8;
   int8_t s8;
-  struct gimli_dwarf_die *td, *kid;
-  struct gimli_dwarf_attr *attr;
+  struct gimli_dwarf_die *td, *kid = NULL;
+  struct gimli_dwarf_attr *attr = NULL;
   char indentstr[1024];
   char namebuf[1024];
   const char *symname;
@@ -1715,8 +1715,18 @@ static int show_param(struct gimli_unwind_cursor *cur,
 
               printf("%s[deref'ing %s]\n", indentstr, name);
               gimli_hash_insert(derefed_params, namebuf, addr);
-              show_param(cur, f, attr, addr, 0, 
+
+              if (kid && kid->tag == DW_TAG_pointer_type) {
+                /* if we have a pointer to a pointer, actually de-ref
+                 * the pointer for the next level call */
+                if (gimli_read_mem(addr, &addr, sizeof(addr)) == sizeof(addr)) {
+                  show_param(cur, f, attr, addr, 0,
                       namebuf, NULL, indent + 2, 0, 0);
+                }
+              } else {
+                show_param(cur, f, attr, addr, 0,
+                      namebuf, NULL, indent + 2, 0, 0);
+              }
             } else {
               printf("%s[deref'ed above]\n", indentstr);
             }
