@@ -6,6 +6,12 @@
 #include "impl.h"
 #include "gimli_dwarf.h"
 
+struct dw_die_arange {
+  uint64_t addr;
+  uint64_t len;
+  uint64_t di_offset;
+};
+
 /* when rendering parameters, remember what we've already done */
 static gimli_hash_t derefed_params = NULL;
 
@@ -1134,12 +1140,19 @@ int gimli_dwarf_die_get_uint64_t_attr(
   return 0;
 }
 
-struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
-  struct gimli_unwind_cursor *cur)
+static int sort_compare_arange(const void *A, const void *B)
+{
+  struct dw_die_arange *a = (struct dw_die_arange*)A;
+  struct dw_die_arange *b = (struct dw_die_arange*)B;
+
+  return a->addr - b->addr;
+}
+
+/* Load the DIE location data from an object file */
+static int load_arange(struct gimli_object_mapping *m)
 {
   struct gimli_section_data *s = NULL;
   const uint8_t *data, *end, *next;
-  struct gimli_object_mapping *m;
   gimli_object_file_t *elf = NULL;
   uint64_t reloc = 0;
   uint32_t len32;
@@ -1150,10 +1163,6 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
   uint8_t addr_size, seg_size;
   struct gimli_dwarf_die *die;
 
-  m = gimli_mapping_for_addr(cur->st.pc);
-  if (!m) {
-    return 0;
-  }
   if (!m->objfile->elf) {
     /* (deleted) */
     return 0;
@@ -1211,6 +1220,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
       /* now we have a series of tuples */
       void *addr;
       uint64_t l;
+      struct dw_die_arange *arange;
 
       memcpy(&addr, data, sizeof(addr));
       data += sizeof(addr);
@@ -1231,51 +1241,94 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
 
       addr += reloc;
 
-      if (cur->st.pc >= addr && cur->st.pc <= addr + l) {
-//        printf("found di offset: pc=%p addr=%p len=%llx\n",
-//          cur->st.pc, addr, l);
-//        printf("Looking for die @ %llx\n", di_offset);
-        die = gimli_dwarf_get_die(m->objfile, di_offset);
-//        printf("--> die %p @ %llx\n", die, die ? die->offset : 0);
-        if (die && die->tag == DW_TAG_compile_unit) {
-          /* this is the die for the compilation unit; we need to walk
-           * through it and find the subprogram that matches */
-          for (die = die->kids; die; die = die->next) {
-            uint64_t lopc, hipc;
-//            struct gimli_dwarf_attr *lopc, *hipc;
+      m->arange = realloc(m->arange, (m->num_arange + 1) * sizeof(*arange));
+      arange = &m->arange[m->num_arange++];
+      arange->addr = (uint64_t)(intptr_t)addr;
+      arange->len = l;
+      arange->di_offset = di_offset;
 
-            if (die->tag != DW_TAG_subprogram) {
-//              printf("skip die %p: tag=%llx\n", die, die->tag);
-              continue;
-            }
-
-            if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_low_pc, &lopc)) {
-              lopc = (uint64_t)(intptr_t)addr;
-              continue;
-            }
-            if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_high_pc, &hipc)) {
-              hipc = (uint64_t)(intptr_t)addr + l;
-              continue;
-            }
-
-//            lopc = gimli_dwarf_die_get_attr(die, DW_AT_low_pc);
-//            hipc = gimli_dwarf_die_get_attr(die, DW_AT_high_pc);
-
-            if (cur->st.pc >= (void*)(intptr_t)lopc &&
-                cur->st.pc <= (void*)(intptr_t)hipc) {
-//printf("Have a subprogram lopc=%p hipc=%p die offset=%llx\n", lopc, hipc, die->offset);
-              return die;
-            }
-          }
-        }
-      }
 //      printf("arange: pc=%p addr=%p %llx\n", cur->st.pc, addr, l);
     }
     data = next;
   }
 
+  /* ensure ascending order */
+  qsort(m->arange, m->num_arange, sizeof(struct dw_die_arange),
+      sort_compare_arange);
+
+  return 1;
+}
+
+static int search_compare_arange(const void *K, const void *R)
+{
+  struct gimli_unwind_cursor *cur = (struct gimli_unwind_cursor*)K;
+  struct dw_die_arange *arange = (struct dw_die_arange*)R;
+  uint64_t pc = (uint64_t)(intptr_t)cur->st.pc;
+
+  if (pc < arange->addr) {
+    return -1;
+  }
+
+  if (pc < arange->addr + arange->len) {
+    return 0;
+  }
+
+  return 1;
+}
+
+struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
+  struct gimli_unwind_cursor *cur)
+{
+  struct gimli_object_mapping *m;
+  struct gimli_dwarf_die *die;
+  struct dw_die_arange *arange;
+
+  m = gimli_mapping_for_addr(cur->st.pc);
+  if (!m) {
+    return NULL;
+  }
+
+  if (!m->objfile->elf) {
+    return NULL;
+  }
+
+  if (!m->arange && !load_arange(m)) {
+    return NULL;
+  }
+
+  arange = bsearch(cur, m->arange, m->num_arange, sizeof(*arange),
+      search_compare_arange);
+  if (arange) {
+    die = gimli_dwarf_get_die(m->objfile, arange->di_offset);
+    if (die && die->tag == DW_TAG_compile_unit) {
+      /* this is the die for the compilation unit; we need to walk
+       * through it and find the subprogram that matches */
+      for (die = die->kids; die; die = die->next) {
+        uint64_t lopc, hipc;
+
+        if (die->tag != DW_TAG_subprogram) {
+          continue;
+        }
+
+        if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_low_pc, &lopc)) {
+          lopc = arange->addr;
+          continue;
+        }
+        if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_high_pc, &hipc)) {
+          hipc = arange->addr + arange->len;
+          continue;
+        }
+
+        if (cur->st.pc >= (void*)(intptr_t)lopc &&
+            cur->st.pc <= (void*)(intptr_t)hipc) {
+          return die;
+        }
+      }
+    }
+  }
+
   /* no joy */
-  return 0;
+  return NULL;
 }
 
 static const char *resolve_type_name(struct gimli_object_file *f,

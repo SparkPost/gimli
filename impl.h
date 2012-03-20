@@ -189,6 +189,8 @@ struct gimli_object_mapping {
   struct gimli_object_file *objfile;
   struct dw_fde *fdes;
   unsigned int num_fdes;
+  struct dw_die_arange *arange;
+  unsigned int num_arange;
 };
 
 extern int debug, quiet, detach, watchdog_interval, watchdog_start_interval,
