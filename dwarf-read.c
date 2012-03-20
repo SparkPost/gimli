@@ -1907,18 +1907,71 @@ int gimli_get_parameter(void *context, const char *varname,
   return 0;
 }
 
+static int show_die(struct gimli_unwind_cursor *cur,
+    struct gimli_dwarf_die *die,
+    uint64_t frame_base, uint64_t comp_unit_base,
+    struct gimli_object_mapping *m
+    )
+{
+  uint64_t res = 0;
+  int is_stack = 1;
+  struct gimli_dwarf_attr *location, *type, *name;
+
+  type = gimli_dwarf_die_get_attr(die, DW_AT_type);
+  if (!type) {
+    return 0;
+  }
+
+  location = gimli_dwarf_die_get_attr(die, DW_AT_location);
+  name = gimli_dwarf_die_get_attr(die, DW_AT_name);
+
+  if (location) {
+
+    switch (location->form) {
+      case DW_FORM_block:
+        if (!dw_eval_expr(cur, (uint8_t*)location->ptr, location->code,
+              frame_base, &res, NULL, &is_stack)) {
+          res = 0;
+        }
+        break;
+      case DW_FORM_data8:
+        if (!dw_calc_location(cur, comp_unit_base, m,
+              location->code, &res, NULL, &is_stack)) {
+          res = 0;
+        }
+        break;
+      default:
+        printf("Unhandled location form %llx\n", location->form);
+    }
+  } else {
+    printf("no location attribute for parameter %s die->offset=%llx %s\n",
+        name ? (char*)name->ptr : "?", die->offset, m->objfile->objname);
+  }
+
+  //printf("param: die offset %llx @ %p\n", die->offset, (void*)(intptr_t)res);
+  if (!res) {
+    return 0;
+  }
+
+  if (!show_param(cur, m->objfile, type,
+        (void*)(intptr_t)res, is_stack,
+        name ? (char*)name->ptr : "?", NULL, 2, 0, 0)) {
+    printf("    %s @ %llx (type data @ %llx)\n",
+        name->ptr, res, type->code);
+  }
+
+  return 1;
+}
+
 int gimli_show_param_info(struct gimli_unwind_cursor *cur)
 {
   struct gimli_dwarf_die *die = gimli_dwarf_get_die_for_pc(cur);
   struct gimli_dwarf_die *td;
   uint64_t frame_base = 0;
-  uint64_t res;
   uint64_t comp_unit_base = 0;
-  struct gimli_dwarf_attr *location, *type;
-  struct gimli_dwarf_attr *name, *frame_base_attr;
+  struct gimli_dwarf_attr *frame_base_attr;
   struct gimli_object_mapping *m = gimli_mapping_for_addr(cur->st.pc);
   int had_params = 0;
-  int is_stack = 0;
 
   if (!die) {
     return 0;
@@ -1931,6 +1984,8 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
 
   frame_base_attr = gimli_dwarf_die_get_attr(die, DW_AT_frame_base);
   if (frame_base_attr) {
+    int is_stack = 0;
+
     switch (frame_base_attr->form) {
       case DW_FORM_block:
         dw_eval_expr(cur, (uint8_t*)frame_base_attr->ptr, frame_base_attr->code,
@@ -1947,49 +2002,9 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
   } 
 
   for (die = die->kids; die; die = die->next) {
-    if (die->tag == DW_TAG_formal_parameter) {
-      location = gimli_dwarf_die_get_attr(die, DW_AT_location);
-      name = gimli_dwarf_die_get_attr(die, DW_AT_name);
-      type = gimli_dwarf_die_get_attr(die, DW_AT_type);
-
-      res = 0;
-      is_stack = 1;
-      if (location) {
-        switch (location->form) {
-          case DW_FORM_block:
-//            printf("using block to eval param location\n");
-            if (!dw_eval_expr(cur, (uint8_t*)location->ptr, location->code,
-                frame_base, &res, NULL, &is_stack)) {
-              res = 0;
-            }
-            break;
-          case DW_FORM_data8:
-//            printf("using loclist to eval param location\n");
-//              printf("loc form=%llx code=%llx ptr=%p\n",
-//                location->form, location->code, location->ptr);
-            if (!dw_calc_location(cur, comp_unit_base, m,
-                location->code, &res, NULL, &is_stack)) {
-//              printf("failed to calc location\n");
-              res = 0;
-            }
-//            printf("got %llx\n", res);
-            break;
-          default:
-            printf("Unhandled location form %llx\n", location->form);
-        }
-      } else {
-        printf("no location attribute for parameter %s die->offset=%llx %s\n",
-          name ? (char*)name->ptr : "?", die->offset, m->objfile->objname);
-      }
-//printf("param: die offset %llx @ %p\n", die->offset, (void*)(intptr_t)res);
-      if (res) {
+    if (die->tag == DW_TAG_formal_parameter || die->tag == DW_TAG_variable) {
+      if (show_die(cur, die, frame_base, comp_unit_base, m)) {
         had_params++;
-//        printf("type=%p %llx form %llx ind=%d\n", type, type->code, type->form, is_stack);
-        if (type && !show_param(cur, m->objfile, type,
-            (void*)(intptr_t)res, is_stack, name ? (char*)name->ptr : "?", NULL, 2, 0, 0)) {
-          printf("    %s @ %llx (type data @ %llx)\n",
-            name->ptr, res, type->code);
-        }
       }
     }
   }
