@@ -224,11 +224,11 @@ void gimli_hash_delete_all(gimli_hash_t h)
 		while (b) {
 			tofree = b;
 			b = b->next;
-			free(b->k);
+			free(tofree->k);
 			if (h->dtor) {
-				h->dtor(b->item);
+				h->dtor(tofree->item);
 			}
-			free(b);
+			free(tofree);
 		}
 		h->buckets[i] = NULL;
 	}

@@ -187,6 +187,8 @@ struct gimli_object_mapping {
   unsigned long len;
   unsigned long offset;
   struct gimli_object_file *objfile;
+  struct dw_fde *fdes;
+  unsigned int num_fdes;
 };
 
 extern int debug, quiet, detach, watchdog_interval, watchdog_start_interval,
@@ -265,6 +267,8 @@ struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name);
 char *gimli_read_string(void *addr);
 int gimli_get_parameter(void *context, const char *varname,
   const char **datatype, void **addr, uint64_t *size);
+extern struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,
+  void *addr);
 
 #ifdef __cplusplus
 }

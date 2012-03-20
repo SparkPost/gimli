@@ -546,10 +546,11 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 //    printf("dwarf unwound to fp=%p sp=%p pc=%p\n", cur->st.fp, cur->st.sp, cur->st.pc);
 #if defined(__x86_64__)
     cur->st.regs.rsp = (intptr_t)cur->st.fp;
-    cur->st.regs.rip = (intptr_t)cur->st.pc;
+//    cur->st.regs.rip = (intptr_t)cur->st.pc;
 #endif
     return 1;
   }
+
 //printf("dwarf unwind didn't succeed, doing it the hard way\n");
 //printf("fp=%p sp=%p pc=%p\n", c.st.fp, c.st.sp, c.st.pc);
 

@@ -357,6 +357,8 @@ static void trace_child(struct kid_proc *p)
   struct kid_proc *trc;
   int tracefd;
 
+//  sleep(300);
+
   if (p->watchdog) {
     gimli_set_proctitle("watchdog triggered: tracing %d", p->pid);
   } else {
