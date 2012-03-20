@@ -1492,6 +1492,11 @@ static int show_param(struct gimli_unwind_cursor *cur,
 //printf("show_param: offset=%llx tag=%llx\n", td->offset, td->tag);
   if (td) {
     switch (td->tag) {
+      case DW_TAG_subroutine_type:
+        /* pointer to a function; our symbol resolver already shows
+         * which function we point to, so we have nothing further to do */
+        return 1;
+
       case DW_TAG_typedef:
       case DW_TAG_const_type:
         /* resolve to underlying type */
@@ -1795,7 +1800,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
         if (do_hook) do_after(cur, type_name, name, addr, size);
         return 1;
       default:
-        printf("Unhandled tag %llx in show_param\n", td->tag);
+        printf("Unhandled tag 0x%llx in show_param\n", td->tag);
     }
   } else {
     printf("no type information\n");
