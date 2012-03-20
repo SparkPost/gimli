@@ -134,7 +134,7 @@ struct gimli_line_info {
   char *filename;
   uint64_t lineno;
   void *addr;
-  struct gimli_line_info *next;
+  void *end;
 };
 
 #ifdef __MACH__
@@ -171,7 +171,7 @@ struct gimli_object_file {
 
   uint64_t base_addr;
 
-  struct gimli_line_info *lines, **larray;
+  struct gimli_line_info *lines;
   uint64_t linecount;
 
   gimli_hash_t dies; /* offset-string => gimli_dwarf_die */

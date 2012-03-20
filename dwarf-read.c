@@ -170,10 +170,23 @@ int dw_read_encptr(uint8_t enc, const uint8_t **ptr, const uint8_t *end,
 
 static int sort_by_addr(const void *A, const void *B)
 {
-  struct gimli_line_info *a = *(struct gimli_line_info**)A;
-  struct gimli_line_info *b = *(struct gimli_line_info**)B;
+  struct gimli_line_info *a = (struct gimli_line_info*)A;
+  struct gimli_line_info *b = (struct gimli_line_info*)B;
 
   return a->addr - b->addr;
+}
+
+static int search_compare_line(const void *pc, const void *L)
+{
+  struct gimli_line_info *line = (struct gimli_line_info*)L;
+
+  if (pc < line->addr) {
+    return -1;
+  }
+  if (pc < line->end) {
+    return 0;
+  }
+  return 1;
 }
 
 /* read dwarf info to determine the source/line information for a given
@@ -182,7 +195,6 @@ int dwarf_determine_source_line_number(void *pc, char *src, int srclen,
   uint64_t *lineno)
 {
   struct gimli_object_mapping *m;
-  int i, n, upper, lower;
   struct gimli_object_file *f;
   struct gimli_line_info *linfo;
 
@@ -199,39 +211,13 @@ int dwarf_determine_source_line_number(void *pc, char *src, int srclen,
     pc -= (intptr_t)m->base;
   }
 
-  n = f->linecount;
-  lower = 0;
-  upper = n - 1;
+  linfo = bsearch(pc, f->lines, f->linecount, sizeof(*linfo),
+      search_compare_line);
 
-  while (lower <= upper) {
-    i = lower + ((upper - lower)/2);
-    linfo = f->larray[i];
-
-    if (linfo->addr == pc) {
-      goto found;
-    }
-    if (linfo->addr > pc) {
-      /* too high */
-      upper = i - 1;
-    } else {
-      /* in the right ballpark */
-      lower = i + 1;
-    }
-  }
-  if (lower < 0) lower = 0;
-  if (upper < lower) upper = lower + 1;
-  for (i = lower; i <= upper; i++) {
-    if (i < 0 || i >= n) continue;
-    linfo = f->larray[i];
-    if (pc < linfo->addr) {
-      if (i > 0) {
-        linfo = f->larray[i-1];
-found:
-        snprintf(src, srclen, "%s", linfo->filename);
-        *lineno = linfo->lineno;
-        return 1;
-      }
-    }
+  if (linfo) {
+    snprintf(src, srclen, "%s", linfo->filename);
+    *lineno = linfo->lineno;
+    return 1;
   }
   return 0;
 }
@@ -539,22 +525,22 @@ static int process_line_numbers(struct gimli_object_file *f)
 
 
       if (regs.address && filenames[regs.file]) {
-        linfo = calloc(1, sizeof(*linfo));
+        f->lines = realloc(f->lines, (f->linecount + 1) * sizeof(*linfo));
+        linfo = &f->lines[f->linecount++];
         linfo->filename = (char*)filenames[regs.file];
         linfo->lineno = regs.line;
         linfo->addr = regs.address;
-        linfo->next = f->lines;
-        f->lines = linfo;
-        f->linecount++;
       }
     }
   }
 
-  f->larray = malloc(f->linecount * sizeof(linfo));
-  for (i = 0, linfo = f->lines; linfo; linfo = linfo->next, i++) {
-    f->larray[i] = linfo;
+  qsort(f->lines, f->linecount, sizeof(struct gimli_line_info), sort_by_addr);
+
+  /* make a pass to fill in the end member to make it easier to find
+   * an approx match */
+  for (i = 0; i < f->linecount - 1; i++) {
+    f->lines[i].end = f->lines[i+1].addr;
   }
-  qsort(f->larray, f->linecount, sizeof(linfo), sort_by_addr);
 
   return 0;
 }
