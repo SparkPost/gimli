@@ -1499,6 +1499,9 @@ static int show_param(struct gimli_unwind_cursor *cur,
 
       case DW_TAG_typedef:
       case DW_TAG_const_type:
+      case DW_TAG_volatile_type:
+      case DW_TAG_restrict_type:
+      case DW_TAG_packed_type:
         /* resolve to underlying type */
         type = gimli_dwarf_die_get_attr(td, DW_AT_type);
         return show_param(cur, f, type, addr, is_stack, 
