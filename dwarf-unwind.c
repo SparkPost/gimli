@@ -908,21 +908,25 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
   }
 
   if (debug) {
-    fprintf(stderr, "DWARF: unwind_next pc=%p fp=%p\n", cur->st.pc, cur->st.fp);
+    fprintf(stderr, "\nDWARF: unwind_next pc=%p fp=%p\n",
+        cur->st.pc, cur->st.fp);
   }
 
   fde = find_fde(cur->st.pc);
   if (!fde) {
     cur->dwarffail = 1;
+    if (debug) {
+      fprintf(stderr, "DWARF: no fde for pc=%p\n", cur->st.pc);
+    }
     return 0;
   }
 
   if (debug) {
-    fprintf(stderr, "This is the FDE for the current PC\n");
     fprintf(stderr, "FDE: init=" PTRFMT "-" PTRFMT " pc=" PTRFMT "\n",
         (void*)(intptr_t)fde->initial_loc,
         (void*)(intptr_t)fde->addr_range,
         (void*)cur->st.pc);
+    fprintf(stderr, "CIE: aug=%s\n", fde->cie->aug);
   }
 
   /* run initial instructions */
@@ -958,6 +962,19 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
     }
     return 0;
   }
+
+  /* sanity check what we got back.
+   * This is here because we get a funky address back from sem_wait.
+   * This implies that we may have a faulty unwinder and this should
+   * be investigated, but for now, we fall back to frame pointer
+   * unwinding when things look bad */
+  if (!gimli_mapping_for_addr(cur->st.pc)) {
+    if (debug) {
+      fprintf(stderr, "DWARF: unwind gave bogus pc\n");
+    }
+    return 0;
+  }
+
   cur->dwarffail = 0;
 
   return 1;
