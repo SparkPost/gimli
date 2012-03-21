@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2009 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2008-2011 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
@@ -139,7 +139,7 @@ struct gimli_line_info {
   char *filename;
   uint64_t lineno;
   void *addr;
-  struct gimli_line_info *next;
+  void *end;
 };
 
 #ifdef __MACH__
@@ -176,7 +176,7 @@ struct gimli_object_file {
 
   uint64_t base_addr;
 
-  struct gimli_line_info *lines, **larray;
+  struct gimli_line_info *lines;
   uint64_t linecount;
 
   gimli_hash_t dies; /* offset-string => gimli_dwarf_die */
@@ -192,19 +192,26 @@ struct gimli_object_mapping {
   unsigned long len;
   unsigned long offset;
   struct gimli_object_file *objfile;
+  struct dw_fde *fdes;
+  unsigned int num_fdes;
+  struct dw_die_arange *arange;
+  unsigned int num_arange;
 };
 
 extern int debug, quiet, detach, watchdog_interval, watchdog_start_interval,
-  watchdog_stop_interval, do_setsid, respawn_frequency;
+  watchdog_stop_interval, do_setsid, respawn_frequency, trace_interval;
 extern int run_only_once;
 extern int immortal_child;
 extern int run_as_uid, run_as_gid;
 extern char *glider_path, *trace_dir, *gimli_progname, *pidfile, *arg0;
+extern char *log_file;
 extern int gimli_nthreads;
 extern int max_frames;
 extern struct gimli_thread_state *gimli_threads;
 extern struct gimli_object_file *gimli_files;
 extern struct gimli_object_mapping *gimli_mappings;
+
+extern void logprint(const char *fmt, ...);
 
 struct gimli_object_mapping *gimli_add_mapping(
   const char *objname, void *base, unsigned long len,
@@ -273,6 +280,10 @@ struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name);
 char *gimli_read_string(void *addr);
 int gimli_get_parameter(void *context, const char *varname,
   const char **datatype, void **addr, uint64_t *size);
+extern struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,
+  void *addr);
+struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
+  struct gimli_dwarf_die *die, uint64_t attrcode);
 
 #ifdef __cplusplus
 }

@@ -85,7 +85,7 @@ void gimli_set_proctitlev(const char *fmt, va_list ap)
   len = strlen(title);
   memset(title + len, '\0', title_size - len);
   if (debug) {
-    fprintf(stderr, "%s\n", title);
+    logprint("%s\n", title);
   }
 }
 

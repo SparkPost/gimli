@@ -6,6 +6,12 @@
 #include "impl.h"
 #include "gimli_dwarf.h"
 
+struct dw_die_arange {
+  uint64_t addr;
+  uint64_t len;
+  uint64_t di_offset;
+};
+
 /* when rendering parameters, remember what we've already done */
 static gimli_hash_t derefed_params = NULL;
 
@@ -164,10 +170,23 @@ int dw_read_encptr(uint8_t enc, const uint8_t **ptr, const uint8_t *end,
 
 static int sort_by_addr(const void *A, const void *B)
 {
-  struct gimli_line_info *a = *(struct gimli_line_info**)A;
-  struct gimli_line_info *b = *(struct gimli_line_info**)B;
+  struct gimli_line_info *a = (struct gimli_line_info*)A;
+  struct gimli_line_info *b = (struct gimli_line_info*)B;
 
   return a->addr - b->addr;
+}
+
+static int search_compare_line(const void *pc, const void *L)
+{
+  struct gimli_line_info *line = (struct gimli_line_info*)L;
+
+  if (pc < line->addr) {
+    return -1;
+  }
+  if (pc < line->end) {
+    return 0;
+  }
+  return 1;
 }
 
 /* read dwarf info to determine the source/line information for a given
@@ -176,7 +195,6 @@ int dwarf_determine_source_line_number(void *pc, char *src, int srclen,
   uint64_t *lineno)
 {
   struct gimli_object_mapping *m;
-  int i, n, upper, lower;
   struct gimli_object_file *f;
   struct gimli_line_info *linfo;
 
@@ -193,39 +211,13 @@ int dwarf_determine_source_line_number(void *pc, char *src, int srclen,
     pc -= (intptr_t)m->base;
   }
 
-  n = f->linecount;
-  lower = 0;
-  upper = n - 1;
+  linfo = bsearch(pc, f->lines, f->linecount, sizeof(*linfo),
+      search_compare_line);
 
-  while (lower <= upper) {
-    i = lower + ((upper - lower)/2);
-    linfo = f->larray[i];
-
-    if (linfo->addr == pc) {
-      goto found;
-    }
-    if (linfo->addr > pc) {
-      /* too high */
-      upper = i - 1;
-    } else {
-      /* in the right ballpark */
-      lower = i + 1;
-    }
-  }
-  if (lower < 0) lower = 0;
-  if (upper < lower) upper = lower + 1;
-  for (i = lower; i <= upper; i++) {
-    if (i < 0 || i >= n) continue;
-    linfo = f->larray[i];
-    if (pc < linfo->addr) {
-      if (i > 0) {
-        linfo = f->larray[i-1];
-found:
-        snprintf(src, srclen, "%s", linfo->filename);
-        *lineno = linfo->lineno;
-        return 1;
-      }
-    }
+  if (linfo) {
+    snprintf(src, srclen, "%s", linfo->filename);
+    *lineno = linfo->lineno;
+    return 1;
   }
   return 0;
 }
@@ -414,7 +406,7 @@ static int process_line_numbers(struct gimli_object_file *f)
           default:
             fprintf(stderr,
               "DWARF: line nos.: unhandled extended op=%02x, len=%llu\n",
-              op, len);
+              op, initlen);
             ;
         }
         data = next;
@@ -533,22 +525,22 @@ static int process_line_numbers(struct gimli_object_file *f)
 
 
       if (regs.address && filenames[regs.file]) {
-        linfo = calloc(1, sizeof(*linfo));
+        f->lines = realloc(f->lines, (f->linecount + 1) * sizeof(*linfo));
+        linfo = &f->lines[f->linecount++];
         linfo->filename = (char*)filenames[regs.file];
         linfo->lineno = regs.line;
         linfo->addr = regs.address;
-        linfo->next = f->lines;
-        f->lines = linfo;
-        f->linecount++;
       }
     }
   }
 
-  f->larray = malloc(f->linecount * sizeof(linfo));
-  for (i = 0, linfo = f->lines; linfo; linfo = linfo->next, i++) {
-    f->larray[i] = linfo;
+  qsort(f->lines, f->linecount, sizeof(struct gimli_line_info), sort_by_addr);
+
+  /* make a pass to fill in the end member to make it easier to find
+   * an approx match */
+  for (i = 0; i < f->linecount - 1; i++) {
+    f->lines[i].end = f->lines[i+1].addr;
   }
-  qsort(f->larray, f->linecount, sizeof(linfo), sort_by_addr);
 
   return 0;
 }
@@ -989,6 +981,15 @@ static struct gimli_dwarf_die *process_die(
     }
   }
 
+#if 0 /* we could collect type info here */
+  if (die->tag == DW_TAG_structure_type) {
+    struct gimli_dwarf_attr *name = gimli_dwarf_die_get_attr(die, DW_AT_name);
+    if (name) {
+      printf("struct %s\n", (char*)name->ptr);
+    }
+  }
+#endif
+
   *datap = data;
   return die;
 }
@@ -1047,7 +1048,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(struct gimli_object_file *f,
 
       memcpy(&ver, data, sizeof(ver));
       data += sizeof(ver);
-      if (ver != 2) {
+      if (ver < 2 || ver > 3) {
         printf("Encountered a compilation unit with dwarf version %d; ending processing\n", ver);
 
         break;
@@ -1134,12 +1135,19 @@ int gimli_dwarf_die_get_uint64_t_attr(
   return 0;
 }
 
-struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
-  struct gimli_unwind_cursor *cur)
+static int sort_compare_arange(const void *A, const void *B)
+{
+  struct dw_die_arange *a = (struct dw_die_arange*)A;
+  struct dw_die_arange *b = (struct dw_die_arange*)B;
+
+  return a->addr - b->addr;
+}
+
+/* Load the DIE location data from an object file */
+static int load_arange(struct gimli_object_mapping *m)
 {
   struct gimli_section_data *s = NULL;
   const uint8_t *data, *end, *next;
-  struct gimli_object_mapping *m;
   gimli_object_file_t *elf = NULL;
   uint64_t reloc = 0;
   uint32_t len32;
@@ -1150,10 +1158,6 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
   uint8_t addr_size, seg_size;
   struct gimli_dwarf_die *die;
 
-  m = gimli_mapping_for_addr(cur->st.pc);
-  if (!m) {
-    return 0;
-  }
   if (!m->objfile->elf) {
     /* (deleted) */
     return 0;
@@ -1211,6 +1215,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
       /* now we have a series of tuples */
       void *addr;
       uint64_t l;
+      struct dw_die_arange *arange;
 
       memcpy(&addr, data, sizeof(addr));
       data += sizeof(addr);
@@ -1231,51 +1236,94 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
 
       addr += reloc;
 
-      if (cur->st.pc >= addr && cur->st.pc <= addr + l) {
-//        printf("found di offset: pc=%p addr=%p len=%llx\n",
-//          cur->st.pc, addr, l);
-//        printf("Looking for die @ %llx\n", di_offset);
-        die = gimli_dwarf_get_die(m->objfile, di_offset);
-//        printf("--> die %p @ %llx\n", die, die ? die->offset : 0);
-        if (die && die->tag == DW_TAG_compile_unit) {
-          /* this is the die for the compilation unit; we need to walk
-           * through it and find the subprogram that matches */
-          for (die = die->kids; die; die = die->next) {
-            uint64_t lopc, hipc;
-//            struct gimli_dwarf_attr *lopc, *hipc;
+      m->arange = realloc(m->arange, (m->num_arange + 1) * sizeof(*arange));
+      arange = &m->arange[m->num_arange++];
+      arange->addr = (uint64_t)(intptr_t)addr;
+      arange->len = l;
+      arange->di_offset = di_offset;
 
-            if (die->tag != DW_TAG_subprogram) {
-//              printf("skip die %p: tag=%llx\n", die, die->tag);
-              continue;
-            }
-
-            if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_low_pc, &lopc)) {
-              lopc = (uint64_t)(intptr_t)addr;
-              continue;
-            }
-            if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_high_pc, &hipc)) {
-              hipc = (uint64_t)(intptr_t)addr + l;
-              continue;
-            }
-
-//            lopc = gimli_dwarf_die_get_attr(die, DW_AT_low_pc);
-//            hipc = gimli_dwarf_die_get_attr(die, DW_AT_high_pc);
-
-            if (cur->st.pc >= (void*)(intptr_t)lopc &&
-                cur->st.pc <= (void*)(intptr_t)hipc) {
-//printf("Have a subprogram lopc=%p hipc=%p die offset=%llx\n", lopc, hipc, die->offset);
-              return die;
-            }
-          }
-        }
-      }
 //      printf("arange: pc=%p addr=%p %llx\n", cur->st.pc, addr, l);
     }
     data = next;
   }
 
+  /* ensure ascending order */
+  qsort(m->arange, m->num_arange, sizeof(struct dw_die_arange),
+      sort_compare_arange);
+
+  return 1;
+}
+
+static int search_compare_arange(const void *K, const void *R)
+{
+  struct gimli_unwind_cursor *cur = (struct gimli_unwind_cursor*)K;
+  struct dw_die_arange *arange = (struct dw_die_arange*)R;
+  uint64_t pc = (uint64_t)(intptr_t)cur->st.pc;
+
+  if (pc < arange->addr) {
+    return -1;
+  }
+
+  if (pc < arange->addr + arange->len) {
+    return 0;
+  }
+
+  return 1;
+}
+
+struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
+  struct gimli_unwind_cursor *cur)
+{
+  struct gimli_object_mapping *m;
+  struct gimli_dwarf_die *die;
+  struct dw_die_arange *arange;
+
+  m = gimli_mapping_for_addr(cur->st.pc);
+  if (!m) {
+    return NULL;
+  }
+
+  if (!m->objfile->elf) {
+    return NULL;
+  }
+
+  if (!m->arange && !load_arange(m)) {
+    return NULL;
+  }
+
+  arange = bsearch(cur, m->arange, m->num_arange, sizeof(*arange),
+      search_compare_arange);
+  if (arange) {
+    die = gimli_dwarf_get_die(m->objfile, arange->di_offset);
+    if (die && die->tag == DW_TAG_compile_unit) {
+      /* this is the die for the compilation unit; we need to walk
+       * through it and find the subprogram that matches */
+      for (die = die->kids; die; die = die->next) {
+        uint64_t lopc, hipc;
+
+        if (die->tag != DW_TAG_subprogram) {
+          continue;
+        }
+
+        if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_low_pc, &lopc)) {
+          lopc = arange->addr;
+          continue;
+        }
+        if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_high_pc, &hipc)) {
+          hipc = arange->addr + arange->len;
+          continue;
+        }
+
+        if (cur->st.pc >= (void*)(intptr_t)lopc &&
+            cur->st.pc <= (void*)(intptr_t)hipc) {
+          return die;
+        }
+      }
+    }
+  }
+
   /* no joy */
-  return 0;
+  return NULL;
 }
 
 const char *gimli_dwarf_resolve_type_name(struct gimli_object_file *f,
@@ -1471,8 +1519,8 @@ static int show_param(struct gimli_unwind_cursor *cur,
   uint16_t u16;
   uint8_t u8;
   int8_t s8;
-  struct gimli_dwarf_die *td, *kid;
-  struct gimli_dwarf_attr *attr;
+  struct gimli_dwarf_die *td, *kid = NULL;
+  struct gimli_dwarf_attr *attr = NULL;
   char indentstr[1024];
   char namebuf[1024];
   const char *symname;
@@ -1492,8 +1540,16 @@ static int show_param(struct gimli_unwind_cursor *cur,
 //printf("show_param: offset=%llx tag=%llx\n", td->offset, td->tag);
   if (td) {
     switch (td->tag) {
+      case DW_TAG_subroutine_type:
+        /* pointer to a function; our symbol resolver already shows
+         * which function we point to, so we have nothing further to do */
+        return 1;
+
       case DW_TAG_typedef:
       case DW_TAG_const_type:
+      case DW_TAG_volatile_type:
+      case DW_TAG_restrict_type:
+      case DW_TAG_packed_type:
         /* resolve to underlying type */
         type = gimli_dwarf_die_get_attr(td, DW_AT_type);
         return show_param(cur, f, type, addr, is_stack, 
@@ -1710,8 +1766,18 @@ static int show_param(struct gimli_unwind_cursor *cur,
 
               printf("%s[deref'ing %s]\n", indentstr, name);
               gimli_hash_insert(derefed_params, namebuf, addr);
-              show_param(cur, f, attr, addr, 0, 
+
+              if (kid && kid->tag == DW_TAG_pointer_type) {
+                /* if we have a pointer to a pointer, actually de-ref
+                 * the pointer for the next level call */
+                if (gimli_read_mem(addr, &addr, sizeof(addr)) == sizeof(addr)) {
+                  show_param(cur, f, attr, addr, 0,
                       namebuf, NULL, indent + 2, 0, 0);
+                }
+              } else {
+                show_param(cur, f, attr, addr, 0,
+                      namebuf, NULL, indent + 2, 0, 0);
+              }
             } else {
               printf("%s[deref'ed above]\n", indentstr);
             }
@@ -1795,7 +1861,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
         if (do_hook) do_after(cur, type_name, name, addr, size);
         return 1;
       default:
-        printf("Unhandled tag %llx in show_param\n", td->tag);
+        printf("Unhandled tag 0x%llx in show_param\n", td->tag);
     }
   } else {
     printf("no type information\n");
@@ -1892,17 +1958,70 @@ int gimli_get_parameter(void *context, const char *varname,
   return 0;
 }
 
+static int show_die(struct gimli_unwind_cursor *cur,
+    struct gimli_dwarf_die *die,
+    uint64_t frame_base, uint64_t comp_unit_base,
+    struct gimli_object_mapping *m
+    )
+{
+  uint64_t res = 0;
+  int is_stack = 1;
+  struct gimli_dwarf_attr *location, *type, *name;
+
+  type = gimli_dwarf_die_get_attr(die, DW_AT_type);
+  if (!type) {
+    return 0;
+  }
+
+  location = gimli_dwarf_die_get_attr(die, DW_AT_location);
+  name = gimli_dwarf_die_get_attr(die, DW_AT_name);
+
+  if (location) {
+
+    switch (location->form) {
+      case DW_FORM_block:
+        if (!dw_eval_expr(cur, (uint8_t*)location->ptr, location->code,
+              frame_base, &res, NULL, &is_stack)) {
+          res = 0;
+        }
+        break;
+      case DW_FORM_data8:
+        if (!dw_calc_location(cur, comp_unit_base, m,
+              location->code, &res, NULL, &is_stack)) {
+          res = 0;
+        }
+        break;
+      default:
+        printf("Unhandled location form %llx\n", location->form);
+    }
+  } else {
+    printf("no location attribute for parameter %s die->offset=%llx %s\n",
+        name ? (char*)name->ptr : "?", die->offset, m->objfile->objname);
+  }
+
+  //printf("param: die offset %llx @ %p\n", die->offset, (void*)(intptr_t)res);
+  if (!res) {
+    return 0;
+  }
+
+  if (!show_param(cur, m->objfile, type,
+        (void*)(intptr_t)res, is_stack,
+        name ? (char*)name->ptr : "?", NULL, 2, 0, 0)) {
+    printf("    %s @ %llx (type data @ %llx)\n",
+        name->ptr, res, type->code);
+  }
+
+  return 1;
+}
+
 int gimli_show_param_info(struct gimli_unwind_cursor *cur)
 {
   struct gimli_dwarf_die *die = gimli_dwarf_get_die_for_pc(cur);
   uint64_t frame_base = 0;
-  uint64_t res;
   uint64_t comp_unit_base = 0;
-  struct gimli_dwarf_attr *location, *type;
-  struct gimli_dwarf_attr *name, *frame_base_attr;
+  struct gimli_dwarf_attr *frame_base_attr;
   struct gimli_object_mapping *m = gimli_mapping_for_addr(cur->st.pc);
   int had_params = 0;
-  int is_stack = 0;
 
   if (!die) {
     return 0;
@@ -1915,6 +2034,8 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
 
   frame_base_attr = gimli_dwarf_die_get_attr(die, DW_AT_frame_base);
   if (frame_base_attr) {
+    int is_stack = 0;
+
     switch (frame_base_attr->form) {
       case DW_FORM_block:
         dw_eval_expr(cur, (uint8_t*)frame_base_attr->ptr, frame_base_attr->code,
@@ -1931,49 +2052,9 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
   } 
 
   for (die = die->kids; die; die = die->next) {
-    if (die->tag == DW_TAG_formal_parameter) {
-      location = gimli_dwarf_die_get_attr(die, DW_AT_location);
-      name = gimli_dwarf_die_get_attr(die, DW_AT_name);
-      type = gimli_dwarf_die_get_attr(die, DW_AT_type);
-
-      res = 0;
-      is_stack = 1;
-      if (location) {
-        switch (location->form) {
-          case DW_FORM_block:
-//            printf("using block to eval param location\n");
-            if (!dw_eval_expr(cur, (uint8_t*)location->ptr, location->code,
-                frame_base, &res, NULL, &is_stack)) {
-              res = 0;
-            }
-            break;
-          case DW_FORM_data8:
-//            printf("using loclist to eval param location\n");
-//              printf("loc form=%llx code=%llx ptr=%p\n",
-//                location->form, location->code, location->ptr);
-            if (!dw_calc_location(cur, comp_unit_base, m,
-                location->code, &res, NULL, &is_stack)) {
-//              printf("failed to calc location\n");
-              res = 0;
-            }
-//            printf("got %llx\n", res);
-            break;
-          default:
-            printf("Unhandled location form %llx\n", location->form);
-        }
-      } else {
-        printf("no location attribute for parameter %s die->offset=%llx %s\n",
-          name ? (char*)name->ptr : "?", die->offset, m->objfile->objname);
-      }
-//printf("param: die offset %llx @ %p\n", die->offset, (void*)(intptr_t)res);
-      if (res) {
+    if (die->tag == DW_TAG_formal_parameter || die->tag == DW_TAG_variable) {
+      if (show_die(cur, die, frame_base, comp_unit_base, m)) {
         had_params++;
-//        printf("type=%p %llx form %llx ind=%d\n", type, type->code, type->form, is_stack);
-        if (!show_param(cur, m->objfile, type,
-            (void*)(intptr_t)res, is_stack, (char*)name->ptr, NULL, 2, 0, 0)) {
-          printf("    %s @ %llx (type data @ %llx)\n",
-            name->ptr, res, type->code);
-        }
       }
     }
   }

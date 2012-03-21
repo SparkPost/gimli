@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2009 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2008-2011 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
@@ -14,6 +14,7 @@ int quiet = 0;
 int watchdog_interval = 60;
 int watchdog_start_interval = 200;
 int watchdog_stop_interval = 60;
+int trace_interval = 60;
 int respawn_frequency = 15;
 int run_as_uid = -1;
 int run_as_gid = -1;
@@ -23,6 +24,7 @@ int child_argc;
 char **child_argv;
 char *arg0 = NULL;
 char *pidfile = NULL;
+char *log_file = NULL;
 char *glider_path = GIMLI_GLIDER_PATH;
 char *trace_dir = "/tmp";
 char *child_image;
@@ -32,7 +34,8 @@ static time_t last_spawn = 0;
 
 #define TRACE_NONE 0
 #define TRACE_ME   1
-#define TRACE_DONE 2
+#define TRACE_ING  2
+#define TRACE_DONE 3
 
 struct kid_proc {
   pid_t pid;
@@ -51,6 +54,28 @@ struct kid_proc *procs = NULL;
 static void setup_signal_handlers(int is_child);
 void wait_for_exit(struct kid_proc *p, int timeout);
 void wait_for_child(struct kid_proc *p);
+
+void logprint(const char *fmt, ...)
+{
+  va_list ap;
+  char buf[8192];
+  struct tm tmbuf;
+  struct tm *tmnow;
+  time_t now;
+  int i;
+
+  time(&now);
+  tmnow = localtime_r(&now, &tmbuf);
+  i = strftime(buf, sizeof(buf)-1, "[%a %d %b %Y %H:%M:%S] Monitor: ", tmnow);
+  buf[i] = '\0';
+
+  va_start(ap, fmt);
+  vsnprintf(buf + i, sizeof(buf) - i - 1, fmt, ap);
+  va_end(ap);
+
+  fwrite(buf, 1, strlen(buf), stderr);
+  fflush(stderr);
+}
 
 static void catch_sigchld(int sig_num)
 {
@@ -73,13 +98,31 @@ static void catch_sigchld(int sig_num)
     for (p = procs; p; p = p->next) {
       if (dead_pid == p->pid) {
         p->exit_status = status;
+#ifdef WIFCONTINUED
+        if (WIFCONTINUED(status)) {
+          gimli_set_proctitle("child pid %d continued", dead_pid);
+          break;
+        }
+#endif
         if (WIFSTOPPED(status)) {
           gimli_set_proctitle("child pid %d stopped", dead_pid);
-          if (!p->should_trace) {
-            p->should_trace = TRACE_ME;
+          switch (p->should_trace) {
+            case TRACE_NONE:
+              p->should_trace = TRACE_ME;
+              break;
+            case TRACE_DONE:
+              /* it was already traced by watchdog; then we sent it
+               * SIGABRT and it STOP'd itself, so we should wake it
+               * back up with a SIGCONT and let it call its shutdown
+               * function */
+              gimli_set_proctitle("child pid %d continuing", dead_pid);
+              p->exit_status = 0;
+              kill(p->pid, SIGCONT);
+              break;
           }
         } else {
-          gimli_set_proctitle("child pid %d exited", dead_pid);
+          gimli_set_proctitle("child pid %d exited (status=%x)",
+              dead_pid, status);
           p->running = 0;
         }
         break;
@@ -102,7 +145,11 @@ static void catch_hup(int sig_num)
 {
   struct kid_proc *p;
 
-  fprintf(stderr, "monitor: caught signal %s, restarting child\n",
+  if (should_exit) {
+    return;
+  }
+
+  logprint("caught signal %s, restarting child\n",
     strsignal(sig_num));
 
   for (p = procs; p; p = p->next) {
@@ -112,7 +159,6 @@ static void catch_hup(int sig_num)
     }
   }
   respawn = 1;
-  should_exit = 0;
   signal(SIGHUP, catch_hup);
 }
 
@@ -122,7 +168,7 @@ static void catch_other(int sig_num)
 {
   struct kid_proc *p;
 
-  fprintf(stderr, "monitor: caught signal %s, terminating.\n",
+  logprint("caught signal %s, terminating.\n",
     strsignal(sig_num));
   should_exit = 1;
   respawn = 0;
@@ -137,7 +183,7 @@ static void cleanup(void)
 {
   if (hb_file[0]) {
     if (debug) {
-      fprintf(stderr, "unlinking %s\n", hb_file);
+      logprint("unlinking %s\n", hb_file);
     }
     unlink(hb_file);
   }
@@ -160,13 +206,13 @@ static int prep(void)
   snprintf(hb_file, sizeof(hb_file)-1, "/tmp/gimlihbXXXXXX");
   fd = mkstemp(hb_file);
   if (fd == -1) {
-    fprintf(stderr, 
-      "monitor: failed to open heartbeat file: %s\n", hb_file);
+    logprint(
+      "failed to open heartbeat file: %s\n", hb_file);
     hb_file[0] = '\0';
     return 0;
   }
   if (debug) {
-    fprintf(stderr, "monitor: opened hearbeat file: %s\n", hb_file);
+    logprint("opened hearbeat file: %s\n", hb_file);
   }
 
   /* make sure the file is sized big enough for the heartbeat, otherwise
@@ -178,7 +224,7 @@ static int prep(void)
   addr = mmap(NULL, sizeof(*heartbeat),
                 PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
   if (debug) {
-    fprintf(stderr, "monitor: mmap fd=%d -> addr %p (%s)\n",
+    logprint("mmap fd=%d -> addr %p (%s)\n",
       fd, addr, strerror(errno));
   }
   unlink(hb_file);
@@ -187,7 +233,7 @@ static int prep(void)
   /* close(fd); */
 
   if (addr == MAP_FAILED) {
-    perror("monitor: failed to map heartbeat memory");
+    perror("failed to map heartbeat memory");
     return 0;
   }
 
@@ -208,13 +254,53 @@ static int prep(void)
   return 1;
 }
 
+static void mask_signal(int how, int signo)
+{
+  sigset_t s;
+
+  sigemptyset(&s);
+  sigaddset(&s, signo);
+
+  sigprocmask(how, &s, NULL);
+}
+
+static void link_child(struct kid_proc *p)
+{
+  mask_signal(SIG_BLOCK, SIGCHLD);
+
+  p->next = procs;
+  if (procs) {
+    procs->prev = p;
+  }
+  procs = p;
+
+  mask_signal(SIG_UNBLOCK, SIGCHLD);
+}
+
+static void unlink_child(struct kid_proc *p)
+{
+  mask_signal(SIG_BLOCK, SIGCHLD);
+
+  if (procs == p) {
+    procs = p->next;
+  }
+  if (p->next) {
+    p->next->prev = p->prev;
+  }
+  if (p->prev) {
+    p->prev->next = p->next;
+  }
+
+  mask_signal(SIG_UNBLOCK, SIGCHLD);
+}
+
 static struct kid_proc *spawn_child(void)
 {
   struct kid_proc *p;
-  
+
   p = calloc(1, sizeof(*p));
   if (!p) {
-    fprintf(stderr, "calloc(): %s\n", strerror(errno));
+    logprint("calloc(): %s\n", strerror(errno));
     return NULL;
   }
 
@@ -224,11 +310,7 @@ static struct kid_proc *spawn_child(void)
   /* link this in first, so that we don't race if the child dies
    * immediately */
   p->running = 1;
-  p->next = procs;
-  if (procs) {
-    procs->prev = p;
-  }
-  procs = p;
+  link_child(p);
 
   p->pid = fork();
   if (p->pid == 0) {
@@ -254,12 +336,12 @@ static struct kid_proc *spawn_child(void)
   sleep(4);
   if (p->pid == -1 || !p->running) {
     if (p->pid == -1) {
-      fprintf(stderr, "fork() failed: %s\n", strerror(errno));
+      logprint("fork() failed: %s\n", strerror(errno));
     } else {
-      fprintf(stderr, "child died immediately on startup\n");
+      logprint("child died immediately on startup\n");
     }
     /* unlink */
-    procs = p->next;
+    unlink_child(p);
     free(p);
     return NULL;
   }
@@ -275,15 +357,18 @@ static void trace_child(struct kid_proc *p)
   struct kid_proc *trc;
   int tracefd;
 
+//  sleep(300);
+
   if (p->watchdog) {
     gimli_set_proctitle("watchdog triggered: tracing %d", p->pid);
   } else {
     gimli_set_proctitle("fault detected: tracing %d", p->pid);
   }
-  p->should_trace = TRACE_DONE;
+  p->should_trace = TRACE_ING;
 
   trc = calloc(1, sizeof(*trc));
   trc->tracer_for = p->pid;
+  trc->running = 1;
 
   snprintf(childname, sizeof(childname)-1, "%s", child_argv[0]);
 
@@ -291,14 +376,14 @@ static void trace_child(struct kid_proc *p)
     trace_dir, basename(childname), p->pid);
   tracefd = open(tracefile, O_WRONLY|O_CREAT|O_TRUNC|O_APPEND, 0600);
   if (tracefd == -1) {
-    fprintf(stderr, "Unable to open trace file %s: %s\n",
+    logprint("Unable to open trace file %s: %s\n",
       tracefile, strerror(errno));
   } else {
     char buf[2048];
     time_t now;
     int i;
 
-    fprintf(stderr, "Tracing to file: %s\n", tracefile);
+    logprint("Tracing to file: %s\n", tracefile);
 
     time(&now);
 
@@ -328,6 +413,8 @@ static void trace_child(struct kid_proc *p)
       );
     write(tracefd, buf, strlen(buf));
 
+    link_child(trc);
+
     trc->pid = fork();
     if (trc->pid == 0) {
       setup_signal_handlers(1);
@@ -336,28 +423,37 @@ static void trace_child(struct kid_proc *p)
       dup2(tracefd, 1);
       dup2(tracefd, 2);
       close(tracefd);
-      _exit(execlp(cmdbuf, cmdbuf, pidbuf, (char*)NULL));
+      execlp(cmdbuf, cmdbuf, pidbuf, (char*)NULL);
+      logprint("execlp: %s %s failed: %s\n", cmdbuf, pidbuf, strerror(errno));
+      _exit(1);
     }
     if (trc->pid == -1) {
       int err = errno;
-      fprintf(stderr, "fork() failed while tracing child %d: %s\n",
+      logprint("fork() failed while tracing child %d: %s\n",
           p->pid, strerror(err));
       snprintf(buf, sizeof(buf)-1,
           "fork() failed while launching tracer: %s\n",
           strerror(err));
       write(tracefd, buf, strlen(buf));
+      unlink_child(trc);
       free(trc);
       trc = NULL;
     } else {
-      trc->next = procs;
-      if (procs) {
-        procs->prev = trc;
-      }
-      procs = trc;
       /* force a context switch to allow enough time for the child to run
        * so that we can wait for it */
       sleep(2);
-      wait_for_child(trc);
+      if (debug) {
+        logprint("waiting for tracer to exit (pid=%d)\n", trc->pid);
+      }
+      wait_for_exit(trc, trace_interval);
+      if (trc->running) {
+        logprint("tracer is taking too long, terminating it\n");
+        while (trc->running) {
+          kill(trc->pid, SIGKILL);
+          wait_for_exit(trc, 2);
+        }
+      }
+      p->should_trace = TRACE_DONE;
     }
 
     close(tracefd);
@@ -516,6 +612,18 @@ trace:
     p->exit_status = 0;
     if (p->should_trace == TRACE_ME) {
       trace_child(p);
+      /* sleep for a few moments, otherwise we will terminate the
+       * child too quickly; in the event of a watchdog we have a sequence
+       * like:
+       * <wedge>
+       * <trace>
+       * <continue>
+       * <child stops self>
+       * <monitor continues child>
+       * <child runs shutdown handler>
+       * Without the sleep here, we can decide that the child is dead
+       * before it gets to its shutdown handler */
+      sleep(4);
     }
 
     wait_for_exit(p, watchdog_stop_interval);
@@ -527,15 +635,7 @@ trace:
   }
 
   /* process is done; unlink from the list */
-  if (procs == p) {
-    procs = p->next;
-  }
-  if (p->next) {
-    p->next->prev = p->prev;
-  }
-  if (p->prev) {
-    p->prev->next = p->next;
-  }
+  unlink_child(p);
 }
 
 int main(int argc, char *argv[])
@@ -544,7 +644,7 @@ int main(int argc, char *argv[])
   struct kid_proc *p;
 
   if (argc < 2) {
-    fprintf(stderr, "not enough arguments\n");
+    logprint("not enough arguments\n");
     return 1;
   }
   argv = gimli_init_proctitle(argc, argv);
@@ -559,12 +659,12 @@ int main(int argc, char *argv[])
   }
 
   if (debug) {
-    fprintf(stderr, "Child to monitor: (argc=%d) ", child_argc);
+    logprint("Child to monitor: (argc=%d) ", child_argc);
     for (i = 0; i < child_argc; i++) {
-      if (i) fprintf(stderr, " ");
-      fprintf(stderr, "%s", child_argv[i]);
+      if (i) logprint(" ");
+      logprint("%s", child_argv[i]);
     }
-    fprintf(stderr, "\n");
+    logprint("\n");
   }
 
   if (!prep()) {
@@ -573,7 +673,7 @@ int main(int argc, char *argv[])
 
   if (detach) {
     if (debug) {
-      fprintf(stderr, "detaching to spawn %s\n", child_argv[0]);
+      logprint("detaching to spawn %s\n", child_argv[0]);
     }
     if (fork()) {
       exit(0);
@@ -586,7 +686,7 @@ int main(int argc, char *argv[])
     }
   } else {
     if (debug) {
-      fprintf(stderr, "starting new session for %s\n", child_argv[0]);
+      logprint("starting new session for %s\n", child_argv[0]);
     }
     setsid();
   }
@@ -606,7 +706,7 @@ int main(int argc, char *argv[])
 
     fd = open(pidfile, O_RDWR|O_CREAT, 0644);
     if (fd == -1) {
-      fprintf(stderr, "Failed to open pidfile %s for write: %s\n",
+      logprint("Failed to open pidfile %s for write: %s\n",
         pidfile, strerror(errno));
       exit(1);
     }
@@ -616,7 +716,7 @@ int main(int argc, char *argv[])
       len = read(fd, pidstr, sizeof(pidstr)-1);
       pidstr[len] = '\0';
 
-      fprintf(stderr, "Failed to lock pidfile %s: process %s owns it: %s\n",
+      logprint("Failed to lock pidfile %s: process %s owns it: %s\n",
         pidfile, pidstr, strerror(errno));
       exit(1);
     }
@@ -631,16 +731,29 @@ int main(int argc, char *argv[])
   /* drop privs if appropriate */
   if (run_as_gid != -1) {
     if (setgid(run_as_gid)) {
-      fprintf(stderr, "Failed to setgid(%d): %s\n",
+      logprint("Failed to setgid(%d): %s\n",
         run_as_gid, strerror(errno));
       exit(1);
     }
   }
   if (run_as_uid != -1) {
     if (setuid(run_as_uid)) {
-      fprintf(stderr, "Failed to setuid(%d): %s\n",
+      logprint("Failed to setuid(%d): %s\n",
         run_as_uid, strerror(errno));
       exit(1);
+    }
+  }
+
+  if (log_file) {
+    int logfd = open(log_file, O_WRONLY|O_APPEND|O_CREAT, 0600);
+
+    if (logfd == -1) {
+      logprint("unable to open logfile %s: %s\n",
+          log_file, strerror(errno));
+    } else {
+      dup2(logfd, STDOUT_FILENO);
+      dup2(logfd, STDERR_FILENO);
+      close(logfd);
     }
   }
 
@@ -649,7 +762,7 @@ int main(int argc, char *argv[])
 
     if (devnull >= 0) {
       dup2(devnull, STDIN_FILENO);
-      if (quiet) {
+      if (quiet && !log_file) {
         dup2(devnull, STDOUT_FILENO);
         dup2(devnull, STDERR_FILENO);
       }
@@ -660,7 +773,7 @@ int main(int argc, char *argv[])
 
   setup_signal_handlers(0);
 
-  while (respawn) {
+  while (respawn && !should_exit) {
     int diff;
 
     diff = time(NULL) - last_spawn;
@@ -709,7 +822,7 @@ int main(int argc, char *argv[])
       /* not an abnormal termination */
       int ret = WIFEXITED(p->exit_status) ?
         WEXITSTATUS(p->exit_status) : 0;
-      fprintf(stderr, "child exited with return %d\n", ret);
+      logprint("child exited with return %d\n", ret);
       exit(ret);
     }
     if (run_only_once) {
@@ -724,7 +837,7 @@ int main(int argc, char *argv[])
       }
     }
     if (!running) break;
-    fprintf(stderr, "waiting for %d processes to terminate\n", running);
+    logprint("waiting for %d processes to terminate\n", running);
     wait_for_child(procs);
   }
 

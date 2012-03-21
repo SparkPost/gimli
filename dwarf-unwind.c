@@ -12,12 +12,15 @@ struct dw_rule_stack {
 };
 
 struct dw_cie {
+  char key[32];
+  uint64_t ptr;
   const uint8_t *aug, *init_insns, *insn_end;
   uint64_t code_align, ret_addr;
   int64_t data_align;
   uint64_t personality_routine;
   uint8_t code_enc;
   uint8_t lsda_enc;
+  unsigned is_signal_frame:1;
   /* rules as set by the initial instructions */
   struct gimli_dwarf_reg_column init_cols[GIMLI_MAX_DWARF_REGS];
   struct dw_rule_stack *rule_stack;
@@ -28,6 +31,7 @@ struct dw_fde {
   uint64_t addr_range;
   const uint8_t *insns, *insn_end;
   uint64_t lsda_ptr;
+  struct dw_cie *cie;
 };
 
 /* Per Dwarf 3, section 6.4.3 Call Frame Instruction Usage:
@@ -52,14 +56,14 @@ address_range values to see if L1 is contained in the FDE. If so, then:
      ill-formed, L1 should be less than L2 at this point.
 
 The rules in the register set now apply to location L1.  For an example, see
-Appendix D.6.  
+Appendix D.6.
 */
 
 static void set_rule(struct gimli_unwind_cursor *cur,
   int colno, int rule, uint64_t val)
 {
   if (debug) {
-    fprintf(stderr, 
+    fprintf(stderr,
         "   set_rule: colno=%d rule=%d %lld\n", colno, rule,
         (long long)val);
   }
@@ -71,7 +75,7 @@ static void set_expr(struct gimli_unwind_cursor *cur,
   int colno, int rule, const uint8_t *ops, uint64_t val)
 {
   if (debug) {
-    fprintf(stderr, 
+    fprintf(stderr,
         "   set_rule: colno=%d rule=%d %lld\n", colno, rule,
         (long long)val);
   }
@@ -122,7 +126,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
       case DW_CFA_advance_loc:
         pc += oprand * cie->code_align;
         if (debug) {
-          fprintf(stderr, "CFA_advance_loc: pc now %p\n", pc);
+          fprintf(stderr, "CFA_advance_loc: pc += (%d * %d) => %p\n", oprand, cie->code_align, pc);
         }
         break;
       case DW_CFA_advance_loc1:
@@ -560,22 +564,29 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
    * calling address, generally will produce an address within the same context
    * as the calling address, and that usually is sufficient.
    */
-  if (cur->st.pc && !gimli_is_signal_frame(cur)) {
+  if (cur->st.pc && !cie->is_signal_frame && !gimli_is_signal_frame(cur)) {
     cur->st.pc--;
   }
   return 1;
 }
 
-int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
+/* sorts fde's in ascending order */
+static int sort_compare_fde(const void *A, const void *B)
 {
-  struct gimli_object_mapping *m;
+  struct dw_fde *a = (struct dw_fde*)A;
+  struct dw_fde *b = (struct dw_fde*)B;
+
+  return a->initial_loc - b->initial_loc;
+}
+
+/* read the FDE data from an object file */
+static int load_fde(struct gimli_object_mapping *m)
+{
   struct gimli_section_data *s = NULL;
   const uint8_t *eh_start;
   const uint8_t *eh_frame;
   const uint8_t *end, *next;
   int is_eh_frame = 0;
-  int is_64 = 0;
-  uint64_t initlen;
   struct {
     char *name;
     int is_eh_frame;
@@ -585,29 +596,19 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
     { NULL, 0 }
   };
   int section_number;
+  gimli_hash_t cie_tbl;
 
-  /* can't unwind via dwarf if don't have a valid register set */
-  if (cur->dwarffail) {
-    return 0;
-  }
-
-  m = gimli_mapping_for_addr(cur->st.pc);
-  cur->dwarffail = 1;
-  if (!m) {
-    return 0;
-  }
   if (!m->objfile->elf) {
     return 0;
   }
-  if (debug) {
-    fprintf(stderr, "DWARF: unwind_next pc=%p fp=%p\n", cur->st.pc, cur->st.fp);
-  }
+
+  cie_tbl = gimli_hash_new(NULL);
 
   for (section_number = 0; sections_to_try[section_number].name;
       section_number++) {
 
     is_eh_frame = sections_to_try[section_number].is_eh_frame;
-    s = gimli_get_section_by_name(m->objfile->elf, 
+    s = gimli_get_section_by_name(m->objfile->elf,
         sections_to_try[section_number].name);
 
     if (s) {
@@ -619,7 +620,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
     }
 
     if (!s && m->objfile->aux_elf) {
-      s = gimli_get_section_by_name(m->objfile->aux_elf, 
+      s = gimli_get_section_by_name(m->objfile->aux_elf,
           sections_to_try[section_number].name);
     }
 
@@ -639,14 +640,16 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
     eh_start = eh_frame;
     end = eh_frame + s->size;
 
-    while (eh_frame < end) {
-      struct dw_cie cie;
-      struct dw_fde fde;
+    while (eh_frame && eh_frame < end) {
       uint32_t len;
       uint64_t cie_id;
       const uint8_t *aug;
+      int is_64 = 0;
+      uint64_t initlen;
+      const uint8_t *next;
+      const uint8_t *recstart = eh_frame;
 
-      if (debug) fprintf(stderr, "offset: %p\n", eh_frame - eh_start);
+      if (debug) fprintf(stderr, "\noffset: %p\n", eh_frame - eh_start);
       memcpy(&len, eh_frame, sizeof(len));
       if (len == 0 && is_eh_frame) {
         break;
@@ -672,48 +675,52 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
           cie_id = 0xffffffffffffffffULL;
         }
       }
-if (debug) {
-  fprintf(stderr, "initlen: %lx (next = %lx) is64=%d cie_id=%llx\n",
-    (long)initlen, (long)(next - eh_start), is_64,
-    (long long)cie_id);
-}
+      if (debug) {
+        fprintf(stderr,
+            "initlen: %lx (next = %lx) is64=%d cie_id=0x%llx (%d)\n",
+            (long)initlen, (long)(next - eh_start), is_64,
+            (long long)cie_id, (long long)cie_id);
+      }
       if ((is_eh_frame && cie_id == 0) ||
           (!is_eh_frame && cie_id == 0xffffffffffffffffULL)) {
         uint8_t ver;
+        struct dw_cie *cie;
 
         /* this is a cie */
-        memset(&cie, 0, sizeof(cie));
-        if (is_eh_frame || sizeof(void*) == 8) { // FIXME not dependent on eh_frame?
-          cie.code_enc = DW_EH_PE_udata8;
+        cie = calloc(1, sizeof(*cie));
+        cie->ptr = (uint64_t)(recstart - eh_start);
+
+        if (sizeof(void*) == 8) {
+          cie->code_enc = DW_EH_PE_udata8;
         } else if (sizeof(void*) == 4) {
-          cie.code_enc = DW_EH_PE_udata4;
+          cie->code_enc = DW_EH_PE_udata4;
         }
-        cie.code_enc = DW_EH_PE_absptr;
-        cie.lsda_enc = DW_EH_PE_omit;
+        cie->code_enc = DW_EH_PE_absptr;
+        cie->lsda_enc = DW_EH_PE_omit;
 
         memcpy(&ver, eh_frame, sizeof(ver));
         eh_frame += sizeof(ver);
-        cie.aug = eh_frame;
-        eh_frame += strlen((char*)cie.aug) + 1;
-        if (cie.aug[0] == 'e' && cie.aug[1] == 'h') {
+        cie->aug = eh_frame;
+        eh_frame += strlen((char*)cie->aug) + 1;
+        if (cie->aug[0] == 'e' && cie->aug[1] == 'h') {
           /* ignore GNU 'eh' augmentation data that immediately
            * follows the augmentation string */
           eh_frame += sizeof(void*);
         }
-        cie.code_align = dw_read_uleb128(&eh_frame, end);
-        cie.data_align = dw_read_leb128(&eh_frame, end);
+        cie->code_align = dw_read_uleb128(&eh_frame, end);
+        cie->data_align = dw_read_leb128(&eh_frame, end);
         if (ver == 3) {
-          cie.ret_addr = dw_read_uleb128(&eh_frame, end);
+          cie->ret_addr = dw_read_uleb128(&eh_frame, end);
         } else {
           uint8_t r;
           memcpy(&r, eh_frame, sizeof(r));
           eh_frame += sizeof(r);
-          cie.ret_addr = r;
+          cie->ret_addr = r;
         }
-        cie.init_insns = eh_frame;
-        cie.insn_end = next;
+        cie->init_insns = eh_frame;
+        cie->insn_end = next;
 
-        aug = cie.aug;
+        aug = cie->aug;
 
         /* read in augmentation information */
         while (aug && *aug) {
@@ -723,7 +730,7 @@ if (debug) {
           } else if (*aug == 'z') {
             /* augmentation section size */
             uint64_t o = dw_read_uleb128(&eh_frame, end);
-            cie.init_insns = eh_frame + o;
+            cie->init_insns = eh_frame + o;
           } else if (*aug == 'P') {
             uint8_t enc;
 
@@ -738,134 +745,239 @@ if (debug) {
 
             if (!dw_read_encptr(enc, &eh_frame, end,
                   s->addr + eh_frame - eh_start,
-                  &cie.personality_routine)) {
-              fprintf(stderr, "Error while reading personality routine, enc=%02x offset: %lx\n", enc, eh_frame - eh_start);
+                  &cie->personality_routine)) {
+              fprintf(stderr, "Error reading personality routine, "
+                  "enc=%02x offset: %lx\n", enc, eh_frame - eh_start);
               return 0;
             }
           } else if (*aug == 'R') {
-            memcpy(&cie.code_enc, eh_frame, sizeof(cie.code_enc));
-            eh_frame += sizeof(cie.code_enc);
+            memcpy(&cie->code_enc, eh_frame, sizeof(cie->code_enc));
+            eh_frame += sizeof(cie->code_enc);
           } else if (*aug == 'L') {
-            memcpy(&cie.lsda_enc, eh_frame, sizeof(cie.lsda_enc));
-            eh_frame += sizeof(cie.lsda_enc);
+            /* A 'L' may be present at any position after the first character
+             * of the string. This character may only be present if 'z' is the
+             * first character of the string. If present, it indicates the
+             * presence of one argument in the Augmentation Data of the CIE,
+             * and a corresponding argument in the Augmentation Data of the
+             * FDE. The argument in the Augmentation Data of the CIE is 1-byte
+             * and represents the pointer encoding used for the argument in the
+             * Augmentation Data of the FDE, which is the address of a
+             * language-specific data area (LSDA). The size of the LSDA pointer
+             * is specified by the pointer encoding used.
+             */
+            memcpy(&cie->lsda_enc, eh_frame, sizeof(cie->lsda_enc));
+            eh_frame += sizeof(cie->lsda_enc);
+          } else if (*aug == 'S') {
+            /* 'S' indicates a signal frame; we should not do the PC decrement
+             * operation on these frames (see big comment about architecture
+             * in apply_regs */
+            cie->is_signal_frame = 1;
           }
           aug++;
         }
 
         if (debug) {
           fprintf(stderr, "\n\nReading CIE, len is %ju, ver=%d aug=%s\n"
-              "code_align=%jd data_align=%jd ret_addr=%ju\n",
-              initlen, ver, cie.aug,
-              cie.code_align, cie.data_align, cie.ret_addr);
+              "code_align=%jd data_align=%jd ret_addr=%ju init_insns=%p-%p\n",
+              initlen, ver, cie->aug,
+              cie->code_align, cie->data_align, cie->ret_addr,
+              cie->init_insns, cie->insn_end);
+
         }
+
+        snprintf(cie->key, sizeof(cie->key), "%jd", cie->ptr);
+        gimli_hash_insert(cie_tbl, cie->key, cie);
 
       } else {
         /* this is an fde */
-        memset(&fde, 0, sizeof(fde));
+        struct dw_fde *fde;
+        char cie_key[32];
 
-        /* cie_id is the offset to the CIE that preceeds this FDE,
-         * but we already know what it is */
-        if (!dw_read_encptr(cie.code_enc, &eh_frame, end,
-             s->addr + eh_frame - eh_start, &fde.initial_loc)) {
+        /* add to the fdes table */
+        m->fdes = realloc(m->fdes, (m->num_fdes + 1) * sizeof(*fde));
+        fde = &m->fdes[m->num_fdes++];
+        memset(fde, 0, sizeof(*fde));
+
+        /* locate our CIE; it may not be the last CIE preceeding this one */
+        if (is_eh_frame) {
+          cie_id = (uint64_t)(eh_frame - eh_start) - cie_id;
+          cie_id -= is_64 ? 8 : 4;
+        }
+        snprintf(cie_key, sizeof(cie_key), "%jd", cie_id);
+        if (!gimli_hash_find(cie_tbl, cie_key, (void**)&fde->cie)) {
+          fprintf(stderr, "could not resolve CIE %s!\n", cie_key);
+          return 0;
+        }
+
+        if (!dw_read_encptr(fde->cie->code_enc, &eh_frame, end,
+              s->addr + eh_frame - eh_start, &fde->initial_loc)) {
           fprintf(stderr, "Error while reading initial loc\n");
           return 0;
         }
 
-
-        if (!dw_read_encptr(cie.code_enc & 0x0f, &eh_frame, end,
-                  s->addr + eh_frame - eh_start,
-            &fde.addr_range)) {
+        if (!dw_read_encptr(fde->cie->code_enc & 0x0f, &eh_frame, end,
+              s->addr + eh_frame - eh_start,
+              &fde->addr_range)) {
           fprintf(stderr, "Error while reading addr_range\n");
           return 0;
         }
         if (debug) {
-          fprintf(stderr, "FDE: addr_range raw=%p\ninit_loc=%p addr=%p\n", 
-            (void*)(intptr_t)fde.addr_range,
-            (void*)(intptr_t)fde.initial_loc,
-            (void*)s->addr);
+          fprintf(stderr, "FDE: addr_range raw=%p\ninit_loc=%p addr=%p\n",
+              (void*)(intptr_t)fde->addr_range,
+              (void*)(intptr_t)fde->initial_loc,
+              s->addr);
         }
-        fde.initial_loc += m->objfile->base_addr;
+        fde->initial_loc += m->objfile->base_addr;
         if (debug) {
           char name[1024];
           const char *sym = gimli_pc_sym_name(
-              (void*)(intptr_t)fde.initial_loc, name, sizeof(name));
-          fprintf(stderr, "FDE: init=%p-%p %s\npc=%p aug=%s\n",
-              (char*)(intptr_t)fde.initial_loc,
-              (char*)(intptr_t)(fde.initial_loc + fde.addr_range),
+              (void*)(intptr_t)fde->initial_loc, name, sizeof(name));
+          fprintf(stderr, "FDE: init=%p-%p %s aug=%s\n",
+              (char*)(intptr_t)fde->initial_loc,
+              (char*)(intptr_t)(fde->initial_loc + fde->addr_range),
               sym,
-              cur->st.pc, cie.aug);
-        }
-        if (cie.lsda_enc != DW_EH_PE_omit) {
-          if (!dw_read_encptr(cie.lsda_enc, &eh_frame, end,
-                s->addr + eh_frame - eh_start, &fde.lsda_ptr)) {
-            fprintf(stderr, "Error while reading lsda pointer\n");
-            return 0;
-          }
+              fde->cie->aug);
         }
 
-        fde.insns = eh_frame;
-        fde.insn_end = next;
+        fde->insns = eh_frame;
+        fde->insn_end = next;
 
-        if ((intptr_t)cur->st.pc >= (intptr_t)fde.initial_loc &&
-            (intptr_t)cur->st.pc <= (intptr_t)(fde.initial_loc + fde.addr_range)) {
-          if (debug) {
-            fprintf(stderr, "This is the FDE for the current PC\n");
-            fprintf(stderr, "FDE: init=" PTRFMT "-" PTRFMT " pc=" PTRFMT "\n",
-                (PTRFMT_T)(intptr_t)fde.initial_loc,
-                (PTRFMT_T)(intptr_t)fde.addr_range,
-                (PTRFMT_T)cur->st.pc);
-          }
-
-          /* run initial instructions */
-          memset(&cur->dw, 0, sizeof(cur->dw));
-          if (!process_dwarf_insns(cur, &cie, &fde,
-                cie.init_insns, cie.insn_end, fde.initial_loc)) {
-            if (debug) {
-              fprintf(stderr, "DWARF: unwind: failed to run init instructions\n");
-            }
-            return 0;
-          }
-          /* copy the current rules into the init rules; this
-           * is to support the "restore" opcodes */
-          memcpy(cie.init_cols, cur->dw.cols, sizeof(cie.init_cols));
-
-          /* walk up the stack using the fde rules */
-          if (!process_dwarf_insns(cur, &cie, &fde, fde.insns, fde.insn_end,
-                fde.initial_loc)) {
-            if (debug) {
-              fprintf(stderr,
-                  "DWARF: unwind: failed to run unwind instructions\n");
-            }
-            return 0;
-          }
-          /* map the regs back into the cursor */
-          if (!apply_regs(cur, &cie)) {
-            if (debug) {
-              fprintf(stderr,
-                  "DWARF: unwind: failed to apply unwind rules\n");
-            }
-            return 0;
-          }
-          cur->dwarffail = 0;
-
-          return 1;
-        }
       }
-
       eh_frame = next;
     }
-    if (debug) {
-      fprintf(stderr, "did not find what I was looking for in %s@%s\n",
-          s->name, s->container->objname);
-    }
+  }
+
+  /* ensure that the fde data is sorted in ascending order so that
+   * bsearch can be used correctly.  This should normally be the case,
+   * but I don't trust the data to be that way in all situations */
+  qsort(m->fdes, m->num_fdes, sizeof(struct dw_fde), sort_compare_fde);
+
+  gimli_hash_destroy(cie_tbl);
+  return 1;
+}
+
+static int search_compare_fde(const void *PC, const void *FDE)
+{
+  intptr_t pc = (intptr_t)*(void**)PC;
+  struct dw_fde *fde = (struct dw_fde*)FDE;
+
+  if (pc < fde->initial_loc) {
+    return -1;
+  }
+  if (pc < fde->initial_loc + fde->addr_range) {
+    return 0;
+  }
+
+  return 1;
+}
+
+/* find the FDE for the specified pc address */
+static struct dw_fde *find_fde(void *pc)
+{
+  struct gimli_object_mapping *m;
+  struct dw_fde *fde;
+
+  m = gimli_mapping_for_addr(pc);
+  if (!m) {
+    return NULL;
+  }
+
+  if (!m->objfile->elf) {
+    return NULL;
+  }
+
+  if (!m->fdes && !load_fde(m)) {
+    return NULL;
+  }
+
+  fde = bsearch(&pc, m->fdes, m->num_fdes, sizeof(*fde), search_compare_fde);
+  if (fde) {
+    return fde;
+  }
+
+  return NULL;
+}
+
+int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
+{
+  struct dw_fde *fde;
+
+  /* can't unwind via dwarf if don't have a valid register set */
+  if (cur->dwarffail) {
+    return 0;
   }
 
   if (debug) {
-    fprintf(stderr,
-      "DWARF: unwind: no suitable rules found\n");
+    fprintf(stderr, "\nDWARF: unwind_next pc=%p fp=%p\n",
+        cur->st.pc, cur->st.fp);
   }
 
-  return 0;
+  fde = find_fde(cur->st.pc);
+  if (!fde) {
+    cur->dwarffail = 1;
+    if (debug) {
+      fprintf(stderr, "DWARF: no fde for pc=%p\n", cur->st.pc);
+    }
+    return 0;
+  }
+
+  if (debug) {
+    fprintf(stderr, "FDE: init=" PTRFMT "-" PTRFMT " pc=" PTRFMT "\n",
+        (void*)(intptr_t)fde->initial_loc,
+        (void*)(intptr_t)fde->addr_range,
+        (void*)cur->st.pc);
+    fprintf(stderr, "CIE: aug=%s\n", fde->cie->aug);
+  }
+
+  /* run initial instructions */
+  memset(&cur->dw, 0, sizeof(cur->dw));
+  memset(&fde->cie->init_cols, 0, sizeof(fde->cie->init_cols));
+  fde->cie->rule_stack = NULL;
+
+  if (!process_dwarf_insns(cur, fde->cie, fde,
+        fde->cie->init_insns, fde->cie->insn_end, fde->initial_loc)) {
+    if (debug) {
+      fprintf(stderr, "DWARF: unwind: failed to run init instructions\n");
+    }
+    return 0;
+  }
+  /* copy the current rules into the init rules; this
+   * is to support the "restore" opcodes */
+  memcpy(fde->cie->init_cols, cur->dw.cols, sizeof(fde->cie->init_cols));
+
+  /* walk up the stack using the fde rules */
+  if (!process_dwarf_insns(cur, fde->cie, fde, fde->insns, fde->insn_end,
+        fde->initial_loc)) {
+    if (debug) {
+      fprintf(stderr,
+          "DWARF: unwind: failed to run unwind instructions\n");
+    }
+    return 0;
+  }
+  /* map the regs back into the cursor */
+  if (!apply_regs(cur, fde->cie)) {
+    if (debug) {
+      fprintf(stderr,
+          "DWARF: unwind: failed to apply unwind rules\n");
+    }
+    return 0;
+  }
+
+  /* sanity check what we got back.
+   * This is here because we get a funky address back from sem_wait.
+   * This implies that we may have a faulty unwinder and this should
+   * be investigated, but for now, we fall back to frame pointer
+   * unwinding when things look bad */
+  if (!gimli_mapping_for_addr(cur->st.pc)) {
+    if (debug) {
+      fprintf(stderr, "DWARF: unwind gave bogus pc\n");
+    }
+    return 0;
+  }
+
+  cur->dwarffail = 0;
+
+  return 1;
 }
 
 /* vim:ts=2:sw=2:et:

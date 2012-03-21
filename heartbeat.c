@@ -38,11 +38,12 @@ static void gimli_signal_handler(int signo, siginfo_t *si, void *unused)
   /* if we get here, it is because the trace completed and SIGCONT'd
    * us as part of its detach */
 
+  gimli_heartbeat_set(hb, GIMLI_HB_STOPPING);
+
   /* invoke an application supplied shutdown handler */
   if (shutdown_func) {
     shutdown_func(signo, si);
   }
-  gimli_heartbeat_set(hb, GIMLI_HB_STOPPING);
 
   /* and now we want to exit, preserving the original exit status.
    * we do this by killing ourselves with the original signal.

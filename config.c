@@ -38,6 +38,9 @@ static struct option {
   { "arg0", "GIMLI_ARG0", OPT_STRING, &arg0 },
   { "run-once", "GIMLI_RUN_ONCE", OPT_INTEGER, &run_only_once },
   { "immortal", "GIMLI_IMMORTAL", OPT_INTEGER, &immortal_child },
+  { "log-file", "GIMLI_LOG_FILE", OPT_STRING, &log_file },
+  { "trace-interval", "GIMLI_TRACER_INTERVAL",
+    OPT_INTEGER, &trace_interval },
   { NULL }
 };
 

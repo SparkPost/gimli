@@ -387,7 +387,8 @@ int gimli_stack_trace(int tid, struct gimli_unwind_cursor *frames, int nframes)
       cur.frameno = frame;
       cur.tid = tid;
       frames[frame++] = cur;
-    } while (cur.st.pc && gimli_unwind_next(&cur) && cur.st.pc);
+    } while (frame < nframes &&
+        cur.st.pc && gimli_unwind_next(&cur) && cur.st.pc);
     return frame;
   }
   return 0;
