@@ -101,6 +101,7 @@ static void catch_sigchld(int sig_num)
 #ifdef WIFCONTINUED
         if (WIFCONTINUED(status)) {
           gimli_set_proctitle("child pid %d continued", dead_pid);
+          p->exit_status = 0;
           break;
         }
 #endif
@@ -120,10 +121,17 @@ static void catch_sigchld(int sig_num)
               kill(p->pid, SIGCONT);
               break;
           }
-        } else {
-          gimli_set_proctitle("child pid %d exited (status=%x)",
+        } else if (WIFSIGNALED(status)) {
+          gimli_set_proctitle("child pid %d killed by signal %d (status=0x%x)",
+              dead_pid, WTERMSIG(status), status);
+          p->running = 0;
+        } else if (WIFEXITED(status)) {
+          gimli_set_proctitle("child pid %d exited (status=0x%x)",
               dead_pid, status);
           p->running = 0;
+        } else {
+          gimli_set_proctitle("child pid %d has wait status=0x%x\n",
+              dead_pid, status);
         }
         break;
       }
@@ -139,6 +147,36 @@ static void catch_usr1(int sig_num)
     heartbeat->state = GIMLI_HB_RUNNING;
     heartbeat->ticks++;
   }
+}
+
+/* SIGUSR2 requests that we trace a child */
+static void catch_usr2(int sig_num)
+{
+  struct kid_proc *p;
+
+  for (p = procs; p; p = p->next) {
+    if (p->running && p->tracer_for == 0) {
+      if (p->should_trace == TRACE_NONE) {
+        logprint("caught signal SIGUSR2, tracing child pid=%d\n", p->pid);
+        p->should_trace = TRACE_ME;
+      } else if (p->should_trace == TRACE_DONE) {
+#ifdef sun
+        /* it was already traced by watchdog; then we sent it
+         * SIGABRT and it STOP'd itself, so we should wake it
+         * back up with a SIGCONT and let it call its shutdown
+         * function.
+         * This bit is Solaris specific since sending yourself
+         * SIGSTOP doesn't appear to raise SIGCHLD in the parent.
+         */
+        gimli_set_proctitle("child pid %d continuing", p->pid);
+        p->exit_status = 0;
+        kill(p->pid, SIGCONT);
+#endif
+      }
+    }
+  }
+
+  signal(SIGUSR2, catch_usr2);
 }
 
 static void catch_hup(int sig_num)
@@ -254,19 +292,20 @@ static int prep(void)
   return 1;
 }
 
-static void mask_signal(int how, int signo)
+static void mask_signal(int how, int signo, int othersig)
 {
   sigset_t s;
 
   sigemptyset(&s);
   sigaddset(&s, signo);
+  sigaddset(&s, othersig);
 
   sigprocmask(how, &s, NULL);
 }
 
 static void link_child(struct kid_proc *p)
 {
-  mask_signal(SIG_BLOCK, SIGCHLD);
+  mask_signal(SIG_BLOCK, SIGCHLD, SIGUSR2);
 
   p->next = procs;
   if (procs) {
@@ -274,12 +313,12 @@ static void link_child(struct kid_proc *p)
   }
   procs = p;
 
-  mask_signal(SIG_UNBLOCK, SIGCHLD);
+  mask_signal(SIG_UNBLOCK, SIGCHLD, SIGUSR2);
 }
 
 static void unlink_child(struct kid_proc *p)
 {
-  mask_signal(SIG_BLOCK, SIGCHLD);
+  mask_signal(SIG_BLOCK, SIGCHLD, SIGUSR2);
 
   if (procs == p) {
     procs = p->next;
@@ -291,7 +330,7 @@ static void unlink_child(struct kid_proc *p)
     p->prev->next = p->next;
   }
 
-  mask_signal(SIG_UNBLOCK, SIGCHLD);
+  mask_signal(SIG_UNBLOCK, SIGCHLD, SIGUSR2);
 }
 
 static struct kid_proc *spawn_child(void)
@@ -356,8 +395,6 @@ static void trace_child(struct kid_proc *p)
   char childname[256];
   struct kid_proc *trc;
   int tracefd;
-
-//  sleep(300);
 
   if (p->watchdog) {
     gimli_set_proctitle("watchdog triggered: tracing %d", p->pid);
@@ -453,6 +490,9 @@ static void trace_child(struct kid_proc *p)
           wait_for_exit(trc, 2);
         }
       }
+      if (debug) {
+        logprint("tracer pid=%d completed\n", trc->pid);
+      }
       p->should_trace = TRACE_DONE;
     }
 
@@ -460,9 +500,18 @@ static void trace_child(struct kid_proc *p)
   }
 
   if (p->watchdog) {
+    if (debug) {
+      logprint("watchdog detected in pid=%d, sending SIGABRT\n", p->pid);
+    }
     kill(p->pid, SIGABRT);
   } else {
     /* allow the child opportunity to clean up */
+    if (debug) {
+      logprint("fault detected in pid=%d, sending SIGCONT\n", p->pid);
+    }
+    if (p->running) {
+      p->exit_status = 0;
+    }
     kill(p->pid, SIGCONT);
   }
 }
@@ -479,6 +528,7 @@ static void setup_signal_handlers(int is_child)
   }
   signal(SIGCHLD, is_child ? SIG_DFL : catch_sigchld);
   signal(SIGUSR1, is_child ? SIG_DFL : catch_usr1);
+  signal(SIGUSR2, is_child ? SIG_DFL : catch_usr2);
 }
 
 static int did_hb_state_change(struct gimli_heartbeat *ref)
@@ -602,6 +652,7 @@ trace:
      * this event as a watchdog, we make setting the watchdog flag
      * contingent on us not being in the middle of a trace. */
     if (p->should_trace == TRACE_NONE) {
+      logprint("ticks = %d vs %d\n", hb.ticks, heartbeat->ticks);
       p->watchdog = 1;
       p->should_trace = TRACE_ME;
     }
@@ -621,14 +672,30 @@ trace:
        * <child stops self>
        * <monitor continues child>
        * <child runs shutdown handler>
-       * Without the sleep here, we can decide that the child is dead
-       * before it gets to its shutdown handler */
-      sleep(4);
+       */
     }
 
-    wait_for_exit(p, watchdog_stop_interval);
+    if (debug && p->running) {
+      logprint("waiting for child pid=%d to finish shutdown\n",
+          p->pid);
+    }
+
+    /* wait_for_exit can return early if the child heart-beats during
+     * its shutdown handler */
+    while (p->running) {
+      hb = *heartbeat;
+      wait_for_exit(p, watchdog_stop_interval);
+      if (use_heartbeat && did_hb_state_change(&hb)) {
+        continue;
+      }
+      break;
+    }
 
     while (p->running) {
+      if (debug) {
+        logprint("child pid %d still running after shutdown, sending SIGKILL\n",
+            p->pid);
+      }
       kill(p->pid, SIGKILL);
       wait_for_exit(p, 2);
     }
