@@ -182,13 +182,26 @@ ps_err_e ps_lgetregs(struct ps_prochandle *ph, lwpid_t lwpid,
   return PS_ERR;
 }
 
-static void user_regs_to_thread(prgregset_t ur,
+static void show_regs(prgregset_t regs)
+{
+#if 0
+  int i;
+  for (i = 0; i < NPRGREG ; i++) {
+    printf("reg: %d: %p\n", i, regs[i]);
+  }
+#endif
+}
+
+static void user_regs_to_thread(prgregset_t *ur,
   struct gimli_thread_state *thr)
 {
   memcpy(&thr->regs, ur, sizeof(*ur));
-  thr->fp = (void*)ur[R_FP];
-  thr->pc = (void*)ur[R_PC];
-  thr->sp = (void*)ur[R_SP];
+
+  thr->fp = (void*)thr->regs[R_FP];
+  thr->pc = (void*)thr->regs[R_PC];
+  thr->sp = (void*)thr->regs[R_SP];
+
+  show_regs(thr->regs);
 }
 
 static int enum_threads(const td_thrhandle_t *thr, void *unused)
@@ -214,7 +227,7 @@ static int enum_threads(const td_thrhandle_t *thr, void *unused)
     return 0;
   }
 
-  user_regs_to_thread(ur, th);
+  user_regs_to_thread(&ur, th);
   get_lwp_status(targetph.pid, info.ti_lid, &cur_enum_thread->lwpst);
 
   cur_enum_thread->lwpid = info.ti_lid;
@@ -271,7 +284,7 @@ static void read_maps(void)
       gimli_add_mapping(target, (void*)m->pr_vaddr, m->pr_size, m->pr_offset);
     }
   }
-  
+
   free(maps);
 }
 
@@ -290,7 +303,7 @@ int gimli_attach(int pid)
     fprintf(stderr, "open(%s): %s\n", path, strerror(errno));
     goto err;
   }
-  
+
   snprintf(path, sizeof(path)-1, "/proc/%d/status", pid);
   targetph.status_fd = open(path, O_RDONLY);
   if (targetph.status_fd == -1) {
@@ -303,7 +316,7 @@ int gimli_attach(int pid)
     fprintf(stderr, "open(%s): %s\n", path, strerror(errno));
     goto err;
   }
- 
+
   /* now ask the process the stop */
   ctl[0] = PCDSTOP;
   ctl[1] = PCTWSTOP;
@@ -360,7 +373,7 @@ int gimli_attach(int pid)
     }
   } else {
     gimli_threads = calloc(1, sizeof(*gimli_threads));
-    user_regs_to_thread(targetph.status.pr_lwp.pr_reg, &gimli_threads[0]);
+    user_regs_to_thread(&targetph.status.pr_lwp.pr_reg, &gimli_threads[0]);
     gimli_threads->lwpst = targetph.status.pr_lwp;
     gimli_nthreads = 1;
     gimli_threads->lwpid = pid;
@@ -381,7 +394,7 @@ int gimli_detach(void)
 
     write(targetph.ctl_fd, ctl, sizeof(ctl));
   }
-  
+
   if (targetph.as_fd >= 0) {
     close(targetph.as_fd);
     targetph.as_fd = -1;
@@ -405,11 +418,50 @@ int gimli_init_unwind(struct gimli_unwind_cursor *cur,
   return 1;
 }
 
+static int read_gwindow(struct gimli_unwind_cursor *cur)
+{
+  char path[1024];
+  int fd, n, rv = 0;
+  struct stat64 st;
+  gwindows_t gwin;
+
+  snprintf(path, sizeof(path), "/proc/%d/lwp/%d/gwindows",
+    targetph.pid, cur->st.lwpid);
+
+  if (stat64(path, &st) == -1 || st.st_size == 0) {
+    return 0;
+  }
+
+  fd = open(path, O_RDONLY);
+  if (fd == -1) {
+    return 0;
+  }
+
+  /* zero out gwin, as we may get a partial read */
+  memset(&gwin, 0, sizeof(gwin));
+  n = read(fd, &gwin, sizeof(gwin));
+  if (n > 0) {
+    int i;
+
+    for (i = 0; i < gwin.wbcnt; i++) {
+      if (gwin.spbuf[i] == cur->st.fp) {
+        /* we found the frame we wanted */
+        memcpy(&cur->st.regs[R_L0], &gwin.wbuf[i], sizeof(struct rwindow));
+        rv = 1;
+        break;
+      }
+    }
+  }
+  close(fd);
+
+  return rv;
+}
+
 int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 {
   struct frame frame;
   struct gimli_unwind_cursor c;
-  
+
   if (gimli_is_signal_frame(cur)) {
     ucontext_t uc;
 
@@ -438,6 +490,9 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
   }
 
   if (c.st.fp) {
+    *cur = c;
+
+#ifndef __sparc__
     if (gimli_read_mem(c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
       memset(&frame, 0, sizeof(frame));
     }
@@ -452,17 +507,28 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
       cur->st.pc--;
     }
     cur->st.regs[R_FP] = (intptr_t)cur->st.fp;
-#ifdef __sparc__
+#else
     cur->st.regs[R_PC] = cur->st.regs[R_I7];
     cur->st.regs[R_nPC] = cur->st.regs[R_PC] + 4;
     memcpy(&cur->st.regs[R_O0], &cur->st.regs[R_I0], 8 * sizeof(prgreg_t));
-    cur->st.sp = (void*)cur->st.regs[R_FP] + STACK_BIAS;
-
-    if (cur->st.sp && gimli_read_mem(cur->st.sp, &cur->st.regs[R_L0],
-        sizeof(struct rwindow)) != sizeof(struct rwindow)) {
-      /* we should try to fill this data in via gwindow information */
-      fprintf(stderr, "unable to read rwindow @ %p\n", cur->st.sp);
+    show_regs(cur->st.regs);
+    if (cur->st.regs[R_FP] == 0) {
+      return 0;
     }
+
+    if (gimli_read_mem((void*)(cur->st.regs[R_FP] + STACK_BIAS),
+        &cur->st.regs[R_L0],
+        sizeof(struct rwindow)) != sizeof(struct rwindow)) {
+      /* try to fill this data in via gwindow information */
+      if (!read_gwindow(cur)) {
+        fprintf(stderr, "unable to read rwindow @ %p, and no gwindow\n",
+          cur->st.regs[R_FP]);
+      }
+    }
+    cur->st.fp = (void*)cur->st.regs[R_FP];
+    cur->st.pc = (void*)cur->st.regs[R_PC];
+    cur->st.sp = (void*)cur->st.regs[R_SP];
+    cur->dwarffail = 0;
 #endif
 
     if (cur->st.pc == 0 && cur->st.lwpst.pr_oldcontext) {
