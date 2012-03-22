@@ -418,6 +418,7 @@ int gimli_init_unwind(struct gimli_unwind_cursor *cur,
   return 1;
 }
 
+#ifdef __sparc__
 static int read_gwindow(struct gimli_unwind_cursor *cur)
 {
   char path[1024];
@@ -456,6 +457,7 @@ static int read_gwindow(struct gimli_unwind_cursor *cur)
 
   return rv;
 }
+#endif
 
 int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 {
@@ -497,7 +499,7 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
       memset(&frame, 0, sizeof(frame));
     }
 
-    if (c.st.fp == frame.fr_savfp) {
+    if (c.st.fp == (void*)frame.fr_savfp) {
       return 0;
     }
     cur->st.fp = (void*)frame.fr_savfp;
