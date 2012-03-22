@@ -217,6 +217,147 @@ const char *gimli_pc_sym_name(void *addr, char *buf, int buflen)
   return "";
 }
 
+int gimli_render_siginfo(siginfo_t *si, char *buf, size_t bufsize)
+{
+  char *source = "";
+  int use_fault_addr = 0;
+  int use_pid = 0;
+  char *signame;
+  char pidbuf[64];
+  char namebuf[1024];
+  char addrbuf[1024];
+
+  signame = strsignal(si->si_signo);
+  if (!signame) signame = "Unknown signal";
+
+  if (si->si_code > 0) {
+    /* kernel generated; si_code has additional information */
+    switch (si->si_signo) {
+      case SIGILL:
+        use_fault_addr = 1;
+        switch (si->si_code) {
+          case ILL_ILLOPC: source = "illegal opcode"; break;
+          case ILL_ILLOPN: source = "illegal operand"; break;
+          case ILL_ILLADR: source = "illegal addressing mode"; break;
+          case ILL_ILLTRP: source = "illegal trap"; break;
+          case ILL_PRVOPC: source = "privileged opcode"; break;
+          case ILL_PRVREG: source = "privileged register"; break;
+          case ILL_COPROC: source = "co-processor error"; break;
+          case ILL_BADSTK: source = "internal stack error"; break;
+        }
+        break;
+      case SIGFPE:
+        use_fault_addr = 1;
+        switch (si->si_code) {
+          case FPE_INTDIV: source = "integer divide by zero"; break;
+          case FPE_INTOVF: source = "integer overflow"; break;
+          case FPE_FLTDIV: source = "floating point divide by zero"; break;
+          case FPE_FLTOVF: source = "floating point overflow"; break;
+          case FPE_FLTUND: source = "floating point underflow"; break;
+          case FPE_FLTRES: source = "floating point inexact result"; break;
+          case FPE_FLTINV: source = "floating point invalid operation"; break;
+          case FPE_FLTSUB: source = "subscript out of range"; break;
+        }
+        break;
+      case SIGSEGV:
+        use_fault_addr = 1;
+        switch (si->si_code) {
+          case SEGV_MAPERR: source = "address not mapped to object"; break;
+          case SEGV_ACCERR: source = "invalid permissions for mapped object"; break;
+        }
+        break;
+      case SIGBUS:
+        use_fault_addr = 1;
+        switch (si->si_code) {
+          case BUS_ADRALN: source = "invalid address alignment"; break;
+          case BUS_ADRERR: source = "non-existent physical address"; break;
+          case BUS_OBJERR: source = "object specific hardware error"; break;
+        }
+        break;
+      case SIGTRAP:
+        switch (si->si_code) {
+          case TRAP_BRKPT: source = "process breakpoint"; break;
+          case TRAP_TRACE: source = "process trace trap"; break;
+        }
+        break;
+      case SIGCHLD:
+        use_pid = 1;
+        switch (si->si_code) {
+          case CLD_EXITED: source = "child has exited"; break;
+          case CLD_KILLED: source = "child was killed"; break;
+          case CLD_DUMPED: source = "child terminated abnormally"; break;
+          case CLD_TRAPPED: source = "traced child has trapped"; break;
+          case CLD_STOPPED: source = "child has stopped"; break;
+          case CLD_CONTINUED: source = "stopped child has continued"; break;
+        }
+        break;
+#ifdef SIGPOLL
+      case SIGPOLL:
+        switch (si->si_code) {
+          case POLL_IN: source = "data input available"; break;
+          case POLL_OUT: source = "output buffers available"; break;
+          case POLL_MSG: source = "input message available"; break;
+          case POLL_ERR: source = "I/O error"; break;
+          case POLL_PRI: source = "high priority input available"; break;
+          case POLL_HUP: source = "device disconnected"; break;
+        }
+        break;
+#endif
+
+    }
+  } else {
+    use_pid = 1;
+    switch (si->si_code) {
+#ifdef SI_NOINFO
+      case SI_NOINFO:
+        /* explicitly have no info */
+        use_pid = 0;
+        break;
+#endif
+      case SI_USER:    source = "userspace"; break;
+#ifdef SI_LWP
+      case SI_LWP:     source = "_lwp_kill"; break;
+#endif
+      case SI_QUEUE:   source = "sigqueue"; break;
+      case SI_TIMER:   source = "timer";   break;
+      case SI_ASYNCIO: source = "asyncio"; break;
+      case SI_MESGQ:   source = "mesgq"; break;
+#ifdef SI_KERNEL
+      case SI_KERNEL:  source = "kernel"; break;
+#endif
+#ifdef SI_SIGIO
+      case SI_SIGIO:   source = "sigio"; break;
+#endif
+#ifdef SI_TKILL
+      case SI_TKILL:   source = "tkill"; break;
+#endif
+#ifdef SI_RCTL
+      case SI_RCTL: source = "resource-control"; break;
+#endif
+    }
+  }
+
+  pidbuf[0] = '\0';
+  addrbuf[0] = '\0';
+  if (use_pid) {
+    snprintf(pidbuf, sizeof(pidbuf), " pid=%d", si->si_pid);
+  }
+  if (use_fault_addr) {
+    const char *name;
+
+    name = gimli_pc_sym_name(si->si_addr, namebuf, sizeof(namebuf));
+    if (name && strlen(name)) {
+      snprintf(addrbuf, sizeof(addrbuf), " (%s)", name);
+    } else {
+      snprintf(addrbuf, sizeof(addrbuf), " (" PTRFMT ")", si->si_addr);
+    }
+  }
+
+  return snprintf(buf, bufsize, "Signal %d: %s. %s%s%s",
+      si->si_signo, signame, source,
+      pidbuf, addrbuf);
+}
+
 void gimli_render_frame(int tid, int nframe, struct gimli_unwind_cursor *frame)
 {
   const char *name;
@@ -227,137 +368,8 @@ void gimli_render_frame(int tid, int nframe, struct gimli_unwind_cursor *frame)
 
   if (gimli_is_signal_frame(&cur)) {
     if (cur.si.si_signo) {
-      char *source = "";
-      int use_fault_addr = 0;
-      int use_pid = 0;
-      char *signame;
-
-      signame = strsignal(cur.si.si_signo);
-      if (!signame) signame = "Unknown signal";
-
-      if (cur.si.si_code > 0) {
-        /* kernel generated; si_code has additional information */
-        switch (cur.si.si_signo) {
-          case SIGILL:
-            use_fault_addr = 1;
-            switch (cur.si.si_code) {
-              case ILL_ILLOPC: source = "illegal opcode"; break;
-              case ILL_ILLOPN: source = "illegal operand"; break;
-              case ILL_ILLADR: source = "illegal addressing mode"; break;
-              case ILL_ILLTRP: source = "illegal trap"; break;
-              case ILL_PRVOPC: source = "privileged opcode"; break;
-              case ILL_PRVREG: source = "privileged register"; break;
-              case ILL_COPROC: source = "co-processor error"; break;
-              case ILL_BADSTK: source = "internal stack error"; break;
-            }
-            break;
-          case SIGFPE:
-            use_fault_addr = 1;
-            switch (cur.si.si_code) {
-              case FPE_INTDIV: source = "integer divide by zero"; break;
-              case FPE_INTOVF: source = "integer overflow"; break;
-              case FPE_FLTDIV: source = "floating point divide by zero"; break;
-              case FPE_FLTOVF: source = "floating point overflow"; break;
-              case FPE_FLTUND: source = "floating point underflow"; break;
-              case FPE_FLTRES: source = "floating point inexact result"; break;
-              case FPE_FLTINV: source = "floating point invalid operation"; break;
-              case FPE_FLTSUB: source = "subscript out of range"; break;
-            }
-            break;
-          case SIGSEGV:
-            use_fault_addr = 1;
-            switch (cur.si.si_code) {
-              case SEGV_MAPERR: source = "address not mapped to object"; break;
-              case SEGV_ACCERR: source = "invalid permissions for mapped object"; break;
-            }
-            break;
-          case SIGBUS:
-            use_fault_addr = 1;
-            switch (cur.si.si_code) {
-              case BUS_ADRALN: source = "invalid address alignment"; break;
-              case BUS_ADRERR: source = "non-existent physical address"; break;
-              case BUS_OBJERR: source = "object specific hardware error"; break;
-            }
-            break;
-          case SIGTRAP:
-            switch (cur.si.si_code) {
-              case TRAP_BRKPT: source = "process breakpoint"; break;
-              case TRAP_TRACE: source = "process trace trap"; break;
-            }
-            break;
-          case SIGCHLD:
-            use_pid = 1;
-            switch (cur.si.si_code) {
-              case CLD_EXITED: source = "child has exited"; break;
-              case CLD_KILLED: source = "child was killed"; break;
-              case CLD_DUMPED: source = "child terminated abnormally"; break;
-              case CLD_TRAPPED: source = "traced child has trapped"; break;
-              case CLD_STOPPED: source = "child has stopped"; break;
-              case CLD_CONTINUED: source = "stopped child has continued"; break;
-            }
-            break;
-#ifdef SIGPOLL
-          case SIGPOLL:
-            switch (cur.si.si_code) {
-              case POLL_IN: source = "data input available"; break;
-              case POLL_OUT: source = "output buffers available"; break;
-              case POLL_MSG: source = "input message available"; break;
-              case POLL_ERR: source = "I/O error"; break;
-              case POLL_PRI: source = "high priority input available"; break;
-              case POLL_HUP: source = "device disconnected"; break;
-            }
-            break;
-#endif
-
-        }
-      } else {
-        use_pid = 1;
-        switch (cur.si.si_code) {
-#ifdef SI_NOINFO
-          case SI_NOINFO:
-            /* explicitly have no info */
-            use_pid = 0;
-            break;
-#endif
-          case SI_USER:    source = "userspace"; break;
-#ifdef SI_LWP
-          case SI_LWP:     source = "_lwp_kill"; break;
-#endif
-          case SI_QUEUE:   source = "sigqueue"; break;
-          case SI_TIMER:   source = "timer";   break;
-          case SI_ASYNCIO: source = "asyncio"; break;
-          case SI_MESGQ:   source = "mesgq"; break;
-#ifdef SI_KERNEL
-          case SI_KERNEL:  source = "kernel"; break;
-#endif
-#ifdef SI_SIGIO
-          case SI_SIGIO:   source = "sigio"; break;
-#endif
-#ifdef SI_TKILL
-          case SI_TKILL:   source = "tkill"; break;
-#endif
-#ifdef SI_RCTL
-          case SI_RCTL: source = "resource-control"; break;
-#endif
-        }
-      }
-      printf("#%-2d Signal %d: %s. %s",
-          nframe, cur.si.si_signo, signame, source);
-
-      if (use_pid) {
-        printf(" pid=%d", cur.si.si_pid);
-      }
-
-      if (use_fault_addr) {
-        name = gimli_pc_sym_name(cur.si.si_addr, namebuf, sizeof(namebuf));
-        if (name && strlen(name)) {
-          printf(" (%s)", name);
-        } else {
-          printf(" (" PTRFMT ")", cur.si.si_addr);
-        }
-      }
-      printf("\n");
-
+      gimli_render_siginfo(&cur.si, namebuf, sizeof(namebuf));
+      printf("#%-2d %s\n", nframe, namebuf);
     } else {
       printf("#%-2d signal handler\n", nframe);
     }
