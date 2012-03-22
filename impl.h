@@ -105,7 +105,7 @@ struct gimli_thread_state {
 #if defined(__linux__)
   struct user_regs_struct regs;
 #elif defined(sun)
-  gregset_t regs;
+  prgregset_t regs;
   lwpstatus_t lwpst; 
 #elif defined(__MACH__) && defined(__x86_64__)
   x86_thread_state64_t regs;

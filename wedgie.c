@@ -56,6 +56,7 @@ static void handler(int signo, siginfo_t *si, void *v)
 static void mr_wedge(struct wedgie_data *data, int port)
 {
   fprintf(stderr, "taking a nap in func %p\n", mr_wedge);
+  fflush(stderr);
   sleep(2);
   *(long*)42 = 42;
   sleep(10);
@@ -63,23 +64,37 @@ static void mr_wedge(struct wedgie_data *data, int port)
 }
 
 static void func_one(struct wedgie_data *data, wedgie_t w_t, const char *string,
-  enum wedgie_enum w_e, struct wedgie_data data_not_pointer, union wedgie_union u)
+  enum wedgie_enum w_e, struct wedgie_data data_not_pointer
+#ifndef __sparc__
+  /* gcc emits code that causes %sp to end up NULL on call if we include
+   * this union parameter on the stack */
+  , union wedgie_union u
+#endif
+)
 {
+  printf("calling mr_wedge\n"); fflush(stdout);
   mr_wedge(data, 8080);
   printf("done wedging\n");
 }
 
 static void func_two(void)
 {
-  struct wedgie_data d = { 42, "forty-two" };
   union wedgie_union u;
+  struct wedgie_data d = { 42, "forty-two" };
+
+  printf("initialize some data\n"); fflush(stdout);
   u.one = 1;
   u.s.inner2 = 2;
   d.bit1 = 1;
   d.bit2 = 0;
   d.moo = 13;
 
-  func_one(&d, 32, "hello", wee_two, d, u);
+  printf("call func_one\n"); fflush(stdout);
+  func_one(&d, 32, "hello", wee_two, d
+#ifndef __sparc__
+    , u
+#endif
+  );
   printf("func_one called\n");
 }
 
@@ -101,6 +116,8 @@ int main(int argc, char *argv[])
 #endif
 //    signal(SIGSEGV, handler);
   }
+  fprintf(stderr, "calling func_two\n");
+  fflush(stderr);
   func_two();
   fprintf(stderr, "wedgie is done\n");
   return 0;
