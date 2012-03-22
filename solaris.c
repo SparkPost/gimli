@@ -32,6 +32,8 @@ static struct ps_prochandle targetph = {
 static td_thragent_t *ta = NULL;
 static struct gimli_thread_state *cur_enum_thread = NULL;
 
+#define PR_OBJ_EVERY ((const char*)-1) /* search everything */
+
 ps_err_e ps_pcontinue(struct ps_prochandle *ph)
 {
   return PS_OK;
@@ -127,7 +129,42 @@ ps_err_e ps_lsetregs(struct ps_prochandle *ph, lwpid_t lwpid,
 ps_err_e ps_pglobal_lookup(struct ps_prochandle *ph,
       const char *object_name, const char *sym_name, psaddr_t *sym_addr)
 {
-  struct gimli_symbol *sym = gimli_sym_lookup(object_name, sym_name);
+  struct gimli_symbol *sym;
+
+  if (object_name == PS_OBJ_EXEC) {
+    object_name = gimli_files->objname;
+  } else if (object_name == PS_OBJ_LDSO) {
+    long base = 0;
+    auxv_t *av;
+    struct gimli_object_mapping *m;
+
+    object_name = NULL;
+    for (av = targetph.auxv; av->a_type != AT_NULL; av++) {
+      if (av->a_type == AT_BASE) {
+        base = av->a_un.a_val;
+        break;
+      }
+    }
+
+    for (m = gimli_mappings; m; m = m->next) {
+      if (m->base == base) {
+        object_name = m->objfile->objname;
+      }
+    }
+  } else if (object_name == PR_OBJ_EVERY) {
+    struct gimli_object_file *f;
+
+    for (f = gimli_files; f; f = f->next) {
+      sym = gimli_sym_lookup(f->objname, sym_name);
+      if (sym) {
+        *sym_addr = (psaddr_t)sym->addr;
+        return PS_OK;
+      }
+      return PS_NOSYM;
+    }
+  }
+
+  sym = gimli_sym_lookup(object_name, sym_name);
   if (sym) {
     *sym_addr = (psaddr_t)sym->addr;
     return PS_OK;
@@ -240,7 +277,6 @@ static int enum_threads(const td_thrhandle_t *thr, void *unused)
 ps_err_e ps_pglobal_sym(struct ps_prochandle *h,
 	const char *object_name, const char *sym_name, ps_sym_t *sym)
 {
-  printf("ps_pglobal_sym: %s`%s\n", object_name, sym_name);
   return PS_NOSYM;
 }
 
