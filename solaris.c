@@ -21,6 +21,8 @@ struct ps_prochandle {
   int status_fd; /* handle on /proc/pid/status */
   pstatus_t status;
   struct ps_prochandle *next;
+  auxv_t *auxv;
+  int naux;
 };
 
 static struct ps_prochandle targetph = {
@@ -235,6 +237,98 @@ static int enum_threads(const td_thrhandle_t *thr, void *unused)
   return 0;
 }
 
+ps_err_e ps_pglobal_sym(struct ps_prochandle *h,
+	const char *object_name, const char *sym_name, ps_sym_t *sym)
+{
+  printf("ps_pglobal_sym: %s`%s\n", object_name, sym_name);
+  return PS_NOSYM;
+}
+
+ps_err_e ps_pread(struct ps_prochandle *h,
+			psaddr_t addr, void *buf, size_t size)
+{
+  return gimli_read_mem((void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
+}
+
+ps_err_e ps_pwrite(struct ps_prochandle *h,
+			psaddr_t addr, const void *buf, size_t size)
+{
+  if (targetph.as_fd >= 0) {
+    ssize_t ret = pwrite(targetph.as_fd, buf, size, (intptr_t)addr);
+    return ret == size ? PS_OK : PS_BADADDR;
+  }
+  return PS_ERR;
+}
+
+ps_err_e ps_pauxv(struct ps_prochandle *h, const auxv_t **auxv)
+{
+  *auxv = targetph.auxv;
+  return PS_OK;
+}
+
+void ps_plog(const char *fmt, ...)
+{
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  va_end(ap);
+}
+
+static int collect_map(const rd_loadobj_t *obj, void *unused)
+{
+  char *name;
+
+  name = gimli_read_string((void*)obj->rl_nameaddr);
+  gimli_add_mapping(name, (void*)obj->rl_base, obj->rl_bend - obj->rl_base, 0);
+  free(name);
+
+  return 1;
+}
+
+ps_err_e ps_pdmodel(struct ps_prochandle *h, int *data_model)
+{
+  *data_model = targetph.status.pr_dmodel;
+  return PS_OK;
+}
+
+static int read_auxv(void)
+{
+  int fd, n;
+  char path[1024];
+  struct stat st;
+
+  snprintf(path, sizeof(path), "/proc/%d/auxv", targetph.pid);
+  fd = open(path, O_RDONLY);
+  if (fd == -1) {
+    return 0;
+  }
+  if (fstat(fd, &st) == 0 && st.st_size >= sizeof(auxv_t)) {
+    targetph.auxv = malloc(st.st_size + sizeof(auxv_t));
+
+    n = read(fd, targetph.auxv, st.st_size);
+    n /= sizeof(auxv_t);
+    if (n >= 1) {
+      targetph.auxv[n].a_type = AT_NULL;
+      targetph.auxv[n].a_un.a_val = 0L;
+      targetph.naux = n;
+    }
+  }
+  close(fd);
+}
+
+static void read_rtld_maps(void)
+{
+  rd_agent_t *agt;
+
+  if (!read_auxv()) {
+    return;
+  }
+
+  agt = rd_new(&targetph);
+  rd_loadobj_iter(agt, collect_map, NULL);
+  rd_reset(agt);
+}
+
 static void read_maps(void)
 {
   char filename[1024];
@@ -349,8 +443,6 @@ int gimli_attach(int pid)
   }
 #endif
 
-  read_maps();
-
   te = td_init();
   if (te != TD_OK) {
     fprintf(stderr, "td_init failed: %d\n", te);
@@ -378,6 +470,9 @@ int gimli_attach(int pid)
     gimli_nthreads = 1;
     gimli_threads->lwpid = pid;
   }
+
+  read_maps();
+  read_rtld_maps();
 
   return 1;
 

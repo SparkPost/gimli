@@ -58,6 +58,7 @@
 #endif
 #ifdef sun
 #include <proc_service.h>
+#include <rtld_db.h>
 #endif
 #if defined(sun) || defined(__linux__)
 #include <thread_db.h>
