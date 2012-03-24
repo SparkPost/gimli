@@ -423,7 +423,16 @@ static void discover_maps(void)
   walk_symtab(&dyld, find_dyld_symbols, fd, 0, hdr_offset, &hdr);
 
   if (dyld.info) {
-    gimli_read_mem(dyld.info, &infos, sizeof(infos));
+    /* Apple changed how this interface works in 10.6.
+     * dyld_images.h says that we can use DYLD_ALL_IMAGE_INFOS_OFFSET_OFFSET
+     * but it is not clear what we should base our operations relative to,
+     * so for now, you get no maps and thus no useful symbols */
+    if (gimli_read_mem(dyld.info, &infos, sizeof(infos)) != sizeof(infos)) {
+      fprintf(stderr, "DYLD: failed to read _dyld_all_image_infos from %p\n"
+          "DYLD: no maps, symbols or DWARF info will be available\n",
+          dyld.info);
+      return;
+    }
   } else {
     fprintf(stderr, "DYLD: unable to locate _dyld_all_image_infos\n");
     return;
