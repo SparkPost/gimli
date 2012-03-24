@@ -49,7 +49,7 @@ case $host in
         ;;
     esac
     LDFLAGS="-lrt"
-    CORONER_LDFLAGS="-lc_db"
+    CORONER_LDFLAGS="-lc_db -lrtld_db"
   ;;
 esac
 AC_DEFINE_UNQUOTED([MODULE_SUFFIX], "$MODULE_SUFFIX", [platform module suffix])

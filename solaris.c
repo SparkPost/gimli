@@ -21,6 +21,8 @@ struct ps_prochandle {
   int status_fd; /* handle on /proc/pid/status */
   pstatus_t status;
   struct ps_prochandle *next;
+  auxv_t *auxv;
+  int naux;
 };
 
 static struct ps_prochandle targetph = {
@@ -29,6 +31,8 @@ static struct ps_prochandle targetph = {
 };
 static td_thragent_t *ta = NULL;
 static struct gimli_thread_state *cur_enum_thread = NULL;
+
+#define PR_OBJ_EVERY ((const char*)-1) /* search everything */
 
 ps_err_e ps_pcontinue(struct ps_prochandle *ph)
 {
@@ -125,7 +129,42 @@ ps_err_e ps_lsetregs(struct ps_prochandle *ph, lwpid_t lwpid,
 ps_err_e ps_pglobal_lookup(struct ps_prochandle *ph,
       const char *object_name, const char *sym_name, psaddr_t *sym_addr)
 {
-  struct gimli_symbol *sym = gimli_sym_lookup(object_name, sym_name);
+  struct gimli_symbol *sym;
+
+  if (object_name == PS_OBJ_EXEC) {
+    object_name = gimli_files->objname;
+  } else if (object_name == PS_OBJ_LDSO) {
+    long base = 0;
+    auxv_t *av;
+    struct gimli_object_mapping *m;
+
+    object_name = NULL;
+    for (av = targetph.auxv; av->a_type != AT_NULL; av++) {
+      if (av->a_type == AT_BASE) {
+        base = av->a_un.a_val;
+        break;
+      }
+    }
+
+    for (m = gimli_mappings; m; m = m->next) {
+      if (m->base == base) {
+        object_name = m->objfile->objname;
+      }
+    }
+  } else if (object_name == PR_OBJ_EVERY) {
+    struct gimli_object_file *f;
+
+    for (f = gimli_files; f; f = f->next) {
+      sym = gimli_sym_lookup(f->objname, sym_name);
+      if (sym) {
+        *sym_addr = (psaddr_t)sym->addr;
+        return PS_OK;
+      }
+      return PS_NOSYM;
+    }
+  }
+
+  sym = gimli_sym_lookup(object_name, sym_name);
   if (sym) {
     *sym_addr = (psaddr_t)sym->addr;
     return PS_OK;
@@ -182,13 +221,26 @@ ps_err_e ps_lgetregs(struct ps_prochandle *ph, lwpid_t lwpid,
   return PS_ERR;
 }
 
-static void user_regs_to_thread(prgregset_t ur,
+static void show_regs(prgregset_t regs)
+{
+#if 0
+  int i;
+  for (i = 0; i < NPRGREG ; i++) {
+    printf("reg: %d: %p\n", i, regs[i]);
+  }
+#endif
+}
+
+static void user_regs_to_thread(prgregset_t *ur,
   struct gimli_thread_state *thr)
 {
   memcpy(&thr->regs, ur, sizeof(*ur));
-  thr->fp = (void*)ur[R_FP];
-  thr->pc = (void*)ur[R_PC];
-  thr->sp = (void*)ur[R_SP];
+
+  thr->fp = (void*)thr->regs[R_FP];
+  thr->pc = (void*)thr->regs[R_PC];
+  thr->sp = (void*)thr->regs[R_SP];
+
+  show_regs(thr->regs);
 }
 
 static int enum_threads(const td_thrhandle_t *thr, void *unused)
@@ -214,12 +266,103 @@ static int enum_threads(const td_thrhandle_t *thr, void *unused)
     return 0;
   }
 
-  user_regs_to_thread(ur, th);
+  user_regs_to_thread(&ur, th);
   get_lwp_status(targetph.pid, info.ti_lid, &cur_enum_thread->lwpst);
 
   cur_enum_thread->lwpid = info.ti_lid;
   cur_enum_thread++;
   return 0;
+}
+
+ps_err_e ps_pglobal_sym(struct ps_prochandle *h,
+	const char *object_name, const char *sym_name, ps_sym_t *sym)
+{
+  return PS_NOSYM;
+}
+
+ps_err_e ps_pread(struct ps_prochandle *h,
+			psaddr_t addr, void *buf, size_t size)
+{
+  return gimli_read_mem((void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
+}
+
+ps_err_e ps_pwrite(struct ps_prochandle *h,
+			psaddr_t addr, const void *buf, size_t size)
+{
+  if (targetph.as_fd >= 0) {
+    ssize_t ret = pwrite(targetph.as_fd, buf, size, (intptr_t)addr);
+    return ret == size ? PS_OK : PS_BADADDR;
+  }
+  return PS_ERR;
+}
+
+ps_err_e ps_pauxv(struct ps_prochandle *h, const auxv_t **auxv)
+{
+  *auxv = targetph.auxv;
+  return PS_OK;
+}
+
+void ps_plog(const char *fmt, ...)
+{
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  va_end(ap);
+}
+
+static int collect_map(const rd_loadobj_t *obj, void *unused)
+{
+  char *name;
+
+  name = gimli_read_string((void*)obj->rl_nameaddr);
+  gimli_add_mapping(name, (void*)obj->rl_base, obj->rl_bend - obj->rl_base, 0);
+  free(name);
+
+  return 1;
+}
+
+ps_err_e ps_pdmodel(struct ps_prochandle *h, int *data_model)
+{
+  *data_model = targetph.status.pr_dmodel;
+  return PS_OK;
+}
+
+static int read_auxv(void)
+{
+  int fd, n;
+  char path[1024];
+  struct stat st;
+
+  snprintf(path, sizeof(path), "/proc/%d/auxv", targetph.pid);
+  fd = open(path, O_RDONLY);
+  if (fd == -1) {
+    return 0;
+  }
+  if (fstat(fd, &st) == 0 && st.st_size >= sizeof(auxv_t)) {
+    targetph.auxv = malloc(st.st_size + sizeof(auxv_t));
+
+    n = read(fd, targetph.auxv, st.st_size);
+    n /= sizeof(auxv_t);
+    if (n >= 1) {
+      targetph.auxv[n].a_type = AT_NULL;
+      targetph.auxv[n].a_un.a_val = 0L;
+      targetph.naux = n;
+    }
+  }
+  close(fd);
+}
+
+static void read_rtld_maps(void)
+{
+  rd_agent_t *agt;
+
+  if (!read_auxv()) {
+    return;
+  }
+
+  agt = rd_new(&targetph);
+  rd_loadobj_iter(agt, collect_map, NULL);
+  rd_reset(agt);
 }
 
 static void read_maps(void)
@@ -271,7 +414,7 @@ static void read_maps(void)
       gimli_add_mapping(target, (void*)m->pr_vaddr, m->pr_size, m->pr_offset);
     }
   }
-  
+
   free(maps);
 }
 
@@ -290,7 +433,7 @@ int gimli_attach(int pid)
     fprintf(stderr, "open(%s): %s\n", path, strerror(errno));
     goto err;
   }
-  
+
   snprintf(path, sizeof(path)-1, "/proc/%d/status", pid);
   targetph.status_fd = open(path, O_RDONLY);
   if (targetph.status_fd == -1) {
@@ -303,7 +446,7 @@ int gimli_attach(int pid)
     fprintf(stderr, "open(%s): %s\n", path, strerror(errno));
     goto err;
   }
- 
+
   /* now ask the process the stop */
   ctl[0] = PCDSTOP;
   ctl[1] = PCTWSTOP;
@@ -336,8 +479,6 @@ int gimli_attach(int pid)
   }
 #endif
 
-  read_maps();
-
   te = td_init();
   if (te != TD_OK) {
     fprintf(stderr, "td_init failed: %d\n", te);
@@ -360,11 +501,14 @@ int gimli_attach(int pid)
     }
   } else {
     gimli_threads = calloc(1, sizeof(*gimli_threads));
-    user_regs_to_thread(targetph.status.pr_lwp.pr_reg, &gimli_threads[0]);
+    user_regs_to_thread(&targetph.status.pr_lwp.pr_reg, &gimli_threads[0]);
     gimli_threads->lwpst = targetph.status.pr_lwp;
     gimli_nthreads = 1;
     gimli_threads->lwpid = pid;
   }
+
+  read_maps();
+  read_rtld_maps();
 
   return 1;
 
@@ -381,7 +525,7 @@ int gimli_detach(void)
 
     write(targetph.ctl_fd, ctl, sizeof(ctl));
   }
-  
+
   if (targetph.as_fd >= 0) {
     close(targetph.as_fd);
     targetph.as_fd = -1;
@@ -405,11 +549,52 @@ int gimli_init_unwind(struct gimli_unwind_cursor *cur,
   return 1;
 }
 
+#ifdef __sparc__
+static int read_gwindow(struct gimli_unwind_cursor *cur)
+{
+  char path[1024];
+  int fd, n, rv = 0;
+  struct stat64 st;
+  gwindows_t gwin;
+
+  snprintf(path, sizeof(path), "/proc/%d/lwp/%d/gwindows",
+    targetph.pid, cur->st.lwpid);
+
+  if (stat64(path, &st) == -1 || st.st_size == 0) {
+    return 0;
+  }
+
+  fd = open(path, O_RDONLY);
+  if (fd == -1) {
+    return 0;
+  }
+
+  /* zero out gwin, as we may get a partial read */
+  memset(&gwin, 0, sizeof(gwin));
+  n = read(fd, &gwin, sizeof(gwin));
+  if (n > 0) {
+    int i;
+
+    for (i = 0; i < gwin.wbcnt; i++) {
+      if (gwin.spbuf[i] == cur->st.fp) {
+        /* we found the frame we wanted */
+        memcpy(&cur->st.regs[R_L0], &gwin.wbuf[i], sizeof(struct rwindow));
+        rv = 1;
+        break;
+      }
+    }
+  }
+  close(fd);
+
+  return rv;
+}
+#endif
+
 int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 {
   struct frame frame;
   struct gimli_unwind_cursor c;
-  
+
   if (gimli_is_signal_frame(cur)) {
     ucontext_t uc;
 
@@ -438,11 +623,14 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
   }
 
   if (c.st.fp) {
+    *cur = c;
+
+#ifndef __sparc__
     if (gimli_read_mem(c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
       memset(&frame, 0, sizeof(frame));
     }
 
-    if (c.st.fp == frame.fr_savfp) {
+    if (c.st.fp == (void*)frame.fr_savfp) {
       return 0;
     }
     cur->st.fp = (void*)frame.fr_savfp;
@@ -452,17 +640,28 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
       cur->st.pc--;
     }
     cur->st.regs[R_FP] = (intptr_t)cur->st.fp;
-#ifdef __sparc__
+#else
     cur->st.regs[R_PC] = cur->st.regs[R_I7];
     cur->st.regs[R_nPC] = cur->st.regs[R_PC] + 4;
     memcpy(&cur->st.regs[R_O0], &cur->st.regs[R_I0], 8 * sizeof(prgreg_t));
-    cur->st.sp = (void*)cur->st.regs[R_FP] + STACK_BIAS;
-
-    if (cur->st.sp && gimli_read_mem(cur->st.sp, &cur->st.regs[R_L0],
-        sizeof(struct rwindow)) != sizeof(struct rwindow)) {
-      /* we should try to fill this data in via gwindow information */
-      fprintf(stderr, "unable to read rwindow @ %p\n", cur->st.sp);
+    show_regs(cur->st.regs);
+    if (cur->st.regs[R_FP] == 0) {
+      return 0;
     }
+
+    if (gimli_read_mem((void*)(cur->st.regs[R_FP] + STACK_BIAS),
+        &cur->st.regs[R_L0],
+        sizeof(struct rwindow)) != sizeof(struct rwindow)) {
+      /* try to fill this data in via gwindow information */
+      if (!read_gwindow(cur)) {
+        fprintf(stderr, "unable to read rwindow @ %p, and no gwindow\n",
+          cur->st.regs[R_FP]);
+      }
+    }
+    cur->st.fp = (void*)cur->st.regs[R_FP];
+    cur->st.pc = (void*)cur->st.regs[R_PC];
+    cur->st.sp = (void*)cur->st.regs[R_SP];
+    cur->dwarffail = 0;
 #endif
 
     if (cur->st.pc == 0 && cur->st.lwpst.pr_oldcontext) {

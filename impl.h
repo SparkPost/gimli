@@ -61,6 +61,7 @@
 #endif
 #if defined(sun) || defined(__FreeBSD__)
 #include <proc_service.h>
+#include <rtld_db.h>
 #endif
 #if defined(sun) || defined(__linux__) || defined(__FreeBSD__)
 #include <thread_db.h>
@@ -108,7 +109,7 @@ struct gimli_thread_state {
 #if defined(__linux__)
   struct user_regs_struct regs;
 #elif defined(sun)
-  gregset_t regs;
+  prgregset_t regs;
   lwpstatus_t lwpst; 
 #elif defined(__FreeBSD__)
   gregset_t regs;

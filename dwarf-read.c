@@ -1481,6 +1481,22 @@ static int do_before(
       }
     }
   }
+
+  /* ideally would like to factor this out somewhere nicer...
+   * When we see a siginfo_t, replace our usual render with a more terse
+   * and readable version; siginfo_t is quite a big structure with a lot
+   * of union fields that are quite noisy to read */
+  if (!strcmp(datatype, "siginfo_t *")) {
+    char namebuf[1024];
+    siginfo_t si;
+
+    if (gimli_read_mem(varaddr, &si, sizeof(si)) == sizeof(si)) {
+      gimli_render_siginfo(&si, namebuf, sizeof(namebuf));
+      printf("  siginfo_t *%s = %p\n    %s\n",
+          varname, varaddr, namebuf);
+      return 1;
+    }
+  }
   return 0;
 }
 
@@ -1994,9 +2010,10 @@ static int show_die(struct gimli_unwind_cursor *cur,
       default:
         printf("Unhandled location form %llx\n", location->form);
     }
-  } else {
-    printf("no location attribute for parameter %s die->offset=%llx %s\n",
-        name ? (char*)name->ptr : "?", die->offset, m->objfile->objname);
+  } else if (name) {
+    /* no location defined, so assume the compiler optimized it away */
+    printf("  %s <optimized out>\n", name->ptr);
+    return 1;
   }
 
   //printf("param: die offset %llx @ %p\n", die->offset, (void*)(intptr_t)res);

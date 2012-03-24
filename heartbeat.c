@@ -17,12 +17,8 @@ static volatile struct gimli_heartbeat *hb = NULL;
  */
 static void request_trace(void)
 {
-#ifdef sun
-  /* on Solaris, it seems STOP'ing yourself somehow prevents one's
-   * parent from getting a SIGCHLD, so we trigger one explicitly
-   * first */
-  kill(getppid(), SIGCHLD);
-#endif
+  /* ask parent to trace us */
+  kill(getppid(), SIGUSR2);
   /* go to sleep; parent gets notified that we stopped and initiates
    * a trace; it will resume us once tracing is complete */
   kill(getpid(), SIGSTOP);
