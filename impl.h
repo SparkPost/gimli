@@ -39,6 +39,9 @@
 #include <sys/stat.h>
 #include <sys/frame.h>
 #endif
+#ifdef __FreeBSD__
+#include <sys/procfs.h>
+#endif
 
 #ifdef __MACH__
 #include <stdbool.h>
@@ -53,14 +56,14 @@
 #include <mach-o/fat.h>
 #include <mach-o/dyld_images.h>
 #endif
-#ifdef __linux__
+#if defined(__linux__) || defined(__FreeBSD__)
 #include <sys/ptrace.h>
 #endif
-#ifdef sun
+#if defined(sun) || defined(__FreeBSD__)
 #include <proc_service.h>
 #include <rtld_db.h>
 #endif
-#if defined(sun) || defined(__linux__)
+#if defined(sun) || defined(__linux__) || defined(__FreeBSD__)
 #include <thread_db.h>
 #endif
 #include <stdarg.h>
@@ -108,6 +111,8 @@ struct gimli_thread_state {
 #elif defined(sun)
   prgregset_t regs;
   lwpstatus_t lwpst; 
+#elif defined(__FreeBSD__)
+  gregset_t regs;
 #elif defined(__MACH__) && defined(__x86_64__)
   x86_thread_state64_t regs;
 #elif defined(__MACH__)
@@ -202,6 +207,7 @@ extern int run_as_uid, run_as_gid;
 extern char *glider_path, *trace_dir, *gimli_progname, *pidfile, *arg0;
 extern char *log_file;
 extern int gimli_nthreads;
+extern int max_frames;
 extern struct gimli_thread_state *gimli_threads;
 extern struct gimli_object_file *gimli_files;
 extern struct gimli_object_mapping *gimli_mappings;
@@ -240,8 +246,10 @@ int gimli_hash_insert(gimli_hash_t h, const char *k, void *item);
 
 #if SIZEOF_VOIDP == 8
 # define PTRFMT "0x%016llx"
+# define PTRFMT_T uint64_t
 #else
 # define PTRFMT "0x%08lx"
+# define PTRFMT_T uint32_t
 #endif 
 
 int gimli_process_elf(struct gimli_object_file *f);
@@ -263,6 +271,9 @@ extern struct gimli_ana_api ana_api;
 int process_args(int *argc, char **argv[]);
 
 int gimli_demangle(const char *mangled, char *out, int out_size);
+
+int gimli_attach(int pid);
+int gimli_detach(void);
 
 const char *gimli_pc_sym_name(void *addr, char *buf, int buflen);
 int gimli_read_mem(void *src, void *dest, int len);

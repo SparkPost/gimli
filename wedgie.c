@@ -48,6 +48,7 @@ static void handler(int signo, siginfo_t *si, void *v)
 
 //  snprintf(buf, sizeof(buf)-1, "/opt/msys/gimli/bin/glider %d", getpid());
 //  snprintf(buf, sizeof(buf)-1, "gstack %d", getpid());
+  sleep(86400);
   system(buf);
   printf("exiting wedgie\n");
   exit(1);

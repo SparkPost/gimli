@@ -9,6 +9,7 @@
 
 /* http://www.omnigroup.com/mailman/archive/macosx-dev/2000-June/014178.html
  * http://web.mit.edu/darwin/src/modules/xnu/osfmk/man/vm_read.html
+ * http://developer.apple.com/library/mac/#documentation/Security/Conceptual/CodeSigningGuide/Procedures/Procedures.html#//apple_ref/doc/uid/TP40005929-CH4-SW1
  */
 
 #include <libgen.h>
@@ -646,7 +647,11 @@ int gimli_attach(int pid)
 "task_for_pid returned %d\n"
 "One resolution is to run the monitor or glider process with root privileges\n"
 "alternatively, if glider was codesigned at build time, you may use keychain\n"
-"to trust the signing certificate\n", rc);
+"to trust the signing certificate, so long as that certificate is placed in\n"
+"the System keychain.  For more informatio, see:\n"
+"http://sourceware.org/gdb/wiki/BuildingOnDarwin\n"
+"http://developer.apple.com/library/mac/#documentation/Security/Conceptual/CodeSigningGuide/Procedures/Procedures.html#//apple_ref/doc/uid/TP40005929-CH4-SW1\n"
+, rc);
     return 0;
   }
   got_task = 1;
@@ -886,19 +891,11 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
   }
   if (sigtramp && cur->st.pc >= sigtramp && cur->st.pc <= sigtramp + 0xff) {
 #if defined(__x86_64__)
-#if 0
-    /* riddle me this: why is this cur->st.fp here, but cur->st.fp + 4 in
-     * the unwind call? Is there some weird padding issue going on? */
-    struct gimli_kernel_sigframe64 *s = cur->st.fp;
-    fprintf(stderr, "is? SI addr is %p (diff=%x)\n", &s->si, (intptr_t)&s->si - (intptr_t)cur->st.fp);
-    gimli_read_mem(&s->si, &cur->si, sizeof(cur->si));
-#else
     if (gimli_read_mem(cur->st.fp + GIMLI_KERNEL_SIGINFO64,
         &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
       memset(&cur->si, 0, sizeof(cur->si));
     }
     return 1;
-#endif
 #elif defined(__i386__)
     struct gimli_kernel_sigframe32 *f = cur->st.fp;
     if (gimli_read_mem(&f->si, &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
