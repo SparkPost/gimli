@@ -486,6 +486,7 @@ struct gimli_object_mapping *gimli_add_mapping(
   struct gimli_object_mapping *m = calloc(1, sizeof(*m));
 
   m->next = proc->mappings;
+  m->proc = proc; // FIXME: refcnt
   m->base = base;
   m->len = len;
   if (debug) {

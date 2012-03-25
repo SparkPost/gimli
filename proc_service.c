@@ -34,11 +34,12 @@ typedef enum {
   PS_NOSYM,  /* Symbol not found */
   PS_NOFREGS,/* FPU regs not available */
 } ps_err_e;
-
+#endif
+#ifndef sun
 typedef gimli_addr_t paddr_t;
 #endif
 
-static void user_regs_to_thread(prgregset_t *ur,
+void gimli_user_regs_to_thread(prgregset_t *ur,
   struct gimli_thread_state *thr)
 {
   memcpy(&thr->regs, ur, sizeof(*ur));
@@ -57,6 +58,17 @@ static void user_regs_to_thread(prgregset_t *ur,
   thr->sp = (void*)thr->regs.esp;
   thr->fp = (void*)thr->regs.ebp;
 # endif
+#elif defined(__FreeBSD__)
+#ifdef __x86_64__
+  thr->pc = (void*)thr->regs.r_rip;
+  thr->sp = (void*)thr->regs.r_rsp;
+  thr->fp = (void*)thr->regs.r_rbp;
+#else
+# error consult machine/reg.h; probably just want ur->r_eip etc.
+  thr->pc = (void*)thr->regs.eip;
+  thr->sp = (void*)thr->regs.esp;
+  thr->fp = (void*)thr->regs.ebp;
+#endif
 #endif
 }
 
@@ -64,10 +76,17 @@ static void user_regs_to_thread(prgregset_t *ur,
 static int enum_threads(const td_thrhandle_t *thr, void *pp)
 {
   gimli_proc_t proc = pp;
-  struct gimli_thread_state *th = proc->cur_enum_thread;
+  struct gimli_thread_state *th;
   prgregset_t ur;
   int te;
   td_thrinfo_t info;
+
+#ifdef __FreeBSD__
+  proc->threads = realloc(proc->threads,
+      (proc->nthreads + 1) * sizeof(*proc->threads));
+  proc->cur_enum_thread = &proc->threads[proc->nthreads++];
+#endif
+  th = proc->cur_enum_thread;
 
   te = td_thr_get_info(thr, &info);
   if (TD_OK != te) {
@@ -101,7 +120,7 @@ static int enum_threads(const td_thrhandle_t *thr, void *pp)
     return 0;
   }
 
-  user_regs_to_thread(&ur, th);
+  gimli_user_regs_to_thread(&ur, th);
 #ifdef sun
   get_lwp_status(proc->pid, info.ti_lid, &proc->cur_enum_thread->lwpst);
 #endif
@@ -123,6 +142,31 @@ void gimli_proc_service_destroy(gimli_proc_t proc)
   }
 }
 
+#ifdef sun
+/* Note that FreeBSD has a similar interface, but it provides no apparent
+ * value over the ptrace facility that we use as a base */
+static int collect_map(const rd_loadobj_t *obj, void *pp)
+{
+  gimli_proc_t proc = pp;
+  char *name;
+
+  name = gimli_read_string((void*)obj->rl_nameaddr);
+  gimli_add_mapping(proc, name, (void*)obj->rl_base, obj->rl_bend - obj->rl_base, 0);
+  free(name);
+
+  return 1;
+}
+
+static void read_rtld_maps(gimli_proc_t proc)
+{
+  rd_agent_t *agt;
+
+  agt = rd_new(proc);
+  rd_loadobj_iter(agt, collect_map, proc);
+  rd_reset(agt);
+}
+#endif
+
 gimli_err_t gimli_proc_service_init(gimli_proc_t proc)
 {
   int i, done = 0;
@@ -139,21 +183,31 @@ gimli_err_t gimli_proc_service_init(gimli_proc_t proc)
     return GIMLI_ERR_THREAD_DEBUGGER_INIT_FAILED;
   }
   if (proc->ta) {
+#ifdef __FreeBSD__
+    /* no td_ta_get_nthreads on FreeBSD, so we realloc as
+     * we enumerate the threads */
+    td_ta_thr_iter(proc->ta, enum_threads, proc, TD_THR_ANY_STATE,
+      TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
+#else
     te = td_ta_get_nthreads(proc->ta, &proc->nthreads);
     if (te == TD_OK) {
       proc->threads = calloc(proc->nthreads, sizeof(*proc->threads));
       proc->cur_enum_thread = proc->threads;
       td_ta_thr_iter(proc->ta, enum_threads, proc, TD_THR_ANY_STATE,
         TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
+#ifdef __linux__
       proc->tdep.pids_to_detach = calloc(proc->nthreads, sizeof(int));
+#endif
     } else {
       fprintf(stderr, "td_ta_get_nthreads failed: %d\n", te);
     }
+#endif
 
   } else {
     proc->threads = calloc(1, sizeof(*proc->threads));
     proc->threads->lwpid = proc->pid;
     proc->nthreads = 1;
+
   }
 
 #if 0
@@ -162,7 +216,7 @@ gimli_err_t gimli_proc_service_init(gimli_proc_t proc)
       struct gimli_thread_state *thr = &proc->threads[i];
 
       if (ptrace(PTRACE_GETREGS, thr->lwpid, NULL, &ur) == 0) {
-        user_regs_to_thread(&ur, thr);
+        gimli_user_regs_to_thread(&ur, thr);
         done++;
       }
     }
@@ -172,6 +226,9 @@ gimli_err_t gimli_proc_service_init(gimli_proc_t proc)
     sleep(1);
     done = 0;
   }
+#endif
+#ifdef sun
+  read_rtld_maps(proc);
 #endif
 
   return GIMLI_ERR_OK;
@@ -192,25 +249,17 @@ ps_err_e ps_lgetfpregs(struct ps_prochandle *ph, lwpid_t lwpid, prfpregset_t *fp
   return PS_ERR;
 }
 
-ps_err_e ps_lgetregs(struct ps_prochandle *ph, lwpid_t lwpid, prgregset_t gregset)
-{
-  if (0 == gimli_ptrace(PTRACE_GETREGS, lwpid, NULL, gregset)) {
-    return PS_OK;
-  }
-  return PS_ERR;
-}
-
 pid_t ps_getpid(struct ps_prochandle *ph)
 {
   return ph->pid;
 }
 
 ps_err_e ps_pglobal_lookup(struct ps_prochandle *ph, const char *obj,
-  const char *name, paddr_t *symaddr)
+  const char *name, psaddr_t *symaddr)
 {
   struct gimli_symbol *sym = gimli_sym_lookup(ph, obj, name);
   if (sym) {
-    *symaddr = (paddr_t)sym->addr;
+    *symaddr = (psaddr_t)sym->addr;
     return PS_OK;
   }
   return PS_NOSYM;
@@ -224,6 +273,7 @@ ps_err_e ps_pglobal_sym(struct ps_prochandle *h,
 }
 #endif
 
+#ifndef __FreeBSD__
 int gimli_write_mem(gimli_proc_t proc, void *ptr, const void *buf, int len)
 {
   int ret = pwrite(proc->proc_mem, buf, len, (intptr_t)ptr);
@@ -237,6 +287,7 @@ int gimli_read_mem(gimli_proc_t proc, void *src, void *dest, int len)
   if (ret < 0) ret = 0;
   return ret;
 }
+#endif
 
 ps_err_e ps_pread(struct ps_prochandle *h,
 			psaddr_t addr, void *buf, size_t size)
@@ -262,6 +313,15 @@ ps_err_e ps_pdwrite(struct ps_prochandle *h, paddr_t addr,
   return gimli_write_mem(h, (void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
 }
 
+#ifdef __linux__
+ps_err_e ps_lgetregs(struct ps_prochandle *ph, lwpid_t lwpid, prgregset_t gregset)
+{
+  if (0 == gimli_ptrace(PTRACE_GETREGS, lwpid, NULL, gregset)) {
+    return PS_OK;
+  }
+  return PS_ERR;
+}
+#endif
 
 #ifdef sun
 ps_err_e ps_pauxv(struct ps_prochandle *h, const auxv_t **auxv)

@@ -257,24 +257,13 @@ static int enum_threads(const td_thrhandle_t *thr, void *unused)
   return 0;
 }
 
-static int collect_map(const rd_loadobj_t *obj, void *unused)
-{
-  char *name;
-
-  name = gimli_read_string((void*)obj->rl_nameaddr);
-  gimli_add_mapping(name, (void*)obj->rl_base, obj->rl_bend - obj->rl_base, 0);
-  free(name);
-
-  return 1;
-}
-
-static int read_auxv(void)
+static int read_auxv(gimli_proc_t proc)
 {
   int fd, n;
   char path[1024];
   struct stat st;
 
-  snprintf(path, sizeof(path), "/proc/%d/auxv", targetph.pid);
+  snprintf(path, sizeof(path), "/proc/%d/auxv", proc->pid);
   fd = open(path, O_RDONLY);
   if (fd == -1) {
     return 0;
@@ -291,19 +280,6 @@ static int read_auxv(void)
     }
   }
   close(fd);
-}
-
-static void read_rtld_maps(void)
-{
-  rd_agent_t *agt;
-
-  if (!read_auxv()) {
-    return;
-  }
-
-  agt = rd_new(&targetph);
-  rd_loadobj_iter(agt, collect_map, NULL);
-  rd_reset(agt);
 }
 
 static void read_maps(void)
@@ -419,6 +395,8 @@ int gimli_attach(int pid)
     goto err;
   }
 #endif
+
+  read_auxv(proc);
 
   te = td_init();
   if (te != TD_OK) {

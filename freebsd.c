@@ -6,30 +6,7 @@
 #ifdef __FreeBSD__
 #include "impl.h"
 
-static td_thragent_t *ta = NULL;
-struct ps_prochandle {
-  pid_t pid;
-};
-static struct ps_prochandle targetph = { -1 };
-
-static void user_regs_to_thread(prgregset_t ur,
-  struct gimli_thread_state *thr)
-{
-  memcpy(&thr->regs, ur, sizeof(*ur));
-#ifdef __x86_64__
-  thr->pc = (void*)ur->r_rip;
-  thr->sp = (void*)ur->r_rsp;
-  thr->fp = (void*)ur->r_rbp;
-#else
-# error consult machine/reg.h; probably just want ur->r_eip etc.
-  thr->pc = (void*)ur->eip;
-  thr->sp = (void*)ur->esp;
-  thr->fp = (void*)ur->ebp;
-#endif
-}
-
-
-int gimli_read_mem(void *src, void *dest, int len)
+int gimli_read_mem(gimli_proc_t proc, void *src, void *dest, int len)
 {
   struct ptrace_io_desc id;
 
@@ -39,11 +16,29 @@ int gimli_read_mem(void *src, void *dest, int len)
   id.piod_addr = dest;
   id.piod_len = len;
 
-  if (ptrace(PT_IO, targetph.pid, (caddr_t)&id, 0) == 0) {
+  if (ptrace(PT_IO, proc->pid, (caddr_t)&id, 0) == 0) {
     return id.piod_len;
   }
   fprintf(stdout, "readmem: unable to read %d bytes at %p: %s\n",
     len, src, strerror(errno));
+  return 0;
+}
+
+int gimli_write_mem(gimli_proc_t proc, void *target, const void *buf, int len)
+{
+  struct ptrace_io_desc id;
+
+  memset(&id, 0, sizeof(id));
+  id.piod_op = PIOD_WRITE_D;
+  id.piod_offs = target;
+  id.piod_addr = (void*)buf;
+  id.piod_len = len;
+
+  if (ptrace(PT_IO, proc->pid, (caddr_t)&id, 0) == 0) {
+    return id.piod_len;
+  }
+  fprintf(stdout, "writemem: unable to read %d bytes at %p: %s\n",
+    len, target, strerror(errno));
   return 0;
 }
 
@@ -79,11 +74,13 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 //printf("fp=%p sp=%p pc=%p\n", c.st.fp, c.st.sp, c.st.pc);
 
   if (c.st.fp) {
-    if (gimli_read_mem(c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
+    if (gimli_read_mem(cur->proc, c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
       memset(&frame, 0, sizeof(frame));
     }
-//    printf("read frame: fp=%p pc=%p\n", frame.next, frame.retpc);
-    if (c.st.fp == frame.next || frame.next == 0) return 0;
+ //   printf("read frame: fp=%p pc=%p\n", frame.next, frame.retpc);
+    if (c.st.fp == frame.next || frame.next == 0 || frame.retpc < 1024) {
+      return 0;
+    }
     cur->st.fp = frame.next;
     cur->st.pc = frame.retpc;
     if (cur->st.pc > 0 && !gimli_is_signal_frame(cur)) {
@@ -161,6 +158,7 @@ void *gimli_reg_addr(struct gimli_unwind_cursor *cur, int col)
   return 0;
 }
 
+#if 0
 static int enum_threads(const td_thrhandle_t *thr, void *unused)
 {
   struct gimli_thread_state *th;
@@ -194,8 +192,9 @@ static int enum_threads(const td_thrhandle_t *thr, void *unused)
   th->lwpid = info.ti_lid;
   return 0;
 }
+#endif
 
-static void read_maps(void)
+static void read_maps(gimli_proc_t proc)
 {
   struct ptrace_vm_entry map;
   char path[1024];
@@ -204,8 +203,8 @@ static void read_maps(void)
   map.pve_path = path;
   map.pve_pathlen = sizeof(path);
 
-  while (ptrace(PT_VM_ENTRY, targetph.pid, (caddr_t)&map, 0) == 0) {
-    gimli_add_mapping(map.pve_path, (void*)map.pve_start,
+  while (ptrace(PT_VM_ENTRY, proc->pid, (caddr_t)&map, 0) == 0) {
+    gimli_add_mapping(proc, map.pve_path, (void*)map.pve_start,
       map.pve_end, map.pve_offset);
 
     /* reset for next iteration */
@@ -213,28 +212,90 @@ static void read_maps(void)
   }
 }
 
+static child_stopped = 0;
 
-int gimli_attach(int pid)
+static void child_handler(int signo)
+{
+  int p;
+  int status;
+
+  child_stopped = 1;
+
+  p = waitpid(-1, &status, WNOHANG);
+}
+
+gimli_err_t gimli_attach(gimli_proc_t proc)
 {
   long ret;
   int status;
   td_err_e te;
-  struct reg ur;
   int i;
   int done = 0;
+  gimli_err_t err;
 
-  ret = ptrace(PT_ATTACH, pid, NULL, 0);
+  signal(SIGCHLD, child_handler);
+
+  ret = ptrace(PT_ATTACH, proc->pid, NULL, 0);
   if (ret != 0) {
-    fprintf(stderr, "PT_ATTACH: failed: %s\n",
-      strerror(errno));
+    int err = errno;
+
+    fprintf(stderr, "PTRACE_ATTACH: failed: %s\n",
+      strerror(err));
+
+    errno = err;
+
+    switch (err) {
+      case ESRCH:
+        return GIMLI_ERR_NO_PROC;
+      case EPERM:
+        return GIMLI_ERR_PERM;
+      default:
+        return GIMLI_ERR_CHECK_ERRNO;
+    }
     return 0;
   }
 
-  targetph.pid = pid;
   status = 0;
-  while (waitpid(pid, &status, 0) == -1 && errno == EINTR)
-    ;
+  for (i = 0; i < 60; i++) {
+    if (child_stopped) {
+      break;
+    }
 
+    if (waitpid(proc->pid, &status, WNOHANG) == proc->pid) {
+      child_stopped = 1;
+      break;
+    }
+
+    fprintf(stderr, "waiting for pid %d to stop\n", proc->pid);
+    sleep(1);
+  }
+  signal(SIGCHLD, SIG_DFL);
+  if (!child_stopped) {
+    fprintf(stderr, "child didn't stop in 60 seconds\n");
+    return GIMLI_ERR_TIMEOUT;
+  }
+
+  read_maps(proc);
+
+  err = gimli_proc_service_init(proc);
+
+  if (err != GIMLI_ERR_OK) {
+    return err;
+  }
+
+  /* if target is not multi-threaded, pick out its regs */
+  if (!proc->ta) {
+    struct reg ur;
+
+    if (ptrace(PT_GETREGS, proc->pid, (caddr_t)&ur, 0) == 0) {
+      gimli_user_regs_to_thread(&ur, proc->threads);
+    }
+  }
+
+  return GIMLI_ERR_OK;
+
+
+#if 0
   read_maps();
 
   te = td_init();
@@ -270,6 +331,7 @@ int gimli_attach(int pid)
   }
 
   return 1;
+#endif
 }
 
 static int resume_threads(const td_thrhandle_t *thr, void *unused)
@@ -278,14 +340,18 @@ static int resume_threads(const td_thrhandle_t *thr, void *unused)
   return 0;
 }
 
-int gimli_detach(void)
+gimli_err_t gimli_detach(gimli_proc_t proc)
 {
-  if (ta) {
-    td_ta_thr_iter(ta, resume_threads, NULL, TD_THR_ANY_STATE,
+  if (proc->ta) {
+    td_ta_thr_iter(proc->ta, resume_threads, NULL, TD_THR_ANY_STATE,
       TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
   }
 
-  return ptrace(PT_DETACH, targetph.pid, NULL, 0);
+  gimli_proc_service_destroy(proc);
+
+  ptrace(PT_DETACH, proc->pid, NULL, 0);
+
+  return GIMLI_ERR_OK;
 }
 
 int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
@@ -294,35 +360,6 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
     return 1;
   }
   return 0;
-}
-
-ps_err_e ps_lsetregs(struct ps_prochandle *ph, lwpid_t lwpid,
-         const prgregset_t gregset)
-{
-  return PS_ERR;
-}
-
-ps_err_e ps_pglobal_lookup(struct ps_prochandle *ph,
-      const char *object_name, const char *sym_name, psaddr_t *sym_addr)
-{
-  struct gimli_symbol *sym = gimli_sym_lookup(object_name, sym_name);
-  if (sym) {
-    *sym_addr = (psaddr_t)sym->addr;
-    return PS_OK;
-  }
-  return PS_NOSYM;
-}
-
-ps_err_e ps_lgetfpregs(struct ps_prochandle *ph, lwpid_t lwpid,
-      prfpregset_t *fpregset)
-{
-  return PS_ERR;
-}
-
-ps_err_e ps_lsetfpregs(struct ps_prochandle *ph, lwpid_t lwpid,
-      const prfpregset_t *fpregset)
-{
-  return PS_ERR;
 }
 
 ps_err_e ps_lstop(struct ps_prochandle *ph, lwpid_t lwpid)
@@ -349,30 +386,17 @@ ps_err_e ps_linfo(struct ps_prochandle *ph, lwpid_t lwpid, void *info)
   return PS_ERR;
 }
 
-ps_err_e ps_pread(struct ps_prochandle *ph, psaddr_t addr,
-  void *buf, size_t len)
-{
-  if (gimli_read_mem((void*)addr, buf, len) == len) {
-    return PS_OK;
-  }
-  return PS_ERR;
-}
-
-ps_err_e ps_pwrite(struct ps_prochandle *ph, psaddr_t addr, const void *buf,
-  size_t len)
-{
-  return PS_ERR;
-}
-
 ps_err_e ps_lgetregs(struct ps_prochandle *ph, lwpid_t lwpid,
       prgregset_t gregset)
 {
   td_thrhandle_t thr;
 
-  if (ta) {
+  printf("%s lwpid=%d\n", __FUNCTION__, lwpid);
+
+  if (ph->ta) {
     td_err_e te;
 
-    te = td_ta_map_lwp2thr(ta, lwpid, &thr);
+    te = td_ta_map_lwp2thr(ph->ta, lwpid, &thr);
     if (te != TD_OK) {
       fprintf(stderr, "map lwp2thr returned %d\n", te);
       return PS_ERR;

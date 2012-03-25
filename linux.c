@@ -518,7 +518,7 @@ gimli_err_t gimli_detach(gimli_proc_t proc)
 
   // FIXME: free all bits from tdep properly
 
-  return 0;
+  return GIMLI_ERR_OK;
 }
 
 #endif
