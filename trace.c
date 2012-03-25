@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2011 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2007-2012 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
