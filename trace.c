@@ -92,7 +92,7 @@ char *gimli_read_string(gimli_proc_t proc, void *addr)
 
   /* map in a block at a time and look for the terminator */
   cursor = addr;
-  err = gimli_proc_mem_ref(proc, addr, STRING_AT_ONCE, &ref);
+  err = gimli_proc_mem_ref(proc, (gimli_addr_t)addr, STRING_AT_ONCE, &ref);
   if (err != GIMLI_ERR_OK) {
     return NULL;
   }
@@ -116,7 +116,7 @@ char *gimli_read_string(gimli_proc_t proc, void *addr)
       }
       /* re-request a ref with the desired length */
       gimli_mem_ref_delete(ref);
-      err = gimli_proc_mem_ref(proc, addr, totlen + 1, &ref);
+      err = gimli_proc_mem_ref(proc, (gimli_addr_t)addr, totlen + 1, &ref);
       if (err != GIMLI_ERR_OK) {
         return NULL;
       }
@@ -128,7 +128,7 @@ char *gimli_read_string(gimli_proc_t proc, void *addr)
 
     /* didn't find the terminator; get the next chunk and examine */
     gimli_mem_ref_delete(ref);
-    err = gimli_proc_mem_ref(proc, cursor, STRING_AT_ONCE, &ref);
+    err = gimli_proc_mem_ref(proc, (gimli_addr_t)cursor, STRING_AT_ONCE, &ref);
   } while (err != GIMLI_ERR_OK);
   return NULL;
 }
@@ -156,7 +156,7 @@ static int calc_readability(const char *name)
   return value;
 }
 
-struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,
+struct gimli_symbol *find_symbol_for_addr(gimli_mapped_object_t f,
   void *addr)
 {
   struct gimli_symbol *csym, *best;
@@ -215,13 +215,46 @@ struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,
   return NULL;
 }
 
+static int sort_compare_mapping(const void *A, const void *B)
+{
+  struct gimli_object_mapping *a = *(struct gimli_object_mapping**)A;
+  struct gimli_object_mapping *b = *(struct gimli_object_mapping**)B;
+  int diff = (intptr_t)a->base - (intptr_t)b->base;
+
+  if (diff == 0) {
+    return a->len - b->len;
+  }
+  return diff;
+}
+
+static int search_compare_mapping(const void *addr, const void *L)
+{
+  struct gimli_object_mapping *m = *(struct gimli_object_mapping**)L;
+
+  if (addr < m->base) {
+    return -1;
+  }
+  if (addr < m->base + m->len) {
+    return 0;
+  }
+  return 1;
+}
+
 struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, void *addr)
 {
-  struct gimli_object_mapping *m;
-  for (m = proc->mappings; m; m = m->next) {
-    if (addr >= m->base && addr <= m->base + m->len) {
-      return m;
-    }
+  struct gimli_object_mapping **m;
+
+  if (proc->maps_changed) {
+    /* (re)sort the list of maps */
+    qsort(proc->mappings, proc->nmaps, sizeof(struct gimli_object_mapping*),
+        sort_compare_mapping);
+    proc->maps_changed = 0;
+  }
+
+  m = bsearch(addr, proc->mappings, proc->nmaps, sizeof(struct gimli_object_mapping*),
+      search_compare_mapping);
+  if (m) {
+    return *m;
   }
   return NULL;
 }
@@ -509,7 +542,6 @@ struct gimli_object_mapping *gimli_add_mapping(
 {
   struct gimli_object_mapping *m = calloc(1, sizeof(*m));
 
-  m->next = proc->mappings;
   m->proc = proc; // FIXME: refcnt
   m->base = base;
   m->len = len;
@@ -522,29 +554,33 @@ struct gimli_object_mapping *gimli_add_mapping(
   if (!m->objfile) {
     m->objfile = gimli_add_object(proc, objname, base);
   }
-  proc->mappings = m;
+
+  /* add to our collection */
+  proc->mappings = realloc(proc->mappings, (proc->nmaps + 1) * sizeof(m));
+  proc->mappings[proc->nmaps++] = m;
+  proc->maps_changed = 1;
+
   return m;
 }
 
-struct gimli_object_file *gimli_find_object(
+gimli_mapped_object_t gimli_find_object(
   gimli_proc_t proc,
   const char *objname)
 {
-  struct gimli_object_file *f;
+  gimli_mapped_object_t f;
 
   if (objname == NULL) {
     return proc->first_file;
   }
 
-  for (f = proc->files; f; f = f->next) {
-    if (!strcmp(f->objname, objname)) {
-      return f;
-    }
+  if (gimli_hash_find(proc->files, objname, (void**)&f)) {
+    return f;
   }
+
   return NULL;
 }
 
-struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
+struct gimli_symbol *gimli_add_symbol(gimli_mapped_object_t f,
   const char *name, void *addr, uint32_t size)
 {
   struct gimli_symbol *s;
@@ -579,7 +615,7 @@ struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
 static gimli_hash_iter_ret populate_symtab(
   const char *k, int klen, void *item, void *arg)
 {
-  struct gimli_object_file *f = arg;
+  gimli_mapped_object_t f = arg;
   struct gimli_symbol *s = item;
 
   f->symtab[s->ordinality] = s;
@@ -597,7 +633,7 @@ static int sort_syms_by_addr_asc(const void *A, const void *B)
   return a->addr - b->addr;
 }
 
-int gimli_bake_symtab(struct gimli_object_file *f)
+int gimli_bake_symtab(gimli_mapped_object_t f)
 {
   int i;
   struct gimli_symbol *s;
@@ -611,21 +647,22 @@ int gimli_bake_symtab(struct gimli_object_file *f)
     sort_syms_by_addr_asc);
 }
 
-struct gimli_object_file *gimli_add_object(
+gimli_mapped_object_t gimli_add_object(
   gimli_proc_t proc,
   const char *objname, void *base)
 {
-  struct gimli_object_file *f = gimli_find_object(proc, objname);
+  gimli_mapped_object_t f = gimli_find_object(proc, objname);
   struct gimli_symbol *sym;
   char *name = NULL;
+
   if (f) return f;
 
   f = calloc(1, sizeof(*f));
   f->objname = strdup(objname);
-  f->next = proc->files;
   f->symbols = gimli_hash_new(NULL);
   f->sections = gimli_hash_new(NULL);
-  proc->files = f;
+
+  gimli_hash_insert(proc->files, f->objname, f);
 
   if (proc->first_file == NULL) {
     proc->first_file = f;
@@ -649,66 +686,115 @@ struct gimli_object_file *gimli_add_object(
   return f;
 }
 
+static struct gimli_symbol *sym_lookup(gimli_mapped_object_t file,
+    const char *name)
+{
+  struct gimli_symbol *sym = NULL;
+
+  if (gimli_hash_find(file->symbols, name, (void**)&sym)) {
+    return sym;
+  }
+  return NULL;
+}
+
+struct find_sym {
+  const char *name;
+  gimli_mapped_object_t file;
+  struct gimli_symbol *sym;
+};
+
+static gimli_hash_iter_ret search_for_sym(const char *k, int klen,
+    void *item, void *arg)
+{
+  gimli_mapped_object_t file = item;
+  struct find_sym *find = arg;
+
+  find->sym = sym_lookup(file, find->name);
+  if (find->sym) return GIMLI_HASH_ITER_STOP;
+
+  return GIMLI_HASH_ITER_CONT;
+}
+
+static gimli_hash_iter_ret search_for_basename(const char *k, int klen,
+    void *item, void *arg)
+{
+  gimli_mapped_object_t file = item;
+  struct find_sym *find = arg;
+  char buf[1024];
+
+  strcpy(buf, file->objname);
+  if (!strcmp(basename(buf), find->name)) {
+    find->file = file;
+    return GIMLI_HASH_ITER_STOP;
+  }
+
+  return GIMLI_HASH_ITER_CONT;
+}
+
+static gimli_hash_iter_ret search_for_symlink(const char *k, int klen,
+    void *item, void *arg)
+{
+  gimli_mapped_object_t file = item;
+  struct find_sym *find = arg;
+  char dir[1024];
+  char buf[1024];
+  int len;
+
+  strcpy(dir, file->objname);
+  snprintf(buf, sizeof(buf)-1, "%s/%s", dirname(dir), find->name);
+  if (realpath(buf, dir)) {
+    if (!strcmp(dir, file->objname)) {
+      find->file = file;
+      return GIMLI_HASH_ITER_STOP;
+    }
+  }
+
+  return GIMLI_HASH_ITER_CONT;
+}
+
 struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const char *name)
 {
-  struct gimli_object_file *f;
+  gimli_mapped_object_t f;
   struct gimli_symbol *sym = NULL;
+  struct find_sym find;
+
+  find.name = name;
 
   /* if obj is NULL, we're looking for it anywhere we can find it */
   if (obj == NULL) {
-    for (f = proc->files; f; f = f->next) {
-      if (!gimli_hash_find(f->symbols, name, (void**)&sym)) {
-        sym = NULL;
-      }
-      if (debug) {
-        printf("sym_lookup: %s`%s => %p\n", obj, name, sym ? sym->addr : 0);
-      }
-      if (sym) {
-        return sym;
-      }
+    gimli_hash_iter(proc->files, search_for_sym, &find);
+    if (debug) {
+      printf("sym_lookup: %s => %p\n", name, sym ? sym->addr : 0);
     }
-    return NULL;
+    return find.sym;
   }
 
   f = gimli_find_object(proc, obj);
   if (!f) {
-    char buf[1024];
-
     /* we may have just been given the basename of the object, in which
      * case, we need to run through the list and match on basenames */
-    for (f = proc->files; f; f = f->next) {
-      strcpy(buf, f->objname);
-      if (!strcmp(basename(buf), obj)) {
-        break;
-      }
-    }
-    if (!f) {
+    find.file = NULL;
+    find.name = obj;
+    gimli_hash_iter(proc->files, search_for_basename, &find);
+    if (!find.file) {
       /* so maybe we were given the basename it refers to a symlink
        * that we need to resolve... */
-      for (f = proc->files; f; f = f->next) {
-        char dir[1024];
-        int len;
-
-        strcpy(dir, f->objname);
-        snprintf(buf, sizeof(buf)-1, "%s/%s", dirname(dir), obj);
-        if (realpath(buf, dir)) {
-          if (!strcmp(dir, f->objname)) {
-            break;
-          }
-        }
-      }
+      gimli_hash_iter(proc->files, search_for_symlink, &find);
     }
-    if (!f) {
+
+    if (!find.file) {
       return NULL;
     }
+    /* save the mapping */
+    gimli_hash_insert(proc->files, obj, find.file);
+    f = find.file;
   }
 
-  if (!gimli_hash_find(f->symbols, name, (void**)&sym)) {
-    sym = NULL;
-  }
+  sym = sym_lookup(f, name);
   if (debug) {
     printf("sym_lookup: %s`%s => %p\n", obj, name, sym ? sym->addr : 0);
   }
+
   return sym;
 }
 
@@ -720,17 +806,25 @@ static void detachatexit(void)
   }
 }
 
+static gimli_hash_iter_ret process_file(const char *k, int klen,
+    void *item, void *arg)
+{
+  gimli_mapped_object_t file = item;
+
+  gimli_process_dwarf(file);
+  gimli_bake_symtab(file);
+
+  return GIMLI_HASH_ITER_CONT;
+}
+
 int tracer_attach(int pid)
 {
   atexit(detachatexit);
   if (gimli_proc_attach(pid, &the_proc) == GIMLI_ERR_OK) {
-    struct gimli_object_file *file;
+    gimli_mapped_object_t file;
     populate_proc_stat(pid);
 
-    for (file = the_proc->files; file; file = file->next) {
-      gimli_process_dwarf(file);
-      gimli_bake_symtab(file);
-    }
+    gimli_hash_iter(the_proc->files, process_file, NULL);
     return 1;
   }
   return 0;

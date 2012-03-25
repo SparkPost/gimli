@@ -60,7 +60,7 @@ struct gimli_elf_ehdr {
   struct gimli_elf_shdr *sections;
   struct gimli_elf_ehdr *refelf;
   char *objname;
-  struct gimli_object_file *gobject;
+  gimli_mapped_object_t gobject;
   uint64_t vaddr;
 };
 

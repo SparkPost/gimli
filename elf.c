@@ -9,7 +9,7 @@
 static int for_each_symbol(struct gimli_elf_ehdr *elf,
   struct gimli_elf_symbol *sym, void *arg)
 {
-  struct gimli_object_file *f = arg;
+  gimli_mapped_object_t f = arg;
 
 #if 0
   /* ignore non-code symbols */
@@ -27,7 +27,7 @@ static int for_each_symbol(struct gimli_elf_ehdr *elf,
   return 0;
 }
 
-int gimli_process_elf(struct gimli_object_file *f)
+int gimli_process_elf(gimli_mapped_object_t f)
 {
   char altpath[1024];
 

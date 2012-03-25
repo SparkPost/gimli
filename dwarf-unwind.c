@@ -794,8 +794,8 @@ static int load_fde(struct gimli_object_mapping *m)
         char cie_key[32];
 
         /* add to the fdes table */
-        m->fdes = realloc(m->fdes, (m->num_fdes + 1) * sizeof(*fde));
-        fde = &m->fdes[m->num_fdes++];
+        m->objfile->fdes = realloc(m->objfile->fdes, (m->objfile->num_fdes + 1) * sizeof(*fde));
+        fde = &m->objfile->fdes[m->objfile->num_fdes++];
         memset(fde, 0, sizeof(*fde));
 
         /* locate our CIE; it may not be the last CIE preceeding this one */
@@ -851,7 +851,7 @@ static int load_fde(struct gimli_object_mapping *m)
   /* ensure that the fde data is sorted in ascending order so that
    * bsearch can be used correctly.  This should normally be the case,
    * but I don't trust the data to be that way in all situations */
-  qsort(m->fdes, m->num_fdes, sizeof(struct dw_fde), sort_compare_fde);
+  qsort(m->objfile->fdes, m->objfile->num_fdes, sizeof(struct dw_fde), sort_compare_fde);
 
   gimli_hash_destroy(cie_tbl);
   return 1;
@@ -887,11 +887,11 @@ static struct dw_fde *find_fde(gimli_proc_t proc, void *pc)
     return NULL;
   }
 
-  if (!m->fdes && !load_fde(m)) {
+  if (!m->objfile->fdes && !load_fde(m)) {
     return NULL;
   }
 
-  fde = bsearch(&pc, m->fdes, m->num_fdes, sizeof(*fde), search_compare_fde);
+  fde = bsearch(&pc, m->objfile->fdes, m->objfile->num_fdes, sizeof(*fde), search_compare_fde);
   if (fde) {
     return fde;
   }

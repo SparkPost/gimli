@@ -256,6 +256,7 @@ gimli_err_t gimli_proc_service_init(gimli_proc_t proc)
     td_ta_thr_iter(proc->ta, enum_threads1, proc, TD_THR_ANY_STATE,
       TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
 
+    nthreads = 0;
     STAILQ_FOREACH(thr, &proc->threads, threadlist) {
       nthreads++;
     }

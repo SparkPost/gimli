@@ -74,6 +74,11 @@
 #endif
 #include <stdarg.h>
 #include <dlfcn.h>
+
+struct gimli_mapped_object;
+typedef struct gimli_mapped_object *gimli_mapped_object_t;
+
+
 #ifdef __MACH__
 #include "gimli_macho.h"
 #else
@@ -153,9 +158,9 @@ struct gimli_line_info {
 };
 
 #ifdef __MACH__
-typedef struct gimli_macho_object gimli_object_file_t;
+typedef struct gimli_macho_object *gimli_object_file_t;
 #else
-typedef struct gimli_elf_ehdr gimli_object_file_t;
+typedef struct gimli_elf_ehdr *gimli_object_file_t;
 #endif
 
 struct gimli_section_data {
@@ -164,20 +169,27 @@ struct gimli_section_data {
   uint64_t size;
   uint64_t offset;
   uint64_t addr;
-  gimli_object_file_t *container;
+  gimli_object_file_t container;
 };
 
 struct gimli_section_data *gimli_get_section_by_name(
-  gimli_object_file_t *elf, const char *name);
+  gimli_object_file_t elf, const char *name);
 
-struct gimli_object_file {
+struct gimli_object_mapping {
+  gimli_proc_t proc;
+  void *base;
+  unsigned long len;
+  unsigned long offset;
+  gimli_mapped_object_t objfile;
+};
+
+struct gimli_mapped_object {
   char *objname;
-  struct gimli_object_file *next;
-  int fd;
+
   /* primary object for the mapped module */
-  gimli_object_file_t *elf;
+  gimli_object_file_t elf;
   /* alternate object containing aux debug info */
-  gimli_object_file_t *aux_elf;
+  gimli_object_file_t aux_elf;
 
   gimli_hash_t symbols; /* symname => gimli_symbol */
   struct gimli_symbol **symtab;
@@ -188,25 +200,18 @@ struct gimli_object_file {
 
   struct gimli_line_info *lines;
   uint64_t linecount;
+  
+  struct dw_fde *fdes;
+  unsigned int num_fdes;
+
+  struct dw_die_arange *arange;
+  unsigned int num_arange;
 
   gimli_hash_t dies; /* offset-string => gimli_dwarf_die */
   struct gimli_dwarf_die *first_die;
   struct gimli_ana_module *tracer_module;
 
   gimli_hash_t sections; /* sectname => gimli_section_data */
-};
-
-struct gimli_object_mapping {
-  gimli_proc_t proc;
-  struct gimli_object_mapping *next;
-  void *base;
-  unsigned long len;
-  unsigned long offset;
-  struct gimli_object_file *objfile;
-  struct dw_fde *fdes;
-  unsigned int num_fdes;
-  struct dw_die_arange *arange;
-  unsigned int num_arange;
 };
 
 #ifdef __linux__
@@ -250,12 +255,17 @@ struct gimli_proc {
 
   /** list of threads */
   STAILQ_HEAD(threadlist, gimli_thread_state) threads;
+  /** set of mapped objects; name => gimli_mapped_object_t */
+  gimli_hash_t files;
+  /** the primary object for the process */
+  gimli_mapped_object_t first_file;
+  /** address space mappings; maintained in sorted
+   * order so that we can bsearch it */
+  struct gimli_object_mapping **mappings;
+  int nmaps;
+  int maps_changed;
 
-  struct gimli_object_file *files;
-  struct gimli_object_file *first_file;
-  struct gimli_object_mapping *mappings;
-
-  /* TODO: bits here to track page-by-page mappings */
+  /* TODO: bits here to track page-by-page ref mappings in the target */
 };
 
 struct gimli_mem_ref {
@@ -312,12 +322,12 @@ struct gimli_object_mapping *gimli_add_mapping(
   unsigned long offset);
 struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, void *addr);
 
-struct gimli_object_file *gimli_add_object(
+gimli_mapped_object_t gimli_add_object(
   gimli_proc_t proc,
   const char *objname, void *base);
-struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
+struct gimli_symbol *gimli_add_symbol(gimli_mapped_object_t f,
   const char *name, void *addr, uint32_t size);
-struct gimli_object_file *gimli_find_object(
+gimli_mapped_object_t gimli_find_object(
   gimli_proc_t proc,
   const char *objname);
 
@@ -329,8 +339,8 @@ struct gimli_object_file *gimli_find_object(
 # define PTRFMT_T uint32_t
 #endif
 
-int gimli_process_elf(struct gimli_object_file *f);
-int gimli_process_dwarf(struct gimli_object_file *f);
+int gimli_process_elf(gimli_mapped_object_t f);
+int gimli_process_dwarf(gimli_mapped_object_t f);
 int gimli_unwind_next(struct gimli_unwind_cursor *cur);
 int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur);
 int gimli_dwarf_regs_to_thread(struct gimli_unwind_cursor *cur);
@@ -361,7 +371,7 @@ struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const 
 char *gimli_read_string(gimli_proc_t proc, void *addr);
 int gimli_get_parameter(void *context, const char *varname,
   const char **datatype, void **addr, uint64_t *size);
-extern struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,
+extern struct gimli_symbol *find_symbol_for_addr(gimli_mapped_object_t f,
   void *addr);
 struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode);

@@ -93,7 +93,7 @@ int dw_read_encptr(gimli_proc_t proc,
       break;
     case DW_EH_PE_datarel:
     default:
-      fprintf(stderr, "DWARF: unhandled pointer application value: %02x at %p\n", enc & DW_EH_PE_APPL_MASK, pc);
+      fprintf(stderr, "DWARF: unhandled pointer application value: %02x at %p\n", enc & DW_EH_PE_APPL_MASK, (void*)pc);
       return 0;
   }
 
@@ -161,7 +161,7 @@ int dw_read_encptr(gimli_proc_t proc,
       }
       break;
     default:
-      fprintf(stderr, "DWARF: unhandled DW_EH_PE value: 0x%02x (masked to 0x%02x) at %p\n", enc, enc & 0x0f, pc);
+      fprintf(stderr, "DWARF: unhandled DW_EH_PE value: 0x%02x (masked to 0x%02x) at %p\n", enc, enc & 0x0f, (void*)pc);
       return 0;
   }
 
@@ -197,7 +197,7 @@ int dwarf_determine_source_line_number(gimli_proc_t proc,
   uint64_t *lineno)
 {
   struct gimli_object_mapping *m;
-  struct gimli_object_file *f;
+  gimli_mapped_object_t f;
   struct gimli_line_info *linfo;
 
   m = gimli_mapping_for_addr(proc, pc);
@@ -225,7 +225,7 @@ int dwarf_determine_source_line_number(gimli_proc_t proc,
 }
 
 
-static int process_line_numbers(struct gimli_object_file *f)
+static int process_line_numbers(gimli_mapped_object_t f)
 {
   struct gimli_section_data *s = NULL;
   struct {
@@ -547,7 +547,7 @@ static int process_line_numbers(struct gimli_object_file *f)
   return 0;
 }
 
-int gimli_process_dwarf(struct gimli_object_file *f)
+int gimli_process_dwarf(gimli_mapped_object_t f)
 {
   /* pull out additional information from dwarf debugging information.
    * In particular, we can scan the .debug_info section to resolve
@@ -582,8 +582,8 @@ static void local_hexdump(void *addr, int p, int n)
   }
 }
 
-static int get_sect_data(struct gimli_object_file *f, const char *name,
-  const uint8_t **startptr, const uint8_t **endptr, gimli_object_file_t **elf)
+static int get_sect_data(gimli_mapped_object_t f, const char *name,
+  const uint8_t **startptr, const uint8_t **endptr, gimli_object_file_t *elf)
 {
   const uint8_t *data = NULL, *end = NULL;
   struct gimli_section_data *s;
@@ -622,7 +622,7 @@ static int get_sect_data(struct gimli_object_file *f, const char *name,
 int dw_calc_location(struct gimli_unwind_cursor *cur,
   uint64_t compilation_unit_base_addr,
   struct gimli_object_mapping *m, uint64_t offset, uint64_t *res,
-  gimli_object_file_t *elf, int *is_stack)
+  gimli_object_file_t elf, int *is_stack)
 {
   const uint8_t *data, *end;
   void *rstart = NULL, *rend = NULL;
@@ -705,7 +705,7 @@ static const uint8_t *find_abbr(const uint8_t *abbr, const uint8_t *end,
 static uint64_t get_value(uint64_t form, uint64_t addr_size, int is_64,
   const uint8_t **datap, const uint8_t *end,
   uint64_t *vptr, const uint8_t **byteptr,
-  gimli_object_file_t *elf)
+  gimli_object_file_t elf)
 {
   uint64_t u64;
   int64_t s64;
@@ -886,7 +886,7 @@ static struct gimli_dwarf_die *process_die(
   const uint8_t **datap, const uint8_t *end,
   const uint8_t *abbrstart, const uint8_t *abbrend,
   int is_64, uint8_t addr_size,
-  gimli_object_file_t *elf,
+  gimli_object_file_t elf,
   gimli_hash_t diehash
 )
 {
@@ -997,13 +997,13 @@ static struct gimli_dwarf_die *process_die(
 }
 
 struct gimli_dwarf_die *gimli_dwarf_get_die(
-  struct gimli_object_file *f,
+  gimli_mapped_object_t f,
   uint64_t offset)
 {
   const uint8_t *data, *datastart, *end, *next;
   const uint8_t *abbr, *abbrstart, *abbrend;
   const uint8_t *cuend, *custart;
-  gimli_object_file_t *elf = NULL;
+  gimli_object_file_t elf = NULL;
   uint64_t initlen;
   uint32_t len32;
   uint16_t ver;
@@ -1025,9 +1025,12 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
     data = datastart;
 
     if (!gimli_object_is_executable(f->elf)) {
+      int i;
       struct gimli_object_mapping *m;
 
-      for (m = the_proc->mappings; m; m = m->next) {
+      for (i = 0; i < the_proc->nmaps; i++) {
+        m = the_proc->mappings[i];
+
         if (m->objfile == f) {
           reloc = (uint64_t)(intptr_t)m->base; // FIXME: abstract this out
         }
@@ -1151,7 +1154,7 @@ static int load_arange(struct gimli_object_mapping *m)
 {
   struct gimli_section_data *s = NULL;
   const uint8_t *data, *end, *next;
-  gimli_object_file_t *elf = NULL;
+  gimli_object_file_t elf = NULL;
   uint64_t reloc = 0;
   uint32_t len32;
   int is_64 = 0;
@@ -1239,8 +1242,8 @@ static int load_arange(struct gimli_object_mapping *m)
 
       addr += reloc;
 
-      m->arange = realloc(m->arange, (m->num_arange + 1) * sizeof(*arange));
-      arange = &m->arange[m->num_arange++];
+      m->objfile->arange = realloc(m->objfile->arange, (m->objfile->num_arange + 1) * sizeof(*arange));
+      arange = &m->objfile->arange[m->objfile->num_arange++];
       arange->addr = (uint64_t)(intptr_t)addr;
       arange->len = l;
       arange->di_offset = di_offset;
@@ -1251,7 +1254,7 @@ static int load_arange(struct gimli_object_mapping *m)
   }
 
   /* ensure ascending order */
-  qsort(m->arange, m->num_arange, sizeof(struct dw_die_arange),
+  qsort(m->objfile->arange, m->objfile->num_arange, sizeof(struct dw_die_arange),
       sort_compare_arange);
 
   return 1;
@@ -1290,11 +1293,11 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
     return NULL;
   }
 
-  if (!m->arange && !load_arange(m)) {
+  if (!m->objfile->arange && !load_arange(m)) {
     return NULL;
   }
 
-  arange = bsearch(cur, m->arange, m->num_arange, sizeof(*arange),
+  arange = bsearch(cur, m->objfile->arange, m->objfile->num_arange, sizeof(*arange),
       search_compare_arange);
   if (arange) {
     die = gimli_dwarf_get_die(m->objfile, arange->di_offset);
@@ -1329,7 +1332,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
   return NULL;
 }
 
-const char *gimli_dwarf_resolve_type_name(struct gimli_object_file *f,
+const char *gimli_dwarf_resolve_type_name(gimli_mapped_object_t f,
   struct gimli_dwarf_attr *type)
 {
   struct gimli_dwarf_die *td, *kid;
@@ -1471,8 +1474,9 @@ static int do_before(
     const char *datatype, const char *varname,
     void *varaddr, uint64_t varsize)
 {
-  struct gimli_object_file *file;
+  gimli_mapped_object_t file;
 
+#if 0
   for (file = cur->proc->files; file; file = file->next) {
     if (file->tracer_module &&
         file->tracer_module->api_version >= 2 &&
@@ -1485,6 +1489,7 @@ static int do_before(
       }
     }
   }
+#endif
 
   /* ideally would like to factor this out somewhere nicer...
    * When we see a siginfo_t, replace our usual render with a more terse
@@ -1510,8 +1515,9 @@ static int do_after(
     const char *datatype, const char *varname,
     void *varaddr, uint64_t varsize)
 {
-  struct gimli_object_file *file;
+  gimli_mapped_object_t file;
 
+#if 0
   for (file = cur->proc->files; file; file = file->next) {
     if (file->tracer_module &&
         file->tracer_module->api_version >= 2 &&
@@ -1521,6 +1527,7 @@ static int do_after(
           cur->st.pc, (void*)cur, datatype, varname, varaddr, varsize);
     }
   }
+#endif
   return 0;
 }
 
@@ -1576,7 +1583,7 @@ done:
 }
 
 static int show_param(struct gimli_unwind_cursor *cur,
-  struct gimli_object_file *f,
+  gimli_mapped_object_t f,
   struct gimli_dwarf_attr *type, void *addr, int is_stack,
   const char *name, const char *type_name,
   int indent, int mask, int shift)
@@ -1812,7 +1819,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
               && size == 1) {
             /* smells like a string */
             printf(" ");
-            print_quoted_string(cur->proc, addr);
+            print_quoted_string(cur->proc, (gimli_addr_t)addr);
           } else if (indent < 6) {
             snprintf(namebuf, sizeof(namebuf)-1, "%p", addr);
             if (!gimli_hash_find(derefed_params, namebuf, NULL)) {

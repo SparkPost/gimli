@@ -165,7 +165,7 @@ const char *gimli_get_section_data(struct gimli_elf_ehdr *elf, int section)
 }
 
 struct gimli_section_data *gimli_get_section_by_name(
-  gimli_object_file_t *elf, const char *name)
+  gimli_object_file_t elf, const char *name)
 {
   struct gimli_section_data *data;
   struct gimli_elf_shdr *shdr;

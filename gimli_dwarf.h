@@ -401,14 +401,14 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
   uint64_t frame_base, uint64_t *result, uint64_t *prepopulate,
   int *is_stack);
 
-struct gimli_dwarf_die *gimli_dwarf_get_die(struct gimli_object_file *f,
+struct gimli_dwarf_die *gimli_dwarf_get_die(gimli_mapped_object_t f,
   uint64_t offset);
 
 struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
   struct gimli_unwind_cursor *cur);
 struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode);
-const char *gimli_dwarf_resolve_type_name(struct gimli_object_file *f,
+const char *gimli_dwarf_resolve_type_name(gimli_mapped_object_t f,
   struct gimli_dwarf_attr *type);
 int gimli_dwarf_read_value(gimli_proc_t proc, void *addr, int is_stack, void *out, uint64_t size);
 

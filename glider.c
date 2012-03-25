@@ -5,6 +5,49 @@
  */
 #include "impl.h"
 
+/* perform discovery of tracer module */
+static gimli_hash_iter_ret load_modules_for_file(const char *k, int klen,
+    void *item, void *arg)
+{
+  gimli_mapped_object_t file = item;
+
+  struct gimli_symbol *sym;
+  char *name = NULL;
+  char buf[1024];
+  char buf2[1024];
+  void *h;
+
+  sym = gimli_sym_lookup(the_proc, file->objname, "gimli_tracer_module_name");
+  if (sym) {
+    name = gimli_read_string(the_proc, sym->addr);
+  }
+  if (name == NULL) {
+    strcpy(buf, file->objname);
+    snprintf(buf2, sizeof(buf2)-1, "gimli_%s", basename(buf));
+    name = strdup(buf2);
+  }
+  strcpy(buf, file->objname);
+  snprintf(buf2, sizeof(buf2)-1, "%s/%s", dirname(buf), name);
+
+  if (access(buf2, F_OK) == 0) {
+    h = dlopen(buf2, RTLD_NOW|RTLD_GLOBAL);
+    if (h) {
+      gimli_module_init_func func = (gimli_module_init_func)
+        dlsym(h, "gimli_ana_init");
+      if (func) {
+        file->tracer_module = (*func)(&ana_api);
+      }
+    } else {
+      printf("Unable to load library: %s: %s\n", buf2, dlerror());
+    }
+  } else if (sym) {
+    printf("NOTE: module %s declared that its tracing should be performed by %s, but that module was not found (%s)\n",
+        file->objname, buf2, strerror(errno));
+  }
+
+  return GIMLI_HASH_ITER_CONT;
+}
+
 void trace_process(int pid)
 {
   if (tracer_attach(pid)) {
@@ -30,43 +73,7 @@ void trace_process(int pid)
       fprintf(stderr, "Not enough memory to trace %d frames\n", max_frames);
       goto out;
     }
-    for (file = the_proc->files; file; file = file->next) {
-      /* perform discovery of tracer module */
-      struct gimli_symbol *sym;
-      char *name = NULL;
-      char buf[1024];
-      char buf2[1024];
-      void *h;
-
-      sym = gimli_sym_lookup(the_proc, file->objname, "gimli_tracer_module_name");
-      if (sym) {
-        name = gimli_read_string(the_proc, sym->addr);
-      }
-      if (name == NULL) {
-        strcpy(buf, file->objname);
-        snprintf(buf2, sizeof(buf2)-1, "gimli_%s", basename(buf));
-        name = strdup(buf2);
-      }
-      strcpy(buf, file->objname);
-      snprintf(buf2, sizeof(buf2)-1, "%s/%s", dirname(buf), name);
-
-      if (access(buf2, F_OK) == 0) {
-        h = dlopen(buf2, RTLD_NOW|RTLD_GLOBAL);
-        if (h) {
-          gimli_module_init_func func = (gimli_module_init_func)
-            dlsym(h, "gimli_ana_init");
-          if (func) {
-            file->tracer_module = (*func)(&ana_api);
-          }
-        } else {
-          printf("Unable to load library: %s: %s\n", buf2, dlerror());
-        }
-      } else if (sym) {
-        printf("NOTE: module %s declared that its tracing should be performed by %s, but that module was not found (%s)\n",
-            file->objname, buf2, strerror(errno));
-      }
-
-    }
+    gimli_hash_iter(the_proc->files, load_modules_for_file, NULL);
 
     STAILQ_FOREACH(thr, &the_proc->threads, threadlist) {
       int nframes = gimli_stack_trace(the_proc, thr, frames, max_frames);
@@ -78,6 +85,7 @@ void trace_process(int pid)
         contexts[nf] = &frames[nf];
       }
 
+#if 0
       for (file = the_proc->files; file; file = file->next) {
         if (file->tracer_module &&
             file->tracer_module->api_version >= 2 &&
@@ -90,11 +98,13 @@ void trace_process(int pid)
           }
         }
       }
+#endif
 
       if (!suppress) {
         printf("Thread %d (LWP %d)\n", i, thr->lwpid);
         for (nf = 0; nf < nframes; nf++) {
           suppress = 0;
+#if 0
           for (file = the_proc->files; file; file = file->next) {
             if (file->tracer_module &&
                 file->tracer_module->api_version >= 2 &&
@@ -107,9 +117,11 @@ void trace_process(int pid)
               }
             }
           }
+#endif
           if (!suppress) {
             gimli_render_frame(i, nf, frames + nf);
 
+#if 0
             for (file = the_proc->files; file; file = file->next) {
               if (file->tracer_module &&
                   file->tracer_module->api_version >= 2 &&
@@ -118,8 +130,10 @@ void trace_process(int pid)
                       file->objname, i, nf, pcaddrs[nf], contexts[nf]);
               }
             }
+#endif
           }
         }
+#if 0
         for (file = the_proc->files; file; file = file->next) {
           if (file->tracer_module &&
               file->tracer_module->api_version >= 2 &&
@@ -128,12 +142,14 @@ void trace_process(int pid)
                 file->objname, i, nframes, pcaddrs, contexts);
           }
         }
+#endif
         printf("\n");
       }
     }
 
     printf("\n");
 
+#if 0
     for (file = the_proc->files; file; file = file->next) {
       if (file->tracer_module == NULL) continue;
 
@@ -141,6 +157,7 @@ void trace_process(int pid)
         file->tracer_module->perform_trace(&ana_api, file->objname);
       }
     }
+#endif
 
   }
 out:
