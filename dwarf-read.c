@@ -1495,7 +1495,7 @@ static int do_before(
     siginfo_t si;
 
     if (gimli_read_mem(cur->proc, varaddr, &si, sizeof(si)) == sizeof(si)) {
-      gimli_render_siginfo(&si, namebuf, sizeof(namebuf));
+      gimli_render_siginfo(cur->proc, &si, namebuf, sizeof(namebuf));
       printf("  siginfo_t *%s = %p\n    %s\n",
           varname, varaddr, namebuf);
       return 1;

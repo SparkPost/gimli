@@ -226,12 +226,16 @@ ps_err_e ps_pglobal_sym(struct ps_prochandle *h,
 
 int gimli_write_mem(gimli_proc_t proc, void *ptr, const void *buf, int len)
 {
-  return pwrite(proc->proc_mem, buf, len, (intptr_t)ptr) == len ? PS_OK : PS_BADADDR;
+  int ret = pwrite(proc->proc_mem, buf, len, (intptr_t)ptr);
+  if (ret < 0) ret = 0;
+  return ret;
 }
 
 int gimli_read_mem(gimli_proc_t proc, void *src, void *dest, int len)
 {
-  return pread(proc->proc_mem, dest, len, (intptr_t)src);
+  int ret = pread(proc->proc_mem, dest, len, (intptr_t)src);
+  if (ret < 0) ret = 0;
+  return ret;
 }
 
 ps_err_e ps_pread(struct ps_prochandle *h,

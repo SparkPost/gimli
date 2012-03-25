@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2009 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2007-2012 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
@@ -31,23 +31,7 @@ struct gimli_kernel_ucontext { /* from asm/ucontext.h */
   void *pad;
 };
 
-struct gimli_kernel_rt_sigframe {
-//  char *pretcode;
-  struct gimli_kernel_ucontext uc;
-  struct siginfo si;
-};
-
 #endif
-
-/* this is the linux proc_service style interface.
- * thread_db library routines require that we export these functions
- */
-
-static void user_regs_to_thread(struct user_regs_struct *ur,
-  struct gimli_thread_state *thr)
-{
-  memcpy(&thr->regs, ur, sizeof(*ur));
-}
 
 long gimli_ptrace(int cmd, int pid, void *addr, void *data)
 {

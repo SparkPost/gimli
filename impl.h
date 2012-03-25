@@ -361,6 +361,7 @@ extern struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,
 struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode);
 gimli_err_t gimli_proc_service_init(gimli_proc_t proc);
+int gimli_render_siginfo(gimli_proc_t proc, siginfo_t *si, char *buf, size_t bufsize);
 
 #ifdef __cplusplus
 }
