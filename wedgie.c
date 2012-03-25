@@ -99,9 +99,20 @@ static void func_two(void)
   printf("func_one called\n");
 }
 
+static void* idle_thread(void *arg)
+{
+  for (;;) {
+    sleep(10);
+    printf("idle thread is idle\n");
+  }
+  return NULL;
+}
+
 int main(int argc, char *argv[])
 {
   pthread_mutex_t m;
+  pthread_t thr;
+
   pthread_mutex_init(&m, NULL);
   if ((hb = gimli_heartbeat_attach())) {
     fprintf(stderr, "heartbeat activated\n");
@@ -117,6 +128,9 @@ int main(int argc, char *argv[])
 #endif
 //    signal(SIGSEGV, handler);
   }
+
+  pthread_create(&thr, NULL, idle_thread, NULL);
+
   fprintf(stderr, "calling func_two\n");
   fflush(stderr);
   func_two();

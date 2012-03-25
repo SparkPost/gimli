@@ -74,6 +74,7 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 //printf("fp=%p sp=%p pc=%p\n", c.st.fp, c.st.sp, c.st.pc);
 
   if (c.st.fp) {
+    *cur = c;
     if (gimli_read_mem(cur->proc, c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
       memset(&frame, 0, sizeof(frame));
     }
@@ -90,6 +91,8 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
     cur->st.regs.ebp = (intptr_t)cur->st.fp;
 #elif defined(__x86_64__)
     cur->st.regs.r_rbp = (intptr_t)cur->st.fp;
+    cur->st.regs.r_rip = (intptr_t)cur->st.pc;
+    cur->st.regs.r_rsp = (intptr_t)cur->st.sp;
 #endif
     return 1;
   }
@@ -286,67 +289,18 @@ gimli_err_t gimli_attach(gimli_proc_t proc)
   /* if target is not multi-threaded, pick out its regs */
   if (!proc->ta) {
     struct reg ur;
+    struct gimli_thread_state *thr = gimli_proc_thread_by_lwpid(proc, proc->pid, 0);
 
     if (ptrace(PT_GETREGS, proc->pid, (caddr_t)&ur, 0) == 0) {
-      gimli_user_regs_to_thread(&ur, proc->threads);
+      gimli_user_regs_to_thread((prgregset_t*)&ur, thr);
     }
   }
 
   return GIMLI_ERR_OK;
-
-
-#if 0
-  read_maps();
-
-  te = td_init();
-  if (te != TD_OK) {
-    fprintf(stderr, "td_init failed: %d\n", te);
-    return 0;
-  }
-  te = td_ta_new(&targetph, &ta);
-  if (te != TD_OK && te != TD_NOLIBTHREAD) {
-    fprintf(stderr, "td_ta_new failed: %d\n", te);
-    return 0;
-  }
-
-  if (ta) {
-    gimli_nthreads = 0;
-    gimli_threads = NULL;
-
-//fprintf(stderr, "ta=%p, enum threads\n", ta);
-    td_ta_thr_iter(ta, enum_threads, NULL, TD_THR_ANY_STATE,
-      TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
-
-  } else {
-    prgregset_t ur;
-
-    gimli_threads = calloc(1, sizeof(*gimli_threads));
-    gimli_threads->lwpid = pid;
-    gimli_nthreads = 1;
-//fprintf(stderr, "no ta, 1 thread\n");
-
-    if (ptrace(PT_GETREGS, pid, (caddr_t)&ur, 0) == 0) {
-      user_regs_to_thread(ur, gimli_threads);
-    }
-  }
-
-  return 1;
-#endif
-}
-
-static int resume_threads(const td_thrhandle_t *thr, void *unused)
-{
-  td_thr_dbresume(thr);
-  return 0;
 }
 
 gimli_err_t gimli_detach(gimli_proc_t proc)
 {
-  if (proc->ta) {
-    td_ta_thr_iter(proc->ta, resume_threads, NULL, TD_THR_ANY_STATE,
-      TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
-  }
-
   gimli_proc_service_destroy(proc);
 
   ptrace(PT_DETACH, proc->pid, NULL, 0);
@@ -389,24 +343,8 @@ ps_err_e ps_linfo(struct ps_prochandle *ph, lwpid_t lwpid, void *info)
 ps_err_e ps_lgetregs(struct ps_prochandle *ph, lwpid_t lwpid,
       prgregset_t gregset)
 {
-  td_thrhandle_t thr;
-
-  printf("%s lwpid=%d\n", __FUNCTION__, lwpid);
-
-  if (ph->ta) {
-    td_err_e te;
-
-    te = td_ta_map_lwp2thr(ph->ta, lwpid, &thr);
-    if (te != TD_OK) {
-      fprintf(stderr, "map lwp2thr returned %d\n", te);
-      return PS_ERR;
-    }
-    te = td_thr_getgregs(&thr, gregset);
-    if (te == TD_OK) {
-      return PS_OK;
-    }
-      fprintf(stderr, "getgregs returned %d\n", te);
-    return PS_ERR;
+  if (ptrace(PT_GETREGS, lwpid, (caddr_t)gregset, 0) == 0) {
+    return PS_OK;
   }
   return PS_ERR;
 }

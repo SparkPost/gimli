@@ -417,11 +417,35 @@ void gimli_render_frame(int tid, int nframe, struct gimli_unwind_cursor *frame)
   }
 }
 
-int gimli_stack_trace(gimli_proc_t proc, int tid, struct gimli_unwind_cursor *frames, int nframes)
+struct gimli_thread_state *gimli_proc_thread_by_lwpid(gimli_proc_t proc, int lwpid, int create)
 {
-  struct gimli_thread_state *thr = &proc->threads[tid];
+  struct gimli_thread_state *thr;
+
+  STAILQ_FOREACH(thr, &proc->threads, threadlist) {
+    if (thr->lwpid == lwpid) {
+      return thr;
+    }
+  }
+
+  if (create) {
+    thr = calloc(1, sizeof(*thr));
+    thr->lwpid = lwpid;
+
+    STAILQ_INSERT_TAIL(&proc->threads, thr, threadlist);
+    return thr;
+  }
+
+  return NULL;
+}
+
+int gimli_stack_trace(gimli_proc_t proc, struct gimli_thread_state *thr, struct gimli_unwind_cursor *frames, int nframes)
+{
   struct gimli_unwind_cursor cur;
   int i;
+
+  if (!thr) {
+    return 0;
+  }
 
   memset(&cur, 0, sizeof(cur));
   cur.proc = the_proc;
@@ -429,7 +453,7 @@ int gimli_stack_trace(gimli_proc_t proc, int tid, struct gimli_unwind_cursor *fr
     int frame = 0;
     do {
       cur.frameno = frame;
-      cur.tid = tid;
+      cur.tid = thr->lwpid;
       frames[frame++] = cur;
     } while (frame < nframes &&
         cur.st.pc && gimli_unwind_next(&cur) && cur.st.pc);
@@ -542,8 +566,9 @@ struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
   f->symroot = s;
 
   if (debug && 0) {
-    printf("add symbol: %s`%s = %p (%d)\n",
-      f->objname, s->name, s->addr, s->size);
+    printf("add symbol: %s`%s = %p (%d) %s\n",
+      f->objname, s->name, s->addr, s->size,
+      s->rawname != s->name ? s->rawname : "");
   }
 
   /* this may fail due to duplicate names */
@@ -638,7 +663,9 @@ struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const 
       if (debug) {
         printf("sym_lookup: %s`%s => %p\n", obj, name, sym ? sym->addr : 0);
       }
-      return sym;
+      if (sym) {
+        return sym;
+      }
     }
     return NULL;
   }

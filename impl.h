@@ -22,6 +22,8 @@
  * directly without any casting */
 #define ps_prochandle gimli_proc
 
+#include "queue.h"
+
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -103,10 +105,14 @@ struct gimli_heartbeat {
 };
 
 struct gimli_thread_state {
+  STAILQ_ENTRY(gimli_thread_state) threadlist;
+
   void *pc; /* pc in frame 0 */
   void *fp; /* frame pointer */
   void *sp; /* stack pointer */
   int lwpid;
+
+  int valid;
 #if defined(__linux__)
   struct user_regs_struct regs;
   //prgregset_t regs;
@@ -205,9 +211,7 @@ struct gimli_object_mapping {
 
 #ifdef __linux__
 struct gimli_proc_linux {
-  /** the pid of each attached thread */
-  int *pids_to_detach;
-  int num_pids;
+  int nothing;
 };
 #endif
 #ifdef sun
@@ -237,7 +241,6 @@ struct gimli_proc {
 #ifndef __MACH__
   /** thread agent for thread debugging API */
   td_thragent_t *ta;
-  struct gimli_thread_state *cur_enum_thread;
   /** for efficient memory accesses, this is a descriptor
    * for /proc/pid/mem. */
   int proc_mem;
@@ -246,8 +249,7 @@ struct gimli_proc {
 #endif
 
   /** list of threads */
-  int nthreads;
-  struct gimli_thread_state *threads;
+  STAILQ_HEAD(threadlist, gimli_thread_state) threads;
 
   struct gimli_object_file *files;
   struct gimli_object_file *first_file;
@@ -367,6 +369,8 @@ gimli_err_t gimli_proc_service_init(gimli_proc_t proc);
 int gimli_render_siginfo(gimli_proc_t proc, siginfo_t *si, char *buf, size_t bufsize);
 void gimli_user_regs_to_thread(prgregset_t *ur,
   struct gimli_thread_state *thr);
+struct gimli_thread_state *gimli_proc_thread_by_lwpid(gimli_proc_t proc, int lwpid, int create);
+int gimli_stack_trace(gimli_proc_t proc, struct gimli_thread_state *thr, struct gimli_unwind_cursor *frames, int nframes);
 
 #ifdef __cplusplus
 }

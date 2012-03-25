@@ -13,6 +13,7 @@ void trace_process(int pid)
     struct gimli_unwind_cursor *frames;
     void **pcaddrs;
     void **contexts;
+    struct gimli_thread_state *thr;
 
     frames = calloc(max_frames, sizeof(*frames));
     if (!frames) {
@@ -66,8 +67,9 @@ void trace_process(int pid)
       }
 
     }
-    for (i = 0; i < the_proc->nthreads; i++) {
-      int nframes = gimli_stack_trace(the_proc, i, frames, max_frames);
+
+    STAILQ_FOREACH(thr, &the_proc->threads, threadlist) {
+      int nframes = gimli_stack_trace(the_proc, thr, frames, max_frames);
       int suppress = 0;
       int nf;
 
@@ -90,8 +92,6 @@ void trace_process(int pid)
       }
 
       if (!suppress) {
-        struct gimli_thread_state *thr = &the_proc->threads[i];
-
         printf("Thread %d (LWP %d)\n", i, thr->lwpid);
         for (nf = 0; nf < nframes; nf++) {
           suppress = 0;

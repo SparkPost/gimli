@@ -439,6 +439,7 @@ static void child_handler(int signo)
   child_stopped = 1;
 
   p = waitpid(-1, &status, WNOHANG);
+//  printf("SIGCHLD: pid=%d\n", p);
 }
 
 gimli_err_t gimli_attach(gimli_proc_t proc)
@@ -473,16 +474,19 @@ gimli_err_t gimli_attach(gimli_proc_t proc)
 
   status = 0;
   for (i = 0; i < 60; i++) {
+    int pid;
+
     if (child_stopped) {
       break;
     }
 
-    if (waitpid(proc->pid, &status, WNOHANG) == proc->pid) {
+    pid = waitpid(proc->pid, &status, WNOHANG);
+    if (pid == proc->pid) {
       child_stopped = 1;
       break;
     }
 
-    fprintf(stderr, "waiting for pid %d to stop\n", proc->pid);
+    fprintf(stderr, "waiting for pid %d to stop (saw %d)\n", proc->pid, pid);
     sleep(1);
   }
   signal(SIGCHLD, SIG_DFL);
@@ -512,9 +516,6 @@ gimli_err_t gimli_detach(gimli_proc_t proc)
   gimli_proc_service_destroy(proc);
 
   ptrace(PTRACE_DETACH, proc->pid, NULL, SIGCONT);
-  for (i = 0; i < proc->tdep.num_pids; i++) {
-    ret = ptrace(PTRACE_DETACH, proc->tdep.pids_to_detach[i], NULL, SIGCONT);
-  }
 
   // FIXME: free all bits from tdep properly
 

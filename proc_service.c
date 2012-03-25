@@ -73,20 +73,13 @@ void gimli_user_regs_to_thread(prgregset_t *ur,
 }
 
 
-static int enum_threads(const td_thrhandle_t *thr, void *pp)
+static int enum_threads1(const td_thrhandle_t *thr, void *pp)
 {
   gimli_proc_t proc = pp;
   struct gimli_thread_state *th;
   prgregset_t ur;
   int te;
   td_thrinfo_t info;
-
-#ifdef __FreeBSD__
-  proc->threads = realloc(proc->threads,
-      (proc->nthreads + 1) * sizeof(*proc->threads));
-  proc->cur_enum_thread = &proc->threads[proc->nthreads++];
-#endif
-  th = proc->cur_enum_thread;
 
   te = td_thr_get_info(thr, &info);
   if (TD_OK != te) {
@@ -98,9 +91,11 @@ static int enum_threads(const td_thrhandle_t *thr, void *pp)
     return 0;
   }
 
-#ifdef __linux__
+#if defined(__linux__)
   if (info.ti_lid != proc->pid) {
-    /* need to explicitly attach to this process too */
+    /* need to explicitly attach to this process too.
+     * We would use td_thr_dbsuspend() but this is just a stub
+     * in glibc */
     int status;
     int tries = 10;
 
@@ -109,30 +104,92 @@ static int enum_threads(const td_thrhandle_t *thr, void *pp)
         info.ti_lid, strerror(errno));
       return 0;
     }
-
-    proc->tdep.pids_to_detach[proc->tdep.num_pids++] = info.ti_lid;
   }
 #endif
 
+  /* get it tracked */
+  gimli_proc_thread_by_lwpid(proc, info.ti_lid, 1);
+
+  return 0;
+}
+
+static int enum_threads2(const td_thrhandle_t *thr, void *pp)
+{
+  gimli_proc_t proc = pp;
+  struct gimli_thread_state *th;
+  prgregset_t ur;
+  int te;
+  td_thrinfo_t info;
+
+  te = td_thr_get_info(thr, &info);
+
+  if (TD_OK != te) {
+    fprintf(stderr, "enum_threads: can't get thread info!\n");
+    return 0;
+  }
+
+  if (info.ti_state == TD_THR_UNKNOWN || info.ti_state == TD_THR_ZOMBIE) {
+    return 0;
+  }
+
+  th = gimli_proc_thread_by_lwpid(proc, info.ti_lid, 0);
+  if (!th) {
+    /* assuming that this is Linux and we failed to attach to the
+     * thread; ignore this one */
+    return 0;
+  }
+
   te = td_thr_getgregs(thr, ur);
+  th->valid = 0;
+
   if (TD_OK != te) {
     fprintf(stderr, "getgregs: %d\n", te);
     return 0;
   }
-
   gimli_user_regs_to_thread(&ur, th);
 #ifdef sun
-  get_lwp_status(proc->pid, info.ti_lid, &proc->cur_enum_thread->lwpst);
+  get_lwp_status(proc->pid, info.ti_lid, &th->lwpst);
 #endif
+  th->valid = 1;
+  return 0;
+}
 
-  proc->cur_enum_thread->lwpid = info.ti_lid;
-  proc->cur_enum_thread++;
+static int resume_threads(const td_thrhandle_t *thr, void *pp)
+{
+#ifdef __linux__
+  gimli_proc_t proc = pp;
+  struct gimli_thread_state *th;
+  prgregset_t ur;
+  int te;
+  td_thrinfo_t info;
+
+  te = td_thr_get_info(thr, &info);
+  if (TD_OK != te) {
+    fprintf(stderr, "resume_threads: can't get thread info!\n");
+    return 0;
+  }
+
+  if (info.ti_state == TD_THR_UNKNOWN || info.ti_state == TD_THR_ZOMBIE) {
+    return 0;
+  }
+
+  if (info.ti_lid != proc->pid && gimli_ptrace(PTRACE_DETACH, info.ti_lid, NULL, SIGCONT)) {
+    fprintf(stderr, "resume_threads: failed to detach from thread %d %s\n",
+        info.ti_lid, strerror(errno));
+  }
+
+#else
+  td_thr_dbresume(thr);
+#endif
   return 0;
 }
 
 void gimli_proc_service_destroy(gimli_proc_t proc)
 {
   if (proc->ta) {
+    td_ta_thr_iter(proc->ta, resume_threads, NULL, TD_THR_ANY_STATE,
+      TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
+
     td_ta_delete(proc->ta);
     proc->ta = NULL;
   }
@@ -144,7 +201,9 @@ void gimli_proc_service_destroy(gimli_proc_t proc)
 
 #ifdef sun
 /* Note that FreeBSD has a similar interface, but it provides no apparent
- * value over the ptrace facility that we use as a base */
+ * value over the ptrace facility that we use as a base, requires more
+ * stub implementation and more conditional code, so we actively
+ * choose not to use it. */
 static int collect_map(const rd_loadobj_t *obj, void *pp)
 {
   gimli_proc_t proc = pp;
@@ -169,7 +228,7 @@ static void read_rtld_maps(gimli_proc_t proc)
 
 gimli_err_t gimli_proc_service_init(gimli_proc_t proc)
 {
-  int i, done = 0;
+  int i, done = 0, tries = 20;
   td_err_e te;
 
   te = td_init();
@@ -183,50 +242,45 @@ gimli_err_t gimli_proc_service_init(gimli_proc_t proc)
     return GIMLI_ERR_THREAD_DEBUGGER_INIT_FAILED;
   }
   if (proc->ta) {
-#ifdef __FreeBSD__
-    /* no td_ta_get_nthreads on FreeBSD, so we realloc as
-     * we enumerate the threads */
-    td_ta_thr_iter(proc->ta, enum_threads, proc, TD_THR_ANY_STATE,
+    int nthreads;
+    struct gimli_thread_state *thr;
+
+    /* we're going to make two passes over the set of threads; the first pass
+     * is to assess the threads and request that they stop.
+     *
+     * The second pass occurs after we're sure that they stopped so that we can
+     * sample their data fully.  This is needed because the thread state
+     * management is asynchronous and is not guaranteed to complete on our
+     * timeframe (observed on Linux) */
+
+    td_ta_thr_iter(proc->ta, enum_threads1, proc, TD_THR_ANY_STATE,
       TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
-#else
-    te = td_ta_get_nthreads(proc->ta, &proc->nthreads);
-    if (te == TD_OK) {
-      proc->threads = calloc(proc->nthreads, sizeof(*proc->threads));
-      proc->cur_enum_thread = proc->threads;
-      td_ta_thr_iter(proc->ta, enum_threads, proc, TD_THR_ANY_STATE,
-        TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
-#ifdef __linux__
-      proc->tdep.pids_to_detach = calloc(proc->nthreads, sizeof(int));
-#endif
-    } else {
-      fprintf(stderr, "td_ta_get_nthreads failed: %d\n", te);
+
+    STAILQ_FOREACH(thr, &proc->threads, threadlist) {
+      nthreads++;
     }
-#endif
+
+    do {
+      done = 0;
+
+      td_ta_thr_iter(proc->ta, enum_threads2, proc, TD_THR_ANY_STATE,
+        TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
+
+      STAILQ_FOREACH(thr, &proc->threads, threadlist) {
+        if (thr->valid) done++;
+      }
+
+      if (done >= nthreads) {
+        break;
+      }
+
+      sleep(1);
+    } while (tries--);
 
   } else {
-    proc->threads = calloc(1, sizeof(*proc->threads));
-    proc->threads->lwpid = proc->pid;
-    proc->nthreads = 1;
-
+    gimli_proc_thread_by_lwpid(proc, proc->pid, 1);
   }
 
-#if 0
-  while (done < proc->nthreads) {
-    for (i = 0; i < proc->nthreads; i++) {
-      struct gimli_thread_state *thr = &proc->threads[i];
-
-      if (ptrace(PTRACE_GETREGS, thr->lwpid, NULL, &ur) == 0) {
-        gimli_user_regs_to_thread(&ur, thr);
-        done++;
-      }
-    }
-    if (done >= proc->nthreads) {
-      break;
-    }
-    sleep(1);
-    done = 0;
-  }
-#endif
 #ifdef sun
   read_rtld_maps(proc);
 #endif

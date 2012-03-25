@@ -43,6 +43,7 @@ gimli_err_t gimli_proc_attach(int pid, gimli_proc_t *proc)
   p->refcnt = 1;
   p->proc_mem = -1;
   p->pid = pid;
+  STAILQ_INIT(&p->threads);
 
   err = gimli_attach(p);
 
