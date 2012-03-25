@@ -17,6 +17,11 @@
 # define __need_ucontext64_t
 #endif
 
+/* make ps_prochandle an alias for our gimli_proc_t
+ * so that the various debugger headers can use it
+ * directly without any casting */
+#define ps_prochandle gimli_proc
+
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -35,11 +40,10 @@
 #include <libgen.h>
 #ifdef sun
 #define _STRUCTURED_PROC 1
-#include <sys/procfs.h>
 #include <sys/stat.h>
 #include <sys/frame.h>
 #endif
-#ifdef __FreeBSD__
+#ifndef __MACH__
 #include <sys/procfs.h>
 #endif
 
@@ -105,9 +109,10 @@ struct gimli_thread_state {
   int lwpid;
 #if defined(__linux__)
   struct user_regs_struct regs;
+  //prgregset_t regs;
 #elif defined(sun)
   prgregset_t regs;
-  lwpstatus_t lwpst; 
+  lwpstatus_t lwpst;
 #elif defined(__FreeBSD__)
   gregset_t regs;
 #elif defined(__MACH__) && defined(__x86_64__)
@@ -198,6 +203,24 @@ struct gimli_object_mapping {
   unsigned int num_arange;
 };
 
+#ifdef __linux__
+struct gimli_proc_linux {
+  /** the pid of each attached thread */
+  int *pids_to_detach;
+  int num_pids;
+};
+#endif
+#ifdef sun
+struct gimli_proc_solaris {
+  int ctl_fd;    /* handle on /proc/pid/control */
+  int status_fd; /* handle on /proc/pid/status */
+  pstatus_t status;
+  auxv_t *auxv;
+  int naux;
+};
+#endif
+
+
 struct gimli_proc {
   /** if 0, represents myself. otherwise is the target pid */
   int pid;
@@ -205,7 +228,22 @@ struct gimli_proc {
   int refcnt;
 
   /** target dependent data */
-  void *tdep;
+#ifdef __linux__
+  struct gimli_proc_linux tdep;
+#endif
+#ifdef sun
+  struct gimli_proc_solaris tdep;
+#endif
+#ifndef __MACH__
+  /** thread agent for thread debugging API */
+  td_thragent_t *ta;
+  struct gimli_thread_state *cur_enum_thread;
+  /** for efficient memory accesses, this is a descriptor
+   * for /proc/pid/mem. */
+  int proc_mem;
+  /** whether mmap works on proc_mem */
+  int proc_mem_supports_mmap;
+#endif
 
   /** list of threads */
   int nthreads;
@@ -284,7 +322,7 @@ struct gimli_object_file *gimli_find_object(
 #else
 # define PTRFMT "0x%08lx"
 # define PTRFMT_T uint32_t
-#endif 
+#endif
 
 int gimli_process_elf(struct gimli_object_file *f);
 int gimli_process_dwarf(struct gimli_object_file *f);
@@ -313,6 +351,7 @@ gimli_err_t gimli_detach(gimli_proc_t proc);
 
 const char *gimli_pc_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen);
 int gimli_read_mem(gimli_proc_t proc, void *src, void *dest, int len);
+int gimli_write_mem(gimli_proc_t proc, void *src, const void *dest, int len);
 struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const char *name);
 char *gimli_read_string(gimli_proc_t proc, void *addr);
 int gimli_get_parameter(void *context, const char *varname,
@@ -321,6 +360,7 @@ extern struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,
   void *addr);
 struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode);
+gimli_err_t gimli_proc_service_init(gimli_proc_t proc);
 
 #ifdef __cplusplus
 }

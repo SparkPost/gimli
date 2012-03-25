@@ -16,13 +16,8 @@
 
 struct ps_prochandle {
   pid_t pid;
-  int ctl_fd;    /* handle on /proc/pid/control */
   int as_fd;     /* handle on /proc/pid/as */
-  int status_fd; /* handle on /proc/pid/status */
-  pstatus_t status;
   struct ps_prochandle *next;
-  auxv_t *auxv;
-  int naux;
 };
 
 static struct ps_prochandle targetph = {
@@ -231,18 +226,6 @@ static void show_regs(prgregset_t regs)
 #endif
 }
 
-static void user_regs_to_thread(prgregset_t *ur,
-  struct gimli_thread_state *thr)
-{
-  memcpy(&thr->regs, ur, sizeof(*ur));
-
-  thr->fp = (void*)thr->regs[R_FP];
-  thr->pc = (void*)thr->regs[R_PC];
-  thr->sp = (void*)thr->regs[R_SP];
-
-  show_regs(thr->regs);
-}
-
 static int enum_threads(const td_thrhandle_t *thr, void *unused)
 {
   struct gimli_thread_state *th = cur_enum_thread;
@@ -274,42 +257,6 @@ static int enum_threads(const td_thrhandle_t *thr, void *unused)
   return 0;
 }
 
-ps_err_e ps_pglobal_sym(struct ps_prochandle *h,
-	const char *object_name, const char *sym_name, ps_sym_t *sym)
-{
-  return PS_NOSYM;
-}
-
-ps_err_e ps_pread(struct ps_prochandle *h,
-			psaddr_t addr, void *buf, size_t size)
-{
-  return gimli_read_mem((void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
-}
-
-ps_err_e ps_pwrite(struct ps_prochandle *h,
-			psaddr_t addr, const void *buf, size_t size)
-{
-  if (targetph.as_fd >= 0) {
-    ssize_t ret = pwrite(targetph.as_fd, buf, size, (intptr_t)addr);
-    return ret == size ? PS_OK : PS_BADADDR;
-  }
-  return PS_ERR;
-}
-
-ps_err_e ps_pauxv(struct ps_prochandle *h, const auxv_t **auxv)
-{
-  *auxv = targetph.auxv;
-  return PS_OK;
-}
-
-void ps_plog(const char *fmt, ...)
-{
-  va_list ap;
-  va_start(ap, fmt);
-  vfprintf(stderr, fmt, ap);
-  va_end(ap);
-}
-
 static int collect_map(const rd_loadobj_t *obj, void *unused)
 {
   char *name;
@@ -319,12 +266,6 @@ static int collect_map(const rd_loadobj_t *obj, void *unused)
   free(name);
 
   return 1;
-}
-
-ps_err_e ps_pdmodel(struct ps_prochandle *h, int *data_model)
-{
-  *data_model = targetph.status.pr_dmodel;
-  return PS_OK;
 }
 
 static int read_auxv(void)

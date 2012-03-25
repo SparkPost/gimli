@@ -211,10 +211,6 @@ typedef uint64_t gimli_addr_t;
 /** opaque type represents a target process, which may be myself */
 typedef struct gimli_proc *gimli_proc_t;
 
-/** returns a proc handle to my own process.
- * Caller must gimli_proc_delete() it when it is no longer needed */
-gimli_err_t gimli_proc_self(gimli_proc_t *proc);
-
 /** deletes a reference to a proc handle.
  * When the final handle is deleted, the process will be detached
  * (and continued) if it was a remote process.

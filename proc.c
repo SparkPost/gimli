@@ -6,23 +6,6 @@
 
 #include "impl.h"
 
-/** returns a proc handle to my own process.
- * Caller must gimli_proc_delete() it when it is no longer needed */
-gimli_err_t gimli_proc_self(gimli_proc_t *proc)
-{
-  gimli_proc_t p = calloc(1, sizeof(*p));
-
-  if (!p) {
-    *proc = NULL;
-    return GIMLI_ERR_OOM;
-  }
-
-  p->refcnt = 1;
-
-  *proc = p;
-  return GIMLI_ERR_OK;
-}
-
 /** deletes a reference to a proc handle.
  * When the final handle is deleted, the process will be detached
  * (and continued) if it was a remote process.
@@ -48,24 +31,28 @@ void gimli_proc_addref(gimli_proc_t proc)
  * needed */
 gimli_err_t gimli_proc_attach(int pid, gimli_proc_t *proc)
 {
-  gimli_err_t err = gimli_proc_self(proc);
-  gimli_proc_t p = *proc;
+  gimli_proc_t p = calloc(1, sizeof(*p));
+  gimli_err_t err;
 
-  if (err != GIMLI_ERR_OK) {
-    return err;
+  if (!p) {
+    *proc = NULL;
+    return GIMLI_ERR_OOM;
   }
 
+  *proc = p;
+  p->refcnt = 1;
+  p->proc_mem = -1;
   p->pid = pid;
 
   err = gimli_attach(p);
 
   if (err != GIMLI_ERR_OK) {
-    int err = errno;
+    int sav = errno;
 
     gimli_proc_delete(p);
     *proc = NULL;
 
-    errno = err;
+    errno = sav;
   }
 
   return err;
