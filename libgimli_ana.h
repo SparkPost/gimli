@@ -240,6 +240,13 @@ typedef struct gimli_mem_ref *gimli_mem_ref_t;
  * update in the target until gimli_proc_mem_commit() is called.
  * For portability, if you want to ensure that writes take effect,
  * you must always call gimli_proc_mem_commit at the appropriate time.
+ *
+ * NOTE! always verify the length of the mapping, as it may be
+ * shorter than you requested, especially if a portion of the
+ * range is invalid.
+ *
+ * NOTE! on systems that can mmap the ref, some memory accesses
+ * may lead to a fault in the local process!
  * */
 gimli_err_t gimli_proc_mem_ref(gimli_proc_t p,
     gimli_addr_t addr, size_t size, gimli_mem_ref_t *ref);

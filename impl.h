@@ -268,6 +268,9 @@ struct gimli_mem_ref {
 
   /** base address in local space */
   void *base;
+  /** offset added to base to obtain actual local address.
+   * This is typically zero unless we have an mmap */
+  size_t offset;
 
   /** indicates what sort of mapping this is, and how we
    * should dispose of it */

@@ -1524,6 +1524,57 @@ static int do_after(
   return 0;
 }
 
+static void print_quoted_string(gimli_proc_t proc, gimli_addr_t addr)
+{
+  gimli_mem_ref_t ref;
+  gimli_err_t err;
+  char *buf, *end;
+  int len, i;
+#define STRING_AT_ONCE 1024
+
+  err = gimli_proc_mem_ref(proc, addr, STRING_AT_ONCE, &ref);
+  if (err != GIMLI_ERR_OK) {
+    printf(" <invalid address>\n");
+    return;
+  }
+
+  printf("\"");
+  while (1) {
+    buf = gimli_mem_ref_local(ref);
+    len = gimli_mem_ref_size(ref);
+    addr += len;
+    end = buf + len;
+
+    while (buf < end) {
+      if (buf[0] == '\0') goto done;
+      if (isprint(buf[0])) {
+        printf("%c", buf[0]);
+      } else if (buf[0] == '"') {
+        printf("\\\"");
+      } else if (buf[0] == '\\') {
+        printf("\\\\");
+      } else {
+        printf("\\x%02x", ((int)buf[0]) & 0xff);
+      }
+      buf++;
+    }
+
+    gimli_mem_ref_delete(ref);
+    err = gimli_proc_mem_ref(proc, addr, STRING_AT_ONCE, &ref);
+    if (err != GIMLI_ERR_OK) {
+      break;
+    }
+  }
+done:
+  printf("\"");
+  if (err != GIMLI_ERR_OK) {
+    printf(" <invalid read>");
+  }
+  printf("\n");
+
+  gimli_mem_ref_delete(ref);
+}
+
 static int show_param(struct gimli_unwind_cursor *cur,
   struct gimli_object_file *f,
   struct gimli_dwarf_attr *type, void *addr, int is_stack,
@@ -1761,25 +1812,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
               && size == 1) {
             /* smells like a string */
             printf(" ");
-            if (gimli_read_mem(cur->proc, addr, namebuf, 1)) {
-              printf("\"");
-              while (gimli_read_mem(cur->proc, addr, namebuf, 1)) {
-                if (namebuf[0] == '\0') break;
-                if (isprint(namebuf[0])) {
-                  printf("%c", namebuf[0]);
-                } else if (namebuf[0] == '"') {
-                  printf("\\\"");
-                } else if (namebuf[0] == '\\') {
-                  printf("\\\\");
-                } else {
-                  printf("\\x%02x", ((int)namebuf[0]) & 0xff);
-                }
-                addr++;
-              }
-              printf("\"\n");
-            } else {
-              printf(" <invalid address>\n");
-            }
+            print_quoted_string(cur->proc, addr);
           } else if (indent < 6) {
             snprintf(namebuf, sizeof(namebuf)-1, "%p", addr);
             if (!gimli_hash_find(derefed_params, namebuf, NULL)) {

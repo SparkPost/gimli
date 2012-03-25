@@ -77,24 +77,59 @@ struct gimli_ana_api ana_api = {
 
 char *gimli_read_string(gimli_proc_t proc, void *addr)
 {
-  int len;
-  char c;
-  char *buf;
+  gimli_mem_ref_t ref;
+  gimli_err_t err;
+  char *buf, *end;
+  int totlen = 0, len, i;
+  void *cursor;
+#define STRING_AT_ONCE 1024
 
-  len = 0;
-  while (gimli_read_mem(proc, addr + len, &c, 1) == 1) {
-    if (c == '\0') {
-      break;
+  /* try to efficiently find a string in the target */
+  if (proc->pid == 0) {
+    /* easy case is when it's local */
+    return strdup((char*)addr);
+  }
+
+  /* map in a block at a time and look for the terminator */
+  cursor = addr;
+  err = gimli_proc_mem_ref(proc, addr, STRING_AT_ONCE, &ref);
+  if (err != GIMLI_ERR_OK) {
+    return NULL;
+  }
+
+  while (1) {
+    buf = gimli_mem_ref_local(ref);
+    len = gimli_mem_ref_size(ref);
+    cursor += len;
+    totlen += len;
+    end = memchr(buf, '\0', len);
+
+    if (end) {
+      len = end - buf;
+
+      /* now we know our total length */
+      if (cursor == addr) {
+        /* can simply dup it out of the ref */
+        buf = strdup(buf);
+        gimli_mem_ref_delete(ref);
+        return buf;
+      }
+      /* re-request a ref with the desired length */
+      gimli_mem_ref_delete(ref);
+      err = gimli_proc_mem_ref(proc, addr, totlen + 1, &ref);
+      if (err != GIMLI_ERR_OK) {
+        return NULL;
+      }
+      buf = gimli_mem_ref_local(ref);
+      buf = strdup(buf);
+      gimli_mem_ref_delete(ref);
+      return buf;
     }
-    len++;
-  }
 
-  if (len) {
-    buf = malloc(len+1);
-    gimli_read_mem(proc, addr, buf, len);
-    buf[len] = '\0';
-    return buf;
-  }
+    /* didn't find the terminator; get the next chunk and examine */
+    gimli_mem_ref_delete(ref);
+    err = gimli_proc_mem_ref(proc, cursor, STRING_AT_ONCE, &ref);
+  } while (err != GIMLI_ERR_OK);
   return NULL;
 }
 

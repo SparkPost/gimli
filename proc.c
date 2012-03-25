@@ -73,10 +73,9 @@ gimli_err_t gimli_proc_mem_ref(gimli_proc_t p,
 
   /* TODO: maintain a cache of page sized mappings for efficiency */
 
-
+  *refp = NULL;
   ref = calloc(1, sizeof(*ref));
   if (ref == NULL) {
-    *refp = NULL;
     return GIMLI_ERR_OOM;
   }
 
@@ -85,8 +84,63 @@ gimli_err_t gimli_proc_mem_ref(gimli_proc_t p,
   ref->proc = p;
   gimli_proc_addref(p);
 
+  if (p->proc_mem_supports_mmap == -1) {
+    /* TODO: try mmap, as that would be ideal.
+     * Linux 2.6 doesn't support this.
+     * When we try this for Solaris and FreeBSD, we need to remember
+     * that mmap wants things page aligned and with page offsets, so
+     * we'll need to rebase addr against the page size and then provide
+     * an offset relative to the page, recording the offset in the
+     * map that we're going to return.  We'll also need to record
+     * the actual mmap size that we produced.
+     * Another way to deal with this is to make the page aligned mapping
+     * the relative of this one, and keep the "complex" adjustments
+     * as part of the ->relative handling. */
+
+    /* our "probing" determined that we don't do mmap */
+    p->proc_mem_supports_mmap = 0;
+  }
+
+  if (!p->proc_mem_supports_mmap) {
+    /* Poor-mans approach, which is to allocate a buffer and copy
+     * data into it */
+    int actual;
+
+    ref->base = malloc(size);
+    if (!ref->base) {
+      gimli_mem_ref_delete(ref);
+      return GIMLI_ERR_OOM;
+    }
+    ref->map_type = gimli_mem_ref_is_malloc;
+    actual = gimli_read_mem(p, (void*)ref->target, ref->base, ref->size);
+    if (actual == 0) {
+      gimli_mem_ref_delete(ref);
+      return GIMLI_ERR_BAD_ADDR;
+    }
+    /* may not have obtained full size */
+    ref->size = actual;
+  }
+
   *refp = ref;
   return GIMLI_ERR_OK;
+}
+
+gimli_err_t gimli_proc_mem_commit(gimli_mem_ref_t ref)
+{
+  gimli_mem_ref_t p;
+
+  /* find out whether we need to do any work */
+  for (p = ref; p; p = p->relative) {
+    if (p->map_type == gimli_mem_ref_is_mmap) {
+      return GIMLI_ERR_OK;
+    }
+    if (p->map_type == gimli_mem_ref_is_malloc) {
+      break;
+    }
+  }
+
+  /* store it back to the target */
+  return gimli_write_mem(ref->proc, (void*)ref->target, ref->base, ref->size) == ref->size;
 }
 
 /** Returns base address of a mapping, in the target address space */
@@ -100,7 +154,7 @@ gimli_addr_t gimli_mem_ref_target(gimli_mem_ref_t mem)
  * the target process */
 void *gimli_mem_ref_local(gimli_mem_ref_t mem)
 {
-  return mem->base;
+  return mem->base + mem->offset;
 }
 
 /** Returns the size of the mapping */
@@ -122,6 +176,12 @@ void gimli_mem_ref_delete(gimli_mem_ref_t mem)
   if (mem->relative) {
     gimli_mem_ref_delete(mem->relative);
     mem->relative = NULL;
+  }
+
+  switch (mem->map_type) {
+    case gimli_mem_ref_is_malloc:
+      free(mem->base);
+      mem->base = NULL;
   }
 
   free(mem);
