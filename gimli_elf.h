@@ -11,7 +11,8 @@ extern "C" {
 #endif
 
 struct gimli_elf_shdr {
-  struct gimli_elf_shdr *next;
+  STAILQ_ENTRY(gimli_elf_shdr) shdrs;
+
   char *name;
   char *data;
   int section_no;
@@ -57,7 +58,7 @@ struct gimli_elf_ehdr {
     e_shnum,     /* number of section headers */
     e_shstrndx   /* index of the string table into section header table */
     ;
-  struct gimli_elf_shdr *sections;
+  STAILQ_HEAD(sections, gimli_elf_shdr) sections;
   struct gimli_elf_ehdr *refelf;
   char *objname;
   gimli_mapped_object_t gobject;

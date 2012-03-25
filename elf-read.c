@@ -117,7 +117,7 @@ struct gimli_elf_shdr *gimli_get_section_by_index(
 {
   struct gimli_elf_shdr *s;
 
-  for (s = elf->sections; s; s = s->next) {
+  STAILQ_FOREACH(s, &elf->sections, shdrs) {
     if (s->section_no == section) {
       return s;
     }
@@ -130,7 +130,7 @@ struct gimli_elf_shdr *gimli_get_elf_section_by_name(struct gimli_elf_ehdr *elf,
 {
   struct gimli_elf_shdr *s = NULL;
 
-  for (s = elf->sections; s; s = s->next) {
+  STAILQ_FOREACH(s, &elf->sections, shdrs) {
     if (!strcmp(s->name, name)) {
       return s;
     }
@@ -203,13 +203,14 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
   struct gimli_elf_ehdr *elf = calloc(1, sizeof(*elf));
   unsigned char ident[16];
   int i;
-  struct gimli_elf_shdr *last_section = NULL;
   struct gimli_elf_shdr *s;
 
   elf->fd = open(filename, O_RDONLY);
   if (elf->fd == -1) {
     return 0;
   }
+
+  STAILQ_INIT(&elf->sections);
 
   read(elf->fd, ident, sizeof(ident));
 
@@ -363,11 +364,8 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
       s->sh_entsize = hdr.sh_entsize;
     }
 
-    if (last_section) {
-      last_section->next = s;
-    } else {
-      elf->sections = s;
-
+    STAILQ_INSERT_TAIL(&elf->sections, s, shdrs);
+    if (STAILQ_FIRST(&elf->sections) == s) {
       /* let's fixup the e_shstrndx here.  If it has the value
        * SHN_XINDEX, then the true value is stashed in the sh_link
        * field of the 0th section (that's us) */
@@ -375,11 +373,10 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
         elf->e_shstrndx = s->sh_link;
       }
     }
-    last_section = s;
   }
 //  printf("e_shstrndx is %d\n", elf->e_shstrndx); 
   /* now make a pass through the sections to find out their names */
-  for (s = elf->sections; s; s = s->next) {
+  STAILQ_FOREACH(s, &elf->sections, shdrs) {
     s->name = (char*)gimli_elf_get_string(elf, elf->e_shstrndx, s->sh_name);
 //    printf("Section %d has name [%d] %s\n", s->section_no, s->sh_name, s->name);
   }
@@ -433,7 +430,7 @@ int gimli_elf_enum_symbols(struct gimli_elf_ehdr *elf,
   const char *end = NULL;
 
   /* find the symbol table */
-  for (s = elf->sections; s; s = s->next) {
+  STAILQ_FOREACH(s, &elf->sections, shdrs) {
     if (s->sh_type == GIMLI_SHT_SYMTAB || s->sh_type == GIMLI_SHT_DYNSYM) {
       symtab = gimli_get_section_data(elf, s->section_no);
       if (symtab == NULL) {
@@ -486,8 +483,6 @@ int gimli_elf_enum_symbols(struct gimli_elf_ehdr *elf,
       }
     }
   }
-
-
   return matches;
 }
 
