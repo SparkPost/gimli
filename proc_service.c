@@ -35,8 +35,8 @@ typedef enum {
   PS_NOFREGS,/* FPU regs not available */
 } ps_err_e;
 #endif
-#ifndef sun
-typedef gimli_addr_t paddr_t;
+#ifdef sun
+static int get_lwp_status(int pid, lwpid_t lwpid, lwpstatus_t *st);
 #endif
 
 void gimli_user_regs_to_thread(prgregset_t *ur,
@@ -187,7 +187,7 @@ static int resume_threads(const td_thrhandle_t *thr, void *pp)
 void gimli_proc_service_destroy(gimli_proc_t proc)
 {
   if (proc->ta) {
-    td_ta_thr_iter(proc->ta, resume_threads, NULL, TD_THR_ANY_STATE,
+    td_ta_thr_iter(proc->ta, resume_threads, proc, TD_THR_ANY_STATE,
       TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
 
     td_ta_delete(proc->ta);
@@ -209,7 +209,7 @@ static int collect_map(const rd_loadobj_t *obj, void *pp)
   gimli_proc_t proc = pp;
   char *name;
 
-  name = gimli_read_string((void*)obj->rl_nameaddr);
+  name = gimli_read_string(proc, (void*)obj->rl_nameaddr);
   gimli_add_mapping(proc, name, (void*)obj->rl_base, obj->rl_bend - obj->rl_base, 0);
   free(name);
 
@@ -230,6 +230,10 @@ gimli_err_t gimli_proc_service_init(gimli_proc_t proc)
 {
   int i, done = 0, tries = 20;
   td_err_e te;
+
+#ifdef sun
+  read_rtld_maps(proc);
+#endif
 
   te = td_init();
   if (te != TD_OK) {
@@ -282,10 +286,6 @@ gimli_err_t gimli_proc_service_init(gimli_proc_t proc)
     gimli_proc_thread_by_lwpid(proc, proc->pid, 1);
   }
 
-#ifdef sun
-  read_rtld_maps(proc);
-#endif
-
   return GIMLI_ERR_OK;
 }
 
@@ -309,6 +309,7 @@ pid_t ps_getpid(struct ps_prochandle *ph)
   return ph->pid;
 }
 
+#ifndef sun
 ps_err_e ps_pglobal_lookup(struct ps_prochandle *ph, const char *obj,
   const char *name, psaddr_t *symaddr)
 {
@@ -319,6 +320,7 @@ ps_err_e ps_pglobal_lookup(struct ps_prochandle *ph, const char *obj,
   }
   return PS_NOSYM;
 }
+#endif
 
 #ifdef sun
 ps_err_e ps_pglobal_sym(struct ps_prochandle *h,
@@ -350,7 +352,7 @@ ps_err_e ps_pread(struct ps_prochandle *h,
   return gimli_read_mem(h, (void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
 }
 
-ps_err_e ps_pdread(struct ps_prochandle *h, paddr_t addr,
+ps_err_e ps_pdread(struct ps_prochandle *h, psaddr_t addr,
   void *buf, size_t size)
 {
   return gimli_read_mem(h, (void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
@@ -362,8 +364,8 @@ ps_err_e ps_pwrite(struct ps_prochandle *h,
   return gimli_write_mem(h, (void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
 }
 
-ps_err_e ps_pdwrite(struct ps_prochandle *h, paddr_t addr,
-  void *buf, size_t size)
+ps_err_e ps_pdwrite(struct ps_prochandle *h, psaddr_t addr,
+  const void *buf, size_t size)
 {
   return gimli_write_mem(h, (void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
 }
@@ -379,6 +381,44 @@ ps_err_e ps_lgetregs(struct ps_prochandle *ph, lwpid_t lwpid, prgregset_t gregse
 #endif
 
 #ifdef sun
+static int get_lwp_status(int pid, lwpid_t lwpid, lwpstatus_t *st)
+{
+  char path[1024];
+  int fd;
+  int ret;
+
+  snprintf(path, sizeof(path)-1, "/proc/%d/lwp/%d/lwpstatus", pid, lwpid);
+
+  fd = open(path, O_RDONLY);
+  if (fd >= 0) {
+    ret = read(fd, st, sizeof(*st));
+    if (ret == sizeof(*st)) {
+      close(fd);
+      return 1;
+    }
+    fprintf(stderr, "unable to read status for LWP %d: %s\n",
+      lwpid, strerror(errno));
+    close(fd);
+  } else {
+    fprintf(stderr, "unable to read status for LWP %d: %s %s\n",
+      lwpid, path, strerror(errno));
+  }
+  return 0;
+}
+
+ps_err_e ps_lgetregs(struct ps_prochandle *ph, lwpid_t lwpid,
+      prgregset_t gregset)
+{
+  lwpstatus_t st;
+
+  if (get_lwp_status(ph->pid, lwpid, &st)) {
+    memcpy(gregset, &st.pr_reg, sizeof(st.pr_reg));
+    return PS_OK;
+  }
+  return PS_ERR;
+}
+
+
 ps_err_e ps_pauxv(struct ps_prochandle *h, const auxv_t **auxv)
 {
   *auxv = h->tdep.auxv;

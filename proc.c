@@ -81,6 +81,7 @@ gimli_err_t gimli_proc_mem_ref(gimli_proc_t p,
     return GIMLI_ERR_OOM;
   }
 
+  ref->refcnt = 1;
   ref->target = addr;
   ref->size = size;
   ref->proc = p;
@@ -114,7 +115,7 @@ gimli_err_t gimli_proc_mem_ref(gimli_proc_t p,
       return GIMLI_ERR_OOM;
     }
     ref->map_type = gimli_mem_ref_is_malloc;
-    actual = gimli_read_mem(p, (void*)ref->target, ref->base, ref->size);
+    actual = gimli_read_mem(p, (void*)(intptr_t)ref->target, ref->base, ref->size);
     if (actual == 0) {
       gimli_mem_ref_delete(ref);
       return GIMLI_ERR_BAD_ADDR;

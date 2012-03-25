@@ -219,12 +219,15 @@ static int sort_compare_mapping(const void *A, const void *B)
 {
   struct gimli_object_mapping *a = *(struct gimli_object_mapping**)A;
   struct gimli_object_mapping *b = *(struct gimli_object_mapping**)B;
-  int diff = (intptr_t)a->base - (intptr_t)b->base;
 
-  if (diff == 0) {
-    return a->len - b->len;
+  if (a->base < b->base) {
+    return -1;
   }
-  return diff;
+  if (a->base > b->base) {
+    return 1;
+  }
+
+  return a->len - b->len;
 }
 
 static int search_compare_mapping(const void *addr, const void *L)
@@ -245,10 +248,18 @@ struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, void *add
   struct gimli_object_mapping **m;
 
   if (proc->maps_changed) {
+    int i;
+
     /* (re)sort the list of maps */
     qsort(proc->mappings, proc->nmaps, sizeof(struct gimli_object_mapping*),
         sort_compare_mapping);
     proc->maps_changed = 0;
+
+    for (i = 0; i < proc->nmaps; i++) {
+      struct gimli_object_mapping *map = proc->mappings[i];
+      printf("MAP: %p - %p %s\n", map->base, map->base + map->len, map->objfile->objname);
+    }
+    printf("--\n");
   }
 
   m = bsearch(addr, proc->mappings, proc->nmaps, sizeof(struct gimli_object_mapping*),

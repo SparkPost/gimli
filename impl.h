@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2011 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2008-2012 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
@@ -44,6 +44,7 @@
 #define _STRUCTURED_PROC 1
 #include <sys/stat.h>
 #include <sys/frame.h>
+#include <sys/stack.h>
 #endif
 #ifndef __MACH__
 #include <sys/procfs.h>

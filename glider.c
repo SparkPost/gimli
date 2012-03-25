@@ -75,10 +75,13 @@ void trace_process(int pid)
     }
     gimli_hash_iter(the_proc->files, load_modules_for_file, NULL);
 
+    i = -1;
     STAILQ_FOREACH(thr, &the_proc->threads, threadlist) {
       int nframes = gimli_stack_trace(the_proc, thr, frames, max_frames);
       int suppress = 0;
       int nf;
+
+      i++;
 
       for (nf = 0; nf < nframes; nf++) {
         pcaddrs[nf] = frames[nf].st.pc;

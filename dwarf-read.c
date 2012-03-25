@@ -540,8 +540,10 @@ static int process_line_numbers(gimli_mapped_object_t f)
 
   /* make a pass to fill in the end member to make it easier to find
    * an approx match */
-  for (i = 0; i < f->linecount - 1; i++) {
-    f->lines[i].end = f->lines[i+1].addr;
+  if (f->linecount) {
+    for (i = 0; i < f->linecount - 1; i++) {
+      f->lines[i].end = f->lines[i+1].addr;
+    }
   }
 
   return 0;

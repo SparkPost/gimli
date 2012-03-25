@@ -454,6 +454,9 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
     switch (cur->dw.cols[i].rule) {
       case DW_RULE_UNDEF:
         break;
+      case DW_RULE_SAME:
+        /* retains same value */
+        break;
       case DW_RULE_OFFSET:
         regaddr = fp + cur->dw.cols[i].value;
         if (debug) {
