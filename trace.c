@@ -6,12 +6,8 @@
 #include "impl.h"
 
 int debug = 0;
-int gimli_nthreads = 0;
 int max_frames = 256;
-struct gimli_thread_state *gimli_threads = NULL;
-struct gimli_object_file *gimli_files = NULL;
-static struct gimli_object_file *first_file = NULL;
-struct gimli_object_mapping *gimli_mappings = NULL;
+gimli_proc_t the_proc = NULL;
 
 static struct gimli_proc_stat proc_stat = { 0, };
 
@@ -24,23 +20,23 @@ static int gimli_get_source_info(void *addr, char *buf,
   int buflen, int *lineno)
 {
   uint64_t l;
-  int ret = dwarf_determine_source_line_number(addr, buf, buflen, &l);
+  int ret = dwarf_determine_source_line_number(the_proc, addr, buf, buflen, &l);
   if (ret) {
     *lineno = (int)l;
   }
   return ret;
 }
 
-static char *gimli_get_string_symbol(const char *obj, const char *name)
+static char *gimli_get_string_symbol(gimli_proc_t proc, const char *obj, const char *name)
 {
   struct gimli_symbol *sym;
 
-  sym = gimli_sym_lookup(obj, name);
+  sym = gimli_sym_lookup(proc, obj, name);
   if (sym) {
     void *addr;
 
-    if (gimli_read_mem(sym->addr, &addr, sizeof(addr)) == sizeof(addr)) {
-      return gimli_read_string(addr);
+    if (gimli_read_mem(proc, sym->addr, &addr, sizeof(addr)) == sizeof(addr)) {
+      return gimli_read_string(proc, addr);
     }
   }
   return NULL;
@@ -51,17 +47,17 @@ static int gimli_copy_from_symbol(const char *obj, const char *name,
 {
   struct gimli_symbol *sym;
 
-  sym = gimli_sym_lookup(obj, name);
+  sym = gimli_sym_lookup(the_proc, obj, name);
   if (sym) {
     void *addr = sym->addr;
 
     while (deref--) {
-      if (gimli_read_mem(addr, &addr, sizeof(addr)) != sizeof(addr)) {
+      if (gimli_read_mem(the_proc, addr, &addr, sizeof(addr)) != sizeof(addr)) {
         return 0;
       }
     }
 
-    return gimli_read_mem(addr, buf, size) == size;
+    return gimli_read_mem(the_proc, addr, buf, size) == size;
   }
   return 0;
 }
@@ -79,14 +75,14 @@ struct gimli_ana_api ana_api = {
   gimli_get_proc_stat,
 };
 
-char *gimli_read_string(void *addr)
+char *gimli_read_string(gimli_proc_t proc, void *addr)
 {
   int len;
   char c;
   char *buf;
 
   len = 0;
-  while (gimli_read_mem(addr + len, &c, 1) == 1) {
+  while (gimli_read_mem(proc, addr + len, &c, 1) == 1) {
     if (c == '\0') {
       break;
     }
@@ -95,7 +91,7 @@ char *gimli_read_string(void *addr)
 
   if (len) {
     buf = malloc(len+1);
-    gimli_read_mem(addr, buf, len);
+    gimli_read_mem(proc, addr, buf, len);
     buf[len] = '\0';
     return buf;
   }
@@ -184,10 +180,10 @@ struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,
   return NULL;
 }
 
-struct gimli_object_mapping *gimli_mapping_for_addr(void *addr)
+struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, void *addr)
 {
   struct gimli_object_mapping *m;
-  for (m = gimli_mappings; m; m = m->next) {
+  for (m = proc->mappings; m; m = m->next) {
     if (addr >= m->base && addr <= m->base + m->len) {
       return m;
     }
@@ -195,12 +191,12 @@ struct gimli_object_mapping *gimli_mapping_for_addr(void *addr)
   return NULL;
 }
 
-const char *gimli_pc_sym_name(void *addr, char *buf, int buflen)
+const char *gimli_pc_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen)
 {
   struct gimli_object_mapping *m;
   struct gimli_symbol *s;
 
-  m = gimli_mapping_for_addr(addr);
+  m = gimli_mapping_for_addr(proc, addr);
   if (m) {
     s = find_symbol_for_addr(m->objfile, addr);
     if (s) {
@@ -218,7 +214,7 @@ const char *gimli_pc_sym_name(void *addr, char *buf, int buflen)
   return "";
 }
 
-int gimli_render_siginfo(siginfo_t *si, char *buf, size_t bufsize)
+int gimli_render_siginfo(gimli_proc_t proc, siginfo_t *si, char *buf, size_t bufsize)
 {
   char *source = "";
   int use_fault_addr = 0;
@@ -346,7 +342,7 @@ int gimli_render_siginfo(siginfo_t *si, char *buf, size_t bufsize)
   if (use_fault_addr) {
     const char *name;
 
-    name = gimli_pc_sym_name(si->si_addr, namebuf, sizeof(namebuf));
+    name = gimli_pc_sym_name(proc, si->si_addr, namebuf, sizeof(namebuf));
     if (name && strlen(name)) {
       snprintf(addrbuf, sizeof(addrbuf), " (%s)", name);
     } else {
@@ -369,15 +365,15 @@ void gimli_render_frame(int tid, int nframe, struct gimli_unwind_cursor *frame)
 
   if (gimli_is_signal_frame(&cur)) {
     if (cur.si.si_signo) {
-      gimli_render_siginfo(&cur.si, namebuf, sizeof(namebuf));
+      gimli_render_siginfo(cur.proc, &cur.si, namebuf, sizeof(namebuf));
       printf("#%-2d %s\n", nframe, namebuf);
     } else {
       printf("#%-2d signal handler\n", nframe);
     }
   } else {
-    name = gimli_pc_sym_name(cur.st.pc, namebuf, sizeof(namebuf));
+    name = gimli_pc_sym_name(cur.proc, cur.st.pc, namebuf, sizeof(namebuf));
     printf("#%-2d " PTRFMT " %s", nframe, (PTRFMT_T)cur.st.pc, name);
-    if (dwarf_determine_source_line_number(cur.st.pc,
+    if (dwarf_determine_source_line_number(cur.proc, cur.st.pc,
           filebuf, sizeof(filebuf), &lineno)) {
       printf(" (%s:%lld)", filebuf, lineno);
     }
@@ -386,13 +382,14 @@ void gimli_render_frame(int tid, int nframe, struct gimli_unwind_cursor *frame)
   }
 }
 
-int gimli_stack_trace(int tid, struct gimli_unwind_cursor *frames, int nframes)
+int gimli_stack_trace(gimli_proc_t proc, int tid, struct gimli_unwind_cursor *frames, int nframes)
 {
-  struct gimli_thread_state *thr = &gimli_threads[tid];
+  struct gimli_thread_state *thr = &proc->threads[tid];
   struct gimli_unwind_cursor cur;
   int i;
 
   memset(&cur, 0, sizeof(cur));
+  cur.proc = the_proc;
   if (gimli_init_unwind(&cur, thr)) {
     int frame = 0;
     do {
@@ -447,12 +444,13 @@ static void populate_proc_stat(int pid)
 }
 
 struct gimli_object_mapping *gimli_add_mapping(
+  gimli_proc_t proc,
   const char *objname, void *base, unsigned long len,
   unsigned long offset)
 {
   struct gimli_object_mapping *m = calloc(1, sizeof(*m));
 
-  m->next = gimli_mappings;
+  m->next = proc->mappings;
   m->base = base;
   m->len = len;
   if (debug) {
@@ -460,24 +458,25 @@ struct gimli_object_mapping *gimli_add_mapping(
       (void*)(m->base + m->len),  objname);
   }
   m->offset = offset;
-  m->objfile = gimli_find_object(objname);
+  m->objfile = gimli_find_object(proc, objname);
   if (!m->objfile) {
-    m->objfile = gimli_add_object(objname, base);
+    m->objfile = gimli_add_object(proc, objname, base);
   }
-  gimli_mappings = m;
+  proc->mappings = m;
   return m;
 }
 
 struct gimli_object_file *gimli_find_object(
+  gimli_proc_t proc,
   const char *objname)
 {
   struct gimli_object_file *f;
 
   if (objname == NULL) {
-    return first_file;
+    return proc->first_file;
   }
 
-  for (f = gimli_files; f; f = f->next) {
+  for (f = proc->files; f; f = f->next) {
     if (!strcmp(f->objname, objname)) {
       return f;
     }
@@ -552,22 +551,23 @@ int gimli_bake_symtab(struct gimli_object_file *f)
 }
 
 struct gimli_object_file *gimli_add_object(
+  gimli_proc_t proc,
   const char *objname, void *base)
 {
-  struct gimli_object_file *f = gimli_find_object(objname);
+  struct gimli_object_file *f = gimli_find_object(proc, objname);
   struct gimli_symbol *sym;
   char *name = NULL;
   if (f) return f;
 
   f = calloc(1, sizeof(*f));
   f->objname = strdup(objname);
-  f->next = gimli_files;
+  f->next = proc->files;
   f->symbols = gimli_hash_new(NULL);
   f->sections = gimli_hash_new(NULL);
-  gimli_files = f;
+  proc->files = f;
 
-  if (first_file == NULL) {
-    first_file = f;
+  if (proc->first_file == NULL) {
+    proc->first_file = f;
   }
 
 #ifndef __MACH__
@@ -588,14 +588,14 @@ struct gimli_object_file *gimli_add_object(
   return f;
 }
 
-struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name)
+struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const char *name)
 {
   struct gimli_object_file *f;
   struct gimli_symbol *sym = NULL;
 
   /* if obj is NULL, we're looking for it anywhere we can find it */
   if (obj == NULL) {
-    for (f = gimli_files; f; f = f->next) {
+    for (f = proc->files; f; f = f->next) {
       if (!gimli_hash_find(f->symbols, name, (void**)&sym)) {
         sym = NULL;
       }
@@ -607,13 +607,13 @@ struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name)
     return NULL;
   }
 
-  f = gimli_find_object(obj);
+  f = gimli_find_object(proc, obj);
   if (!f) {
     char buf[1024];
 
     /* we may have just been given the basename of the object, in which
      * case, we need to run through the list and match on basenames */
-    for (f = gimli_files; f; f = f->next) {
+    for (f = proc->files; f; f = f->next) {
       strcpy(buf, f->objname);
       if (!strcmp(basename(buf), obj)) {
         break;
@@ -622,7 +622,7 @@ struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name)
     if (!f) {
       /* so maybe we were given the basename it refers to a symlink
        * that we need to resolve... */
-      for (f = gimli_files; f; f = f->next) {
+      for (f = proc->files; f; f = f->next) {
         char dir[1024];
         int len;
 
@@ -651,23 +651,25 @@ struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name)
 
 static void detachatexit(void)
 {
-  gimli_detach();
+  if (the_proc) {
+    gimli_proc_delete(the_proc);
+    the_proc = NULL;
+  }
 }
 
 int tracer_attach(int pid)
 {
   atexit(detachatexit);
-  if (gimli_attach(pid)) {
+  if (gimli_proc_attach(pid, &the_proc) == GIMLI_ERR_OK) {
     struct gimli_object_file *file;
     populate_proc_stat(pid);
 
-    for (file = gimli_files; file; file = file->next) {
+    for (file = the_proc->files; file; file = file->next) {
       gimli_process_dwarf(file);
       gimli_bake_symtab(file);
     }
     return 1;
   }
-  gimli_detach();
   return 0;
 }
 

@@ -118,7 +118,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
     switch (op) {
       /* opcodes that affect our effective pc address */
       case DW_CFA_set_loc:
-        if (!dw_read_encptr(cie->code_enc, &insns, insn_end, pc, &pc)) {
+        if (!dw_read_encptr(cur->proc, cie->code_enc, &insns, insn_end, pc, &pc)) {
           return 0;
         }
         break;
@@ -460,7 +460,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
           fprintf(stderr, "col %d: CFA relative, reading %p + %lld = %p\n", i,
             fp, cur->dw.cols[i].value, regaddr);
         }
-        if (gimli_read_mem(regaddr, &val, sizeof(val)) != sizeof(val)) {
+        if (gimli_read_mem(cur->proc, regaddr, &val, sizeof(val)) != sizeof(val)) {
           fprintf(stderr, "col %d: couldn't read value\n", i);
           return 0;
         }
@@ -743,7 +743,7 @@ static int load_fde(struct gimli_object_mapping *m)
              * we don't want to attempt the indirection */
             enc &= ~ DW_EH_PE_indirect;
 
-            if (!dw_read_encptr(enc, &eh_frame, end,
+            if (!dw_read_encptr(m->proc, enc, &eh_frame, end,
                   s->addr + eh_frame - eh_start,
                   &cie->personality_routine)) {
               fprintf(stderr, "Error reading personality routine, "
@@ -809,13 +809,13 @@ static int load_fde(struct gimli_object_mapping *m)
           return 0;
         }
 
-        if (!dw_read_encptr(fde->cie->code_enc, &eh_frame, end,
+        if (!dw_read_encptr(m->proc, fde->cie->code_enc, &eh_frame, end,
               s->addr + eh_frame - eh_start, &fde->initial_loc)) {
           fprintf(stderr, "Error while reading initial loc\n");
           return 0;
         }
 
-        if (!dw_read_encptr(fde->cie->code_enc & 0x0f, &eh_frame, end,
+        if (!dw_read_encptr(m->proc, fde->cie->code_enc & 0x0f, &eh_frame, end,
               s->addr + eh_frame - eh_start,
               &fde->addr_range)) {
           fprintf(stderr, "Error while reading addr_range\n");
@@ -831,6 +831,7 @@ static int load_fde(struct gimli_object_mapping *m)
         if (debug) {
           char name[1024];
           const char *sym = gimli_pc_sym_name(
+              m->proc,
               (void*)(intptr_t)fde->initial_loc, name, sizeof(name));
           fprintf(stderr, "FDE: init=%p-%p %s aug=%s\n",
               (char*)(intptr_t)fde->initial_loc,
@@ -872,12 +873,12 @@ static int search_compare_fde(const void *PC, const void *FDE)
 }
 
 /* find the FDE for the specified pc address */
-static struct dw_fde *find_fde(void *pc)
+static struct dw_fde *find_fde(gimli_proc_t proc, void *pc)
 {
   struct gimli_object_mapping *m;
   struct dw_fde *fde;
 
-  m = gimli_mapping_for_addr(pc);
+  m = gimli_mapping_for_addr(proc, pc);
   if (!m) {
     return NULL;
   }
@@ -912,7 +913,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
         cur->st.pc, cur->st.fp);
   }
 
-  fde = find_fde(cur->st.pc);
+  fde = find_fde(cur->proc, cur->st.pc);
   if (!fde) {
     cur->dwarffail = 1;
     if (debug) {
@@ -968,7 +969,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
    * This implies that we may have a faulty unwinder and this should
    * be investigated, but for now, we fall back to frame pointer
    * unwinding when things look bad */
-  if (!gimli_mapping_for_addr(cur->st.pc)) {
+  if (!gimli_mapping_for_addr(cur->proc, cur->st.pc)) {
     if (debug) {
       fprintf(stderr, "DWARF: unwind gave bogus pc\n");
     }

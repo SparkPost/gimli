@@ -392,7 +392,7 @@ struct gimli_dwarf_die {
   struct gimli_dwarf_attr *attrs;
 };
 
-int dw_read_encptr(uint8_t enc, const uint8_t **ptr, const uint8_t *end,
+int dw_read_encptr(gimli_proc_t proc, uint8_t enc, const uint8_t **ptr, const uint8_t *end,
   uint64_t pc, uint64_t *output);
 uint64_t dw_read_uleb128(const uint8_t **ptr, const uint8_t *end);
 int64_t dw_read_leb128(const uint8_t **ptr, const uint8_t *end);
@@ -410,7 +410,7 @@ struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode);
 const char *gimli_dwarf_resolve_type_name(struct gimli_object_file *f,
   struct gimli_dwarf_attr *type);
-int gimli_dwarf_read_value(void *addr, int is_stack, void *out, uint64_t size);
+int gimli_dwarf_read_value(gimli_proc_t proc, void *addr, int is_stack, void *out, uint64_t size);
 
 
 #ifdef __cplusplus

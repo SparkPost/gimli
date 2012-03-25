@@ -93,9 +93,6 @@ struct gimli_dwarf_unwind_state {
   struct gimli_dwarf_reg_column cols[GIMLI_MAX_DWARF_REGS];
 };
 
-
-typedef struct libgimli_hash_table *gimli_hash_t;
-
 struct gimli_heartbeat {
   int state;
   int ticks;
@@ -120,6 +117,7 @@ struct gimli_thread_state {
 #endif
 };
 struct gimli_unwind_cursor {
+  gimli_proc_t proc;
   struct gimli_thread_state st;
   struct gimli_dwarf_unwind_state dw;
   /* if a signal frame, the signal that triggered it */
@@ -188,6 +186,7 @@ struct gimli_object_file {
 };
 
 struct gimli_object_mapping {
+  gimli_proc_t proc;
   struct gimli_object_mapping *next;
   void *base;
   unsigned long len;
@@ -199,6 +198,60 @@ struct gimli_object_mapping {
   unsigned int num_arange;
 };
 
+struct gimli_proc {
+  /** if 0, represents myself. otherwise is the target pid */
+  int pid;
+  /** when it falls to zero, we tidy everything up */
+  int refcnt;
+
+  /** target dependent data */
+  void *tdep;
+
+  /** list of threads */
+  int nthreads;
+  struct gimli_thread_state *threads;
+
+  struct gimli_object_file *files;
+  struct gimli_object_file *first_file;
+  struct gimli_object_mapping *mappings;
+
+  /* TODO: bits here to track page-by-page mappings */
+};
+
+struct gimli_mem_ref {
+  /** when it falls to zero, we tidy everything up */
+  int refcnt;
+
+  /** associated process */
+  gimli_proc_t proc;
+
+  /** base address in target space */
+  gimli_addr_t target;
+
+  /** base address in local space */
+  void *base;
+
+  /** indicates what sort of mapping this is, and how we
+   * should dispose of it */
+  enum {
+    /** no action required; memory owned by
+     * relative reference */
+    gimli_mem_ref_is_relative,
+    /** must free(base) when deleted */
+    gimli_mem_ref_is_malloc,
+    /** must munmap(base) when deleted */
+    gimli_mem_ref_is_mmap
+  } map_type;
+
+  /** size of mapping */
+  size_t size;
+
+  /* for the sake of efficiency, we avoid making a real mapping
+   * for each request and try to consolidate maps page-by-page.
+   * If we do this, we'll base a ref off a master map */
+  struct gimli_mem_ref *relative;
+};
+
 extern int debug, quiet, detach, watchdog_interval, watchdog_start_interval,
   watchdog_stop_interval, do_setsid, respawn_frequency, trace_interval;
 extern int run_only_once;
@@ -206,43 +259,24 @@ extern int immortal_child;
 extern int run_as_uid, run_as_gid;
 extern char *glider_path, *trace_dir, *gimli_progname, *pidfile, *arg0;
 extern char *log_file;
-extern int gimli_nthreads;
 extern int max_frames;
-extern struct gimli_thread_state *gimli_threads;
-extern struct gimli_object_file *gimli_files;
-extern struct gimli_object_mapping *gimli_mappings;
 
 extern void logprint(const char *fmt, ...);
 
 struct gimli_object_mapping *gimli_add_mapping(
+  gimli_proc_t proc,
   const char *objname, void *base, unsigned long len,
   unsigned long offset);
-struct gimli_object_mapping *gimli_mapping_for_addr(void *addr);
+struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, void *addr);
 
 struct gimli_object_file *gimli_add_object(
+  gimli_proc_t proc,
   const char *objname, void *base);
 struct gimli_symbol *gimli_add_symbol(struct gimli_object_file *f,
   const char *name, void *addr, uint32_t size);
 struct gimli_object_file *gimli_find_object(
+  gimli_proc_t proc,
   const char *objname);
-
-typedef enum _gimli_hash_iter_ret {
-  GIMLI_HASH_ITER_STOP = 0,
-  GIMLI_HASH_ITER_CONT = 1
-} gimli_hash_iter_ret;
-typedef gimli_hash_iter_ret (*gimli_hash_iter_func_t)(
-  const char *k, int klen, void *item, void *arg
-);
-typedef void (*gimli_hash_free_func_t)(void *item);
-
-gimli_hash_t gimli_hash_new(gimli_hash_free_func_t dtor);
-int gimli_hash_size(gimli_hash_t h);
-int gimli_hash_iter(gimli_hash_t h, gimli_hash_iter_func_t func, void *arg);
-void gimli_hash_destroy(gimli_hash_t h);
-void gimli_hash_delete_all(gimli_hash_t h);
-int gimli_hash_delete(gimli_hash_t h, const char *k);
-int gimli_hash_find(gimli_hash_t h, const char *k, void **item_p);
-int gimli_hash_insert(gimli_hash_t h, const char *k, void *item);
 
 #if SIZEOF_VOIDP == 8
 # define PTRFMT "0x%016llx"
@@ -259,7 +293,8 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur);
 int gimli_dwarf_regs_to_thread(struct gimli_unwind_cursor *cur);
 int gimli_thread_regs_to_dwarf(struct gimli_unwind_cursor *cur);
 void *gimli_reg_addr(struct gimli_unwind_cursor *cur, int col);
-int dwarf_determine_source_line_number(void *pc, char *src, int srclen,
+int dwarf_determine_source_line_number(gimli_proc_t proc,
+  void *pc, char *src, int srclen,
   uint64_t *lineno);
 
 char **gimli_init_proctitle(int argc, char **argv);
@@ -267,18 +302,19 @@ void gimli_set_proctitle(const char *fmt, ...);
 void gimli_set_proctitlev(const char *fmt, va_list ap);
 
 extern struct gimli_ana_api ana_api;
+extern gimli_proc_t the_proc;
 
 int process_args(int *argc, char **argv[]);
 
 int gimli_demangle(const char *mangled, char *out, int out_size);
 
-int gimli_attach(int pid);
-int gimli_detach(void);
+gimli_err_t gimli_attach(gimli_proc_t proc);
+gimli_err_t gimli_detach(gimli_proc_t proc);
 
-const char *gimli_pc_sym_name(void *addr, char *buf, int buflen);
-int gimli_read_mem(void *src, void *dest, int len);
-struct gimli_symbol *gimli_sym_lookup(const char *obj, const char *name);
-char *gimli_read_string(void *addr);
+const char *gimli_pc_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen);
+int gimli_read_mem(gimli_proc_t proc, void *src, void *dest, int len);
+struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const char *name);
+char *gimli_read_string(gimli_proc_t proc, void *addr);
 int gimli_get_parameter(void *context, const char *varname,
   const char **datatype, void **addr, uint64_t *size);
 extern struct gimli_symbol *find_symbol_for_addr(struct gimli_object_file *f,

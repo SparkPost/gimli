@@ -2,7 +2,7 @@ AUTOMAKE_OPTIONS = subdir-objects
 RLLDFLAGS = @RL_LDFLAGS@
 RLCFLAGS = @RL_CFLAGS@
 TRACELDFLAGS = @CORONER_LDFLAGS@
-bin_PROGRAMS = monitor glider wdb
+bin_PROGRAMS = monitor glider #wdb
 noinst_PROGRAMS = wedgie
 lib_LTLIBRARIES = libgimli.la
 noinst_LTLIBRARIES = liblua.la libtrace.la
@@ -15,7 +15,7 @@ glider_LDADD = libtrace.la liblua.la $(TRACELDFLAGS)
 
 libtrace_la_SOURCES = \
 	trace.c linux.c elf.c hash.c elf-read.c dwarf-read.c dwarf-unwind.c \
-	dwarf-expr.c darwin.c solaris.c demangle.c freebsd.c
+	dwarf-expr.c darwin.c solaris.c demangle.c freebsd.c proc.c
 
 libgimli_la_SOURCES = \
   heartbeat.c

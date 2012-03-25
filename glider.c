@@ -29,7 +29,7 @@ void trace_process(int pid)
       fprintf(stderr, "Not enough memory to trace %d frames\n", max_frames);
       goto out;
     }
-    for (file = gimli_files; file; file = file->next) {
+    for (file = the_proc->files; file; file = file->next) {
       /* perform discovery of tracer module */
       struct gimli_symbol *sym;
       char *name = NULL;
@@ -37,9 +37,9 @@ void trace_process(int pid)
       char buf2[1024];
       void *h;
 
-      sym = gimli_sym_lookup(file->objname, "gimli_tracer_module_name");
+      sym = gimli_sym_lookup(the_proc, file->objname, "gimli_tracer_module_name");
       if (sym) {
-        name = gimli_read_string(sym->addr);
+        name = gimli_read_string(the_proc, sym->addr);
       }
       if (name == NULL) {
         strcpy(buf, file->objname);
@@ -66,8 +66,8 @@ void trace_process(int pid)
       }
 
     }
-    for (i = 0; i < gimli_nthreads; i++) {
-      int nframes = gimli_stack_trace(i, frames, max_frames);
+    for (i = 0; i < the_proc->nthreads; i++) {
+      int nframes = gimli_stack_trace(the_proc, i, frames, max_frames);
       int suppress = 0;
       int nf;
 
@@ -76,7 +76,7 @@ void trace_process(int pid)
         contexts[nf] = &frames[nf];
       }
 
-      for (file = gimli_files; file; file = file->next) {
+      for (file = the_proc->files; file; file = file->next) {
         if (file->tracer_module &&
             file->tracer_module->api_version >= 2 &&
             file->tracer_module->on_begin_thread_trace) {
@@ -90,12 +90,12 @@ void trace_process(int pid)
       }
 
       if (!suppress) {
-        struct gimli_thread_state *thr = &gimli_threads[i];
+        struct gimli_thread_state *thr = &the_proc->threads[i];
 
         printf("Thread %d (LWP %d)\n", i, thr->lwpid);
         for (nf = 0; nf < nframes; nf++) {
           suppress = 0;
-          for (file = gimli_files; file; file = file->next) {
+          for (file = the_proc->files; file; file = file->next) {
             if (file->tracer_module &&
                 file->tracer_module->api_version >= 2 &&
                 file->tracer_module->before_print_frame) {
@@ -110,7 +110,7 @@ void trace_process(int pid)
           if (!suppress) {
             gimli_render_frame(i, nf, frames + nf);
 
-            for (file = gimli_files; file; file = file->next) {
+            for (file = the_proc->files; file; file = file->next) {
               if (file->tracer_module &&
                   file->tracer_module->api_version >= 2 &&
                   file->tracer_module->after_print_frame) {
@@ -120,7 +120,7 @@ void trace_process(int pid)
             }
           }
         }
-        for (file = gimli_files; file; file = file->next) {
+        for (file = the_proc->files; file; file = file->next) {
           if (file->tracer_module &&
               file->tracer_module->api_version >= 2 &&
               file->tracer_module->on_end_thread_trace) {
@@ -134,7 +134,7 @@ void trace_process(int pid)
 
     printf("\n");
 
-    for (file = gimli_files; file; file = file->next) {
+    for (file = the_proc->files; file; file = file->next) {
       if (file->tracer_module == NULL) continue;
 
       if (file->tracer_module->perform_trace) {
@@ -144,7 +144,8 @@ void trace_process(int pid)
 
   }
 out:
-  gimli_detach();
+  ;
+//  gimli_detach();
 }
 
 int main(int argc, char *argv[])

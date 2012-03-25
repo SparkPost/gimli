@@ -56,7 +56,8 @@ int64_t dw_read_leb128(const uint8_t **ptr, const uint8_t *end)
   return res;
 }
 
-int dw_read_encptr(uint8_t enc, const uint8_t **ptr, const uint8_t *end,
+int dw_read_encptr(gimli_proc_t proc,
+  uint8_t enc, const uint8_t **ptr, const uint8_t *end,
   uint64_t pc, uint64_t *output)
 {
   const uint8_t *cur = *ptr;
@@ -70,13 +71,13 @@ int dw_read_encptr(uint8_t enc, const uint8_t **ptr, const uint8_t *end,
     return 0;
 
     if (sizeof(void*) == 8) {
-      if (gimli_read_mem((void*)(intptr_t)res, &res, sizeof(res))
+      if (gimli_read_mem(proc, (void*)(intptr_t)res, &res, sizeof(res))
           != sizeof(*output)) {
         return 0;
       }
     } else {
       uint32_t r;
-      if (gimli_read_mem((void*)(intptr_t)res, &r, sizeof(r)) != sizeof(r)) {
+      if (gimli_read_mem(proc, (void*)(intptr_t)res, &r, sizeof(r)) != sizeof(r)) {
         return 0;
       }
       res = r;
@@ -191,14 +192,15 @@ static int search_compare_line(const void *pc, const void *L)
 
 /* read dwarf info to determine the source/line information for a given
  * address */
-int dwarf_determine_source_line_number(void *pc, char *src, int srclen,
+int dwarf_determine_source_line_number(gimli_proc_t proc,
+  void *pc, char *src, int srclen,
   uint64_t *lineno)
 {
   struct gimli_object_mapping *m;
   struct gimli_object_file *f;
   struct gimli_line_info *linfo;
 
-  m = gimli_mapping_for_addr(pc);
+  m = gimli_mapping_for_addr(proc, pc);
   if (!m) return 0;
   f = m->objfile;
 
@@ -994,7 +996,8 @@ static struct gimli_dwarf_die *process_die(
   return die;
 }
 
-struct gimli_dwarf_die *gimli_dwarf_get_die(struct gimli_object_file *f,
+struct gimli_dwarf_die *gimli_dwarf_get_die(
+  struct gimli_object_file *f,
   uint64_t offset)
 {
   const uint8_t *data, *datastart, *end, *next;
@@ -1024,9 +1027,9 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(struct gimli_object_file *f,
     if (!gimli_object_is_executable(f->elf)) {
       struct gimli_object_mapping *m;
 
-      for (m = gimli_mappings; m; m = m->next) {
+      for (m = the_proc->mappings; m; m = m->next) {
         if (m->objfile == f) {
-          reloc = (uint64_t)(intptr_t)m->base;
+          reloc = (uint64_t)(intptr_t)m->base; // FIXME: abstract this out
         }
       }
       //    printf("Using reloc adjustment for %s: 0x%llx\n", m->objfile->objname, reloc);
@@ -1278,7 +1281,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
   struct gimli_dwarf_die *die;
   struct dw_die_arange *arange;
 
-  m = gimli_mapping_for_addr(cur->st.pc);
+  m = gimli_mapping_for_addr(cur->proc, cur->st.pc);
   if (!m) {
     return NULL;
   }
@@ -1428,7 +1431,8 @@ const char *gimli_dwarf_resolve_type_name(struct gimli_object_file *f,
   return NULL;
 }
 
-int gimli_dwarf_read_value(void *addr, int is_stack, void *out, uint64_t size)
+int gimli_dwarf_read_value(gimli_proc_t proc,
+    void *addr, int is_stack, void *out, uint64_t size)
 {
   uint32_t u32;
   uint16_t u16;
@@ -1436,7 +1440,7 @@ int gimli_dwarf_read_value(void *addr, int is_stack, void *out, uint64_t size)
   uint64_t v;
 
   if (is_stack) {
-    return gimli_read_mem(addr, out, size) == size;
+    return gimli_read_mem(proc, addr, out, size) == size;
   }
   /* otherwise, addr actually contains the value */
   v = (uint64_t)(intptr_t)addr;
@@ -1469,7 +1473,7 @@ static int do_before(
 {
   struct gimli_object_file *file;
 
-  for (file = gimli_files; file; file = file->next) {
+  for (file = cur->proc->files; file; file = file->next) {
     if (file->tracer_module &&
         file->tracer_module->api_version >= 2 &&
         file->tracer_module->before_print_frame_var) {
@@ -1490,7 +1494,7 @@ static int do_before(
     char namebuf[1024];
     siginfo_t si;
 
-    if (gimli_read_mem(varaddr, &si, sizeof(si)) == sizeof(si)) {
+    if (gimli_read_mem(cur->proc, varaddr, &si, sizeof(si)) == sizeof(si)) {
       gimli_render_siginfo(&si, namebuf, sizeof(namebuf));
       printf("  siginfo_t *%s = %p\n    %s\n",
           varname, varaddr, namebuf);
@@ -1508,7 +1512,7 @@ static int do_after(
 {
   struct gimli_object_file *file;
 
-  for (file = gimli_files; file; file = file->next) {
+  for (file = cur->proc->files; file; file = file->next) {
     if (file->tracer_module &&
         file->tracer_module->api_version >= 2 &&
         file->tracer_module->after_print_frame_var) {
@@ -1588,7 +1592,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
           case DW_ATE_unsigned_char:
             switch (size) {
               case 8:
-                gimli_dwarf_read_value(addr, is_stack, &u64, size);
+                gimli_dwarf_read_value(cur->proc, addr, is_stack, &u64, size);
                 if (mask) {
                   u64 >>= shift;
                   u64 &= mask;
@@ -1596,7 +1600,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
                 printf("%llu (0x%llx)\n", u64, u64);
                 break;
               case 4:
-                gimli_dwarf_read_value(addr, is_stack, &u32, size);
+                gimli_dwarf_read_value(cur->proc, addr, is_stack, &u32, size);
                 if (mask) {
                   u32 >>= shift;
                   u32 &= mask;
@@ -1604,7 +1608,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
                 printf("%u (0x%x)\n", u32, u32);
                 break;
               case 2:
-                gimli_dwarf_read_value(addr, is_stack, &u16, size);
+                gimli_dwarf_read_value(cur->proc, addr, is_stack, &u16, size);
                 if (mask) {
                   u16 >>= shift;
                   u16 &= mask;
@@ -1612,7 +1616,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
                 printf("%u (0x%x)\n", u16, u16);
                 break;
               case 1:
-                gimli_dwarf_read_value(addr, is_stack, &u8, size);
+                gimli_dwarf_read_value(cur->proc, addr, is_stack, &u8, size);
                 if (mask) {
                   u8 >>= shift;
                   u8 &= mask;
@@ -1629,7 +1633,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
           default:
             switch (size) {
               case 8:
-                gimli_dwarf_read_value(addr, is_stack, &s64, size);
+                gimli_dwarf_read_value(cur->proc, addr, is_stack, &s64, size);
                 if (mask) {
                   s64 >>= shift;
                   s64 &= mask;
@@ -1637,7 +1641,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
                 printf("%lld (0x%llx)\n", s64, s64);
                 break;
               case 4:
-                gimli_dwarf_read_value(addr, is_stack, &s32, size);
+                gimli_dwarf_read_value(cur->proc, addr, is_stack, &s32, size);
                 if (mask) {
                   s32 >>= shift;
                   s32 &= mask;
@@ -1645,7 +1649,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
                 printf("%d (0x%x)\n", s32, s32);
                 break;
               case 2:
-                gimli_dwarf_read_value(addr, is_stack, &s16, size);
+                gimli_dwarf_read_value(cur->proc, addr, is_stack, &s16, size);
                 if (mask) {
                   s16 >>= shift;
                   s16 &= mask;
@@ -1653,7 +1657,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
                 printf("%d (0x%x)\n", s16, s16);
                 break;
               case 1:
-                gimli_dwarf_read_value(addr, is_stack, &s8, size);
+                gimli_dwarf_read_value(cur->proc, addr, is_stack, &s8, size);
                 if (mask) {
                   s8 >>= shift;
                   s8 &= mask;
@@ -1679,18 +1683,18 @@ static int show_param(struct gimli_unwind_cursor *cur,
         printf("%s%s%s = ", indentstr, type_name, name);
         switch (size) {
           case 8:
-            gimli_dwarf_read_value(addr, is_stack, &s64, size);
+            gimli_dwarf_read_value(cur->proc, addr, is_stack, &s64, size);
             break;
           case 4:
-            gimli_dwarf_read_value(addr, is_stack, &s32, size);
+            gimli_dwarf_read_value(cur->proc, addr, is_stack, &s32, size);
             s64 = s32;
             break;
           case 2:
-            gimli_dwarf_read_value(addr, is_stack, &s16, size);
+            gimli_dwarf_read_value(cur->proc, addr, is_stack, &s16, size);
             s64 = s16;
             break;
           case 1:
-            gimli_dwarf_read_value(addr, is_stack, &s8, size);
+            gimli_dwarf_read_value(cur->proc, addr, is_stack, &s8, size);
             s64 = s8;
             break;
         }
@@ -1722,10 +1726,10 @@ static int show_param(struct gimli_unwind_cursor *cur,
       case DW_TAG_pointer_type:
         gimli_dwarf_die_get_uint64_t_attr(td, DW_AT_byte_size, &size);
         if (size == 4) {
-          gimli_dwarf_read_value(addr, is_stack, &u32, size);
+          gimli_dwarf_read_value(cur->proc, addr, is_stack, &u32, size);
           addr = (void*)(intptr_t)u32;
         } else {
-          gimli_dwarf_read_value(addr, is_stack, &u64, size);
+          gimli_dwarf_read_value(cur->proc, addr, is_stack, &u64, size);
           addr = (void*)(intptr_t)u64;
         }
         if (!type_name) {
@@ -1736,7 +1740,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
         }
 
         printf("%s%s%s = %p", indentstr, type_name, name, addr);
-        symname = gimli_pc_sym_name(addr, namebuf, sizeof(namebuf));
+        symname = gimli_pc_sym_name(cur->proc, addr, namebuf, sizeof(namebuf));
         if (symname && strlen(symname)) {
           printf(" (%s)", symname);
         }
@@ -1757,9 +1761,9 @@ static int show_param(struct gimli_unwind_cursor *cur,
               && size == 1) {
             /* smells like a string */
             printf(" ");
-            if (gimli_read_mem(addr, namebuf, 1)) {
+            if (gimli_read_mem(cur->proc, addr, namebuf, 1)) {
               printf("\"");
-              while (gimli_read_mem(addr, namebuf, 1)) {
+              while (gimli_read_mem(cur->proc, addr, namebuf, 1)) {
                 if (namebuf[0] == '\0') break;
                 if (isprint(namebuf[0])) {
                   printf("%c", namebuf[0]);
@@ -1786,7 +1790,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
               if (kid && kid->tag == DW_TAG_pointer_type) {
                 /* if we have a pointer to a pointer, actually de-ref
                  * the pointer for the next level call */
-                if (gimli_read_mem(addr, &addr, sizeof(addr)) == sizeof(addr)) {
+                if (gimli_read_mem(cur->proc, addr, &addr, sizeof(addr)) == sizeof(addr)) {
                   show_param(cur, f, attr, addr, 0,
                       namebuf, NULL, indent + 2, 0, 0);
                 }
@@ -1896,7 +1900,7 @@ int gimli_get_parameter(void *context, const char *varname,
   uint64_t comp_unit_base = 0;
   struct gimli_dwarf_attr *location, *type;
   struct gimli_dwarf_attr *name, *frame_base_attr;
-  struct gimli_object_mapping *m = gimli_mapping_for_addr(cur->st.pc);
+  struct gimli_object_mapping *m = gimli_mapping_for_addr(cur->proc, cur->st.pc);
   int had_params = 0;
   int is_stack = 0;
 
@@ -2037,7 +2041,7 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
   uint64_t frame_base = 0;
   uint64_t comp_unit_base = 0;
   struct gimli_dwarf_attr *frame_base_attr;
-  struct gimli_object_mapping *m = gimli_mapping_for_addr(cur->st.pc);
+  struct gimli_object_mapping *m = gimli_mapping_for_addr(cur->proc, cur->st.pc);
   int had_params = 0;
 
   if (!die) {

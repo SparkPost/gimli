@@ -44,7 +44,7 @@ static int pop(struct dw_expr *e, struct dw_stack_val *v)
   return 1;
 }
 
-static int deref(uint64_t addr, uint64_t *resp, uint8_t opsize)
+static int deref(gimli_proc_t proc, uint64_t addr, uint64_t *resp, uint8_t opsize)
 {
   uint8_t u8;
   uint16_t u16;
@@ -55,19 +55,19 @@ static int deref(uint64_t addr, uint64_t *resp, uint8_t opsize)
 
   switch (opsize) {
     case 1:
-      res = gimli_read_mem(ptr, &u8, opsize);
+      res = gimli_read_mem(proc, ptr, &u8, opsize);
       u64 = u8;
       break;
     case 2:
-      res = gimli_read_mem(ptr, &u16, opsize);
+      res = gimli_read_mem(proc, ptr, &u16, opsize);
       u64 = u16;
       break;
     case 4:
-      res = gimli_read_mem(ptr, &u32, opsize);
+      res = gimli_read_mem(proc, ptr, &u32, opsize);
       u64 = u32;
       break;
     case 8:
-      res = gimli_read_mem(ptr, &u64, opsize);
+      res = gimli_read_mem(proc, ptr, &u64, opsize);
       break;
   }
   if (res != opsize) {
@@ -345,7 +345,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
 
       case DW_OP_deref:
         if (!pop(&e, &val)) return 0;
-        if (!deref(val.v.u64, &u64, sizeof(void*))) return 0;
+        if (!deref(cur->proc, val.v.u64, &u64, sizeof(void*))) return 0;
         val.is_signed = 0;
         val.is_stack = 1;
         if (!push(&e, &val)) return 0;
@@ -354,7 +354,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
       case DW_OP_deref_size:
         memcpy(&u8, e.ops, sizeof(u8));
         if (!pop(&e, &val)) return 0;
-        if (!deref(val.v.u64, &u64, u8)) return 0;
+        if (!deref(cur->proc, val.v.u64, &u64, u8)) return 0;
         val.is_signed = 0;
         val.is_stack = 1;
         if (!push(&e, &val)) return 0;
