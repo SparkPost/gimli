@@ -169,12 +169,16 @@ extern struct gimli_ana_module *gimli_ana_init(const struct gimli_ana_api *api);
 /** hash table utility API */
 typedef struct libgimli_hash_table *gimli_hash_t;
 
-typedef enum _gimli_hash_iter_ret {
-  GIMLI_HASH_ITER_STOP = 0,
-  GIMLI_HASH_ITER_CONT = 1
-} gimli_hash_iter_ret;
+typedef enum {
+  /** done iterating */
+  GIMLI_ITER_STOP = 0,
+  /** keep going */
+  GIMLI_ITER_CONT = 1,
+  /** like stop, but implies error */
+  GIMLI_ITER_ERR = 2,
+} gimli_iter_status_t;
 
-typedef gimli_hash_iter_ret (*gimli_hash_iter_func_t)(
+typedef gimli_iter_status_t (*gimli_hash_iter_func_t)(
   const char *k, int klen, void *item, void *arg
 );
 typedef void (*gimli_hash_free_func_t)(void *item);
@@ -272,6 +276,149 @@ void gimli_mem_ref_delete(gimli_mem_ref_t mem);
 /** adds a reference to a mapping */
 void gimli_mem_ref_addref(gimli_mem_ref_t mem);
 
+
+/* --- types */
+
+struct gimli_type;
+/** represents type information from various sources */
+typedef gimli_type *gimli_type_t;
+
+/** adds a reference to the type */
+void gimli_type_addref(gimli_type_t t);
+
+/** deletes a reference */
+void gimli_type_delete(gimli_type_t t);
+
+/** returns the name of the variable or member for this type */
+const char *gimli_type_name(gimli_type_t t);
+
+/** returns the C-style type name for this type */
+const char *gimli_type_declname(gimli_type_t t);
+
+/** returns the padded and aligned size requirements
+ * to hold an instance of this type */
+size_t gimli_type_size(gimli_type_t t);
+
+/** returns the "kind" of the type */
+int gimli_type_kind(gimli_type_t t);
+
+#define GIMLI_K_INTEGER  1
+#define GIMLI_K_FLOAT    2
+#define GIMLI_K_POINTER  3
+#define GIMLI_K_ARRAY    4
+#define GIMLI_K_FUNCTION 5
+#define GIMLI_K_STRUCT   6
+#define GIMLI_K_UNION    7
+#define GIMLI_K_ENUM     8
+#define GIMLI_K_TYPEDEF  9
+#define GIMLI_K_VOLATILE 10
+#define GIMLI_K_CONST    11
+#define GIMLI_K_RESTRICT 12
+
+/** generic encoding information */
+struct gimli_type_encoding {
+  /** GIMLI_INT_XXX for integer types,
+   * GIMLI_FP_XXX for floating point */
+  uint32_t format;
+  /** offset of value in bits */
+  uint32_t offset;
+  /** size of storage in bits */
+  uint32_t bits;
+};
+
+/** returns the encoding information for
+ * the type */
+void gimli_type_encoding(gimli_type_t t,
+    struct gimli_type_encoding *enc);
+
+/** create an instance of an integer type */
+gimli_type_t gimli_type_new_integer(uint32_t flag,
+    const char *name, const struct gimli_type_encoding *enc);
+
+/** create a new volatile type */
+gimli_type_t gimli_type_new_volatile(uint32_t flag,
+    gimli_type_t t);
+
+/** create a new "restrict" type */
+gimli_type_t gimli_type_new_restrict(uint32_t flag,
+    gimli_type_t t);
+
+/** create a new "const" type */
+gimli_type_t gimli_type_new_const(uint32_t flag,
+    gimli_type_t t);
+
+/** information about struct/union members */
+struct gimli_type_membinfo {
+  /** type and name of member */
+  gimli_type_t t;
+  /** offset in bits */
+  uint64_t offset;
+};
+
+/** returns information about a type member */
+int gimli_type_membinfo(gimli_type_t t,
+    /** name of the member */
+    const char *name,
+    struct gimli_type_membinfo *info);
+
+/** create an instance of a structure type */
+gimli_type_t gimli_type_new_struct(uint32_t flag, const char *name);
+
+/** add a new member to a structure type.
+ * Note that you can set the encoding on membertype
+ * to control the offset and size of the member */
+int gimli_type_add_member(gimli_type_t t,
+    const char *name,
+    gimli_type_t membertype);
+
+/** information about arrays */
+struct gimli_type_arinfo {
+  /** type of array elements */
+  gimli_type_t contents;
+  /** type of array index */
+  gimli_type_t idx;
+  /** size of the array */
+  uint32_t nelems;
+};
+
+/** returns array information */
+int gimli_type_arinfo(gimli_type_t t
+    struct gimli_type_arinfo *info);
+
+/** information about functions */
+struct gimli_type_funcinfo {
+  /** return type */
+  gimli_type_t rettype;
+  /** number of arguments */
+  uint32_t nargs;
+  /** flags */
+  uint32_t flags;
+/** if set in flags, the function is variadic */
+#define GIMLI_FUNC_VARARG 0x1
+};
+
+/** returns function information */
+int gimli_type_funcinfo(gimli_type_t t
+    struct gimli_type_funcinfo *info);
+
+/** callback function for recursively visiting a
+ * type */
+typedef gimli_iter_status_t gimli_type_visit_f(
+    /** name of member */
+    const char *name,
+    /** type being visited */
+    gimli_type_t t,
+    /** offset in bits */
+    uint64_t offset,
+    /** depth of recursion */
+    int depth,
+    /** caller provided closure */
+    void *arg);
+
+/** recursively visit a type */
+int gimli_type_visit(gimli_type_t t,
+    gimli_type_visit_f func,
+    void *arg);
 
 #ifdef __cplusplus
 }

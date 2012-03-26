@@ -6,7 +6,7 @@
 #include "impl.h"
 
 /* perform discovery of tracer module */
-static gimli_hash_iter_ret load_modules_for_file(const char *k, int klen,
+static gimli_iter_status_t load_modules_for_file(const char *k, int klen,
     void *item, void *arg)
 {
   gimli_mapped_object_t file = item;
@@ -45,7 +45,7 @@ static gimli_hash_iter_ret load_modules_for_file(const char *k, int klen,
         file->objname, buf2, strerror(errno));
   }
 
-  return GIMLI_HASH_ITER_CONT;
+  return GIMLI_ITER_CONT;
 }
 
 void trace_process(int pid)

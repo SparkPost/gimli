@@ -556,14 +556,14 @@ static void detachatexit(void)
   }
 }
 
-static gimli_hash_iter_ret process_file(const char *k, int klen,
+static gimli_iter_status_t process_file(const char *k, int klen,
     void *item, void *arg)
 {
   gimli_mapped_object_t file = item;
 
   gimli_process_dwarf(file);
 
-  return GIMLI_HASH_ITER_CONT;
+  return GIMLI_ITER_CONT;
 }
 
 int tracer_attach(int pid)

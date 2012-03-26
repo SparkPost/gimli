@@ -270,7 +270,8 @@ void gimli_hash_destroy(gimli_hash_t h)
 
 int gimli_hash_iter(gimli_hash_t h, gimli_hash_iter_func_t func, void *arg)
 {
-	int i, ret;
+	int i;
+	gimli_iter_status_t ret;
 	gimli_hash_bucket *b;
 	int visited = 0;
 
@@ -280,7 +281,7 @@ int gimli_hash_iter(gimli_hash_t h, gimli_hash_iter_func_t func, void *arg)
 		while (b) {
 			++visited;
 			ret = func(b->k, b->klen, b->item, arg);
-			if (ret == GIMLI_HASH_ITER_STOP) {
+			if (ret != GIMLI_ITER_CONT) {
 				return visited;
 			}
 			b = b->next;

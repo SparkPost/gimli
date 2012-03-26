@@ -216,19 +216,19 @@ struct find_sym {
   struct gimli_symbol *sym;
 };
 
-static gimli_hash_iter_ret search_for_sym(const char *k, int klen,
+static gimli_iter_status_t search_for_sym(const char *k, int klen,
     void *item, void *arg)
 {
   gimli_mapped_object_t file = item;
   struct find_sym *find = arg;
 
   find->sym = sym_lookup(file, find->name);
-  if (find->sym) return GIMLI_HASH_ITER_STOP;
+  if (find->sym) return GIMLI_ITER_STOP;
 
-  return GIMLI_HASH_ITER_CONT;
+  return GIMLI_ITER_CONT;
 }
 
-static gimli_hash_iter_ret search_for_basename(const char *k, int klen,
+static gimli_iter_status_t search_for_basename(const char *k, int klen,
     void *item, void *arg)
 {
   gimli_mapped_object_t file = item;
@@ -238,13 +238,13 @@ static gimli_hash_iter_ret search_for_basename(const char *k, int klen,
   strcpy(buf, file->objname);
   if (!strcmp(basename(buf), find->name)) {
     find->file = file;
-    return GIMLI_HASH_ITER_STOP;
+    return GIMLI_ITER_STOP;
   }
 
-  return GIMLI_HASH_ITER_CONT;
+  return GIMLI_ITER_CONT;
 }
 
-static gimli_hash_iter_ret search_for_symlink(const char *k, int klen,
+static gimli_iter_status_t search_for_symlink(const char *k, int klen,
     void *item, void *arg)
 {
   gimli_mapped_object_t file = item;
@@ -258,11 +258,11 @@ static gimli_hash_iter_ret search_for_symlink(const char *k, int klen,
   if (realpath(buf, dir)) {
     if (!strcmp(dir, file->objname)) {
       find->file = file;
-      return GIMLI_HASH_ITER_STOP;
+      return GIMLI_ITER_STOP;
     }
   }
 
-  return GIMLI_HASH_ITER_CONT;
+  return GIMLI_ITER_CONT;
 }
 
 struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const char *name)
