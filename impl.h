@@ -192,10 +192,11 @@ struct gimli_mapped_object {
   /* alternate object containing aux debug info */
   gimli_object_file_t aux_elf;
 
-  gimli_hash_t symbols; /* symname => gimli_symbol */
-  struct gimli_symbol **symtab;
-  struct gimli_symbol *symroot;
+  gimli_hash_t symhash; /* symname => gimli_symbol */
+  struct gimli_symbol *symtab;
   uint64_t symcount;
+  uint64_t symallocd;
+  int symchanged;
 
   uint64_t base_addr;
 

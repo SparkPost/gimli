@@ -80,15 +80,34 @@ static uint32_t hashfunc(const char *k, uint32_t length, uint32_t initval)
    return c;
 }
 
+/* ensure that the table size is a power of 2 */
+static uint32_t power_2(uint32_t x)
+{
+	if (x & (x - 1)) {
+		x--;
+		x |= x >> 1;
+		x |= x >> 2;
+		x |= x >> 4;
+		x |= x >> 8;
+		x |= x >> 16;
+		x++;
+	}
+	return x;
+}
 
-gimli_hash_t gimli_hash_new(gimli_hash_free_func_t dtor)
+gimli_hash_t gimli_hash_new_size(gimli_hash_free_func_t dtor, size_t size)
 {
 	gimli_hash_t h = calloc(1, sizeof(*h));
 	h->initval = lrand48();
-	h->table_size = HASH_INITIAL_SIZE;
+	h->table_size = power_2(size);
 	h->buckets = calloc(h->table_size, sizeof(gimli_hash_bucket*));
 	h->dtor = dtor;
 	return h;
+}
+
+gimli_hash_t gimli_hash_new(gimli_hash_free_func_t dtor)
+{
+	return gimli_hash_new_size(dtor, HASH_INITIAL_SIZE);
 }
 
 static gimli_hash_bucket *new_bucket(const char *k, int klen, void *item)
@@ -213,7 +232,7 @@ int gimli_hash_delete(gimli_hash_t h, const char *k)
 	return 1;
 }
 
-void gimli_hash_delete_all(gimli_hash_t h)
+void gimli_hash_delete_all(gimli_hash_t h, int downsize)
 {
 	int i;
 	gimli_hash_bucket *b, *tofree;
@@ -234,12 +253,14 @@ void gimli_hash_delete_all(gimli_hash_t h)
 	}
 	h->size = 0;
 	h->no_rebucket--;
-	rebucket(h, HASH_INITIAL_SIZE);
+	if (downsize) {
+		rebucket(h, HASH_INITIAL_SIZE);
+	}
 }
 
 void gimli_hash_destroy(gimli_hash_t h)
 {
-	gimli_hash_delete_all(h);
+	gimli_hash_delete_all(h, 0);
 	if (h->buckets) {
 		free(h->buckets);
 		h->buckets = NULL;

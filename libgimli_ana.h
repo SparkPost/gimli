@@ -24,10 +24,6 @@ struct gimli_symbol {
   /** size of the symbol. Not all systems provide this information
    * for all symbols */
   uint32_t size;
-  /** do not use */
-  uint32_t ordinality;
-  /** do not use */
-  struct gimli_symbol *next;
 };
 
 #define GIMLI_ANA_API_VERSION 3
@@ -183,11 +179,12 @@ typedef gimli_hash_iter_ret (*gimli_hash_iter_func_t)(
 );
 typedef void (*gimli_hash_free_func_t)(void *item);
 
+gimli_hash_t gimli_hash_new_size(gimli_hash_free_func_t dtor, size_t size);
 gimli_hash_t gimli_hash_new(gimli_hash_free_func_t dtor);
 int gimli_hash_size(gimli_hash_t h);
 int gimli_hash_iter(gimli_hash_t h, gimli_hash_iter_func_t func, void *arg);
 void gimli_hash_destroy(gimli_hash_t h);
-void gimli_hash_delete_all(gimli_hash_t h);
+void gimli_hash_delete_all(gimli_hash_t h, int downsize);
 int gimli_hash_delete(gimli_hash_t h, const char *k);
 int gimli_hash_find(gimli_hash_t h, const char *k, void **item_p);
 int gimli_hash_insert(gimli_hash_t h, const char *k, void *item);
