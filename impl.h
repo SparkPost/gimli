@@ -334,10 +334,10 @@ gimli_mapped_object_t gimli_find_object(
   const char *objname);
 
 #if SIZEOF_VOIDP == 8
-# define PTRFMT "0x%016llx"
+# define PTRFMT "0x%016" PRIx64
 # define PTRFMT_T uint64_t
 #else
-# define PTRFMT "0x%08lx"
+# define PTRFMT "0x%08" PRIx32
 # define PTRFMT_T uint32_t
 #endif
 

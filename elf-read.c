@@ -303,7 +303,7 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
   }
 
   if (elf->e_version != GIMLI_EV_CURRENT) {
-    fprintf(stderr, "ELF: %s: unsupported ELF version %d\n", filename,
+    fprintf(stderr, "ELF: %s: unsupported ELF version %" PRId64 "\n", filename,
       elf->e_version);
     return 0;
   }
@@ -317,8 +317,8 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
 
     if (lseek(elf->fd, target, SEEK_SET) != target) {
       fprintf(stderr,
-        "ELF: %s: failed to seek for section header %d: offset %d: %s\n",
-        filename, i, target, strerror(errno));
+        "ELF: %s: failed to seek for section header %d: offset %" PRId64 ": %s\n",
+        filename, i, (int64_t)target, strerror(errno));
       return 0;
     }
     if (elf->ei_class == GIMLI_ELFCLASS32) {

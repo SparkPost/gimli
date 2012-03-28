@@ -64,6 +64,7 @@ static int gimli_copy_from_symbol(const char *obj, const char *name,
 
 struct gimli_ana_api ana_api = {
   GIMLI_ANA_API_VERSION,
+#if 0
   gimli_sym_lookup,
   gimli_pc_sym_name,
   gimli_read_mem,
@@ -73,6 +74,7 @@ struct gimli_ana_api ana_api = {
   gimli_get_string_symbol,
   gimli_copy_from_symbol,
   gimli_get_proc_stat,
+#endif
 };
 
 char *gimli_read_string(gimli_proc_t proc, void *addr)
@@ -343,7 +345,7 @@ int gimli_render_siginfo(gimli_proc_t proc, siginfo_t *si, char *buf, size_t buf
     if (name && strlen(name)) {
       snprintf(addrbuf, sizeof(addrbuf), " (%s)", name);
     } else {
-      snprintf(addrbuf, sizeof(addrbuf), " (" PTRFMT ")", si->si_addr);
+      snprintf(addrbuf, sizeof(addrbuf), " (" PTRFMT ")", (intptr_t)si->si_addr);
     }
   }
 
@@ -372,7 +374,7 @@ void gimli_render_frame(int tid, int nframe, struct gimli_unwind_cursor *frame)
     printf("#%-2d " PTRFMT " %s", nframe, (PTRFMT_T)cur.st.pc, name);
     if (dwarf_determine_source_line_number(cur.proc, cur.st.pc,
           filebuf, sizeof(filebuf), &lineno)) {
-      printf(" (%s:%lld)", filebuf, lineno);
+      printf(" (%s:%" PRId64 ")", filebuf, lineno);
     }
     printf("\n");
     gimli_show_param_info(&cur);
@@ -536,7 +538,7 @@ gimli_mapped_object_t gimli_add_object(
     /* need to determine the base address offset for this object */
     f->base_addr = (intptr_t)base - f->elf->vaddr;
     if (debug) {
-      printf("ELF: %s %d base=%p vaddr=%p base_addr=%p\n",
+      printf("ELF: %s %d base=%p vaddr=" PTRFMT " base_addr=" PTRFMT "\n",
         f->objname, f->elf->e_type, base, f->elf->vaddr, f->base_addr);
     }
 

@@ -126,7 +126,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
       case DW_CFA_advance_loc:
         pc += oprand * cie->code_align;
         if (debug) {
-          fprintf(stderr, "CFA_advance_loc: pc += (%d * %d) => %p\n", oprand, cie->code_align, pc);
+          fprintf(stderr, "CFA_advance_loc: pc += (%d * %" PRIu64 ") => 0x%" PRIx64 "\n", oprand, cie->code_align, pc);
         }
         break;
       case DW_CFA_advance_loc1:
@@ -136,7 +136,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         insns += sizeof(delta);
         pc += delta * cie->code_align;
         if (debug) {
-          fprintf(stderr, "CFA_advance_loc1: pc now %p\n", pc);
+          fprintf(stderr, "CFA_advance_loc1: pc now 0x%" PRIx64 "\n", pc);
         }
         break;
       }
@@ -147,7 +147,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         insns += sizeof(delta);
         pc += delta * cie->code_align;
         if (debug) {
-          fprintf(stderr, "CFA_advance_loc2: pc now %p\n", pc);
+          fprintf(stderr, "CFA_advance_loc2: pc now 0x%" PRIx64 "\n", pc);
         }
         break;
       }
@@ -158,7 +158,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         insns += sizeof(delta);
         pc += delta * cie->code_align;
         if (debug) {
-          fprintf(stderr, "CFA_advance_loc4: pc now %p\n", pc);
+          fprintf(stderr, "CFA_advance_loc4: pc now 0x%" PRIx64 "\n", pc);
         }
         break;
       }
@@ -167,7 +167,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         regnum = dw_read_uleb128(&insns, insn_end);
         arg = dw_read_uleb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "CFA_def_cfa: regnum=%lld arg=%lld\n", regnum, arg);
+          fprintf(stderr, "CFA_def_cfa: regnum=%" PRIu64 " arg=%" PRIu64 "\n", regnum, arg);
         }
         set_rule(cur, GIMLI_DWARF_CFA_REG, DW_RULE_REG, regnum);
         set_rule(cur, GIMLI_DWARF_CFA_OFF, 0, arg);
@@ -178,7 +178,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         regnum = dw_read_uleb128(&insns, insn_end);
         arg = dw_read_leb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "CFA_def_cfa_sf: regnum=%lld arg=%lld\n",
+          fprintf(stderr, "CFA_def_cfa_sf: regnum=%" PRIu64 " arg=%" PRId64 "\n",
             regnum, sarg);
         }
         set_rule(cur, GIMLI_DWARF_CFA_REG, DW_RULE_REG, regnum);
@@ -189,14 +189,14 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         /* non-factored, no need for data_align */
         arg = dw_read_uleb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "DW_CFA_def_cfa_offset: arg=%llx\n", arg);
+          fprintf(stderr, "DW_CFA_def_cfa_offset: arg=%" PRIx64 "\n", arg);
         }
         set_rule(cur, GIMLI_DWARF_CFA_OFF, 0, arg);
         break;
       case DW_CFA_def_cfa_register:
         regnum = dw_read_uleb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "CFA_def_cfa_register: regnum=%lld\n", regnum);
+          fprintf(stderr, "CFA_def_cfa_register: regnum=%" PRIu64 "\n", regnum);
         }
         set_rule(cur, GIMLI_DWARF_CFA_REG, DW_RULE_REG, regnum);
         break;
@@ -205,7 +205,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
       case DW_CFA_offset:
         arg = dw_read_uleb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "DW_CFA_offset: arg=%llx align=%lld\n", arg, cie->data_align);
+          fprintf(stderr, "DW_CFA_offset: arg=%" PRIx64 " align=%" PRIu64 "\n", arg, cie->data_align);
         }
         set_rule(cur, oprand, DW_RULE_OFFSET, arg * cie->data_align);
         break;
@@ -213,7 +213,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         regnum = dw_read_uleb128(&insns, insn_end);
         arg = dw_read_uleb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "CFA_offset_extended: regnum=%lld off=%lld\n",
+          fprintf(stderr, "CFA_offset_extended: regnum=%" PRIu64 " off=%" PRIu64 "\n",
             regnum, arg);
         }
         set_rule(cur, regnum, DW_RULE_OFFSET, arg * cie->data_align);
@@ -224,7 +224,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         regnum = dw_read_uleb128(&insns, insn_end);
         sarg = dw_read_leb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "CFA_offset_extended_sr: regnum=%lld off=%lld\n",
+          fprintf(stderr, "CFA_offset_extended_sr: regnum=%" PRIu64 " off=%" PRIu64 "\n",
             regnum, arg);
         }
         set_rule(cur, regnum, DW_RULE_OFFSET, sarg * cie->data_align);
@@ -242,7 +242,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
       case DW_CFA_restore_extended:
         regnum = dw_read_uleb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "CFA_restore_extended: regnum=%lld\n", regnum);
+          fprintf(stderr, "CFA_restore_extended: regnum=%" PRIu64 "\n", regnum);
         }
         memcpy(&cur->dw.cols[regnum], &cie->init_cols[regnum],
           sizeof(cur->dw.cols[regnum]));
@@ -250,14 +250,14 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
       case DW_CFA_undefined:
         arg = dw_read_uleb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "DW_CFA_undefined: arg=%llx\n", arg);
+          fprintf(stderr, "DW_CFA_undefined: arg=%" PRIx64 "\n", arg);
         }
         set_rule(cur, arg, DW_RULE_UNDEF, 0);
         break;
       case DW_CFA_same_value:
         arg = dw_read_uleb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "DW_CFA_same_value: arg=%llx\n", arg);
+          fprintf(stderr, "DW_CFA_same_value: arg=%" PRIx64 "\n", arg);
         }
         set_rule(cur, arg, DW_RULE_SAME, 0);
         break;
@@ -265,7 +265,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         regnum = dw_read_uleb128(&insns, insn_end);
         arg = dw_read_uleb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "DW_CFA_register: arg=%llx\n", arg);
+          fprintf(stderr, "DW_CFA_register: arg=%" PRIx64 "\n", arg);
         }
         set_rule(cur, regnum, DW_RULE_REG, arg);
         break;
@@ -304,7 +304,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         regnum = dw_read_uleb128(&insns, insn_end);
         arg = dw_read_uleb128(&insns, insn_end);
         if (debug) {
-          fprintf(stderr, "CFA_offset_extended_sr: regnum=%lld off=%lld\n",
+          fprintf(stderr, "CFA_offset_extended_sr: regnum=%" PRIu64 " off=%" PRIu64 "\n",
             regnum, arg);
         }
         set_rule(cur, regnum, DW_RULE_OFFSET, -arg * cie->data_align);
@@ -330,7 +330,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         insns += arg;
 
         if (debug) {
-          fprintf(stderr, "DW_CFA_expression regnum=%d\n", regnum);
+          fprintf(stderr, "DW_CFA_expression regnum=%" PRIu64 "\n", regnum);
         }
         set_expr(cur, regnum, DW_RULE_EXPR, exprop, arg);
         break;
@@ -348,7 +348,7 @@ static int process_dwarf_insns(struct gimli_unwind_cursor *cur,
         insns += arg;
 
         if (debug) {
-          fprintf(stderr, "DW_CFA_val_expression regnum=%d\n", regnum);
+          fprintf(stderr, "DW_CFA_val_expression regnum=%" PRIu64 "\n", regnum);
         }
         set_expr(cur, regnum, DW_RULE_VAL_EXPR, exprop, arg);
         break;
@@ -426,7 +426,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
     }
     regaddr = *(void**)regaddr;
     if (debug) {
-      fprintf(stderr, "target addr: %p + %lld\n",
+      fprintf(stderr, "target addr: %p + %" PRIu64 "\n",
         regaddr, cur->dw.cols[GIMLI_DWARF_CFA_OFF].value);
     }
     regaddr += cur->dw.cols[GIMLI_DWARF_CFA_OFF].value;
@@ -460,7 +460,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
       case DW_RULE_OFFSET:
         regaddr = fp + cur->dw.cols[i].value;
         if (debug) {
-          fprintf(stderr, "col %d: CFA relative, reading %p + %lld = %p\n", i,
+          fprintf(stderr, "col %d: CFA relative, reading %p + %" PRIu64 " = %p\n", i,
             fp, cur->dw.cols[i].value, regaddr);
         }
         if (gimli_read_mem(cur->proc, regaddr, &val, sizeof(val)) != sizeof(val)) {
@@ -480,7 +480,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
       case DW_RULE_REG:
         regaddr = gimli_reg_addr(cur, cur->dw.cols[i].value);
         if (!regaddr) {
-          printf("Couldn't find address for register %d\n",
+          printf("Couldn't find address for register %" PRIu64 "\n",
             cur->dw.cols[i].value);
           return 0;
         }
@@ -529,7 +529,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
           }
           *(void**)regaddr = (void*)(intptr_t)ret;
           if (debug) {
-            fprintf(stderr, "Setting col %d to %p\n", i, ret);
+            fprintf(stderr, "Setting col %d to 0x%" PRIx64 "\n", i, ret);
           }
           break;
         }
@@ -542,12 +542,12 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
     }
   }
   if (debug) {
-    fprintf(stderr, "retaddr is in col %d\n", cie->ret_addr);
+    fprintf(stderr, "retaddr is in col %" PRIu64 "\n", cie->ret_addr);
   }
 
   regaddr = gimli_reg_addr(cur, cie->ret_addr);
   if (!regaddr) {
-    fprintf(stderr, "DWARF: line %d: could not find address for return addr column %d\n",
+    fprintf(stderr, "DWARF: line %d: could not find address for return addr column %" PRIu64 "\n",
       __LINE__, cie->ret_addr);
     return 0;
   }
@@ -636,7 +636,7 @@ static int load_fde(struct gimli_object_mapping *m)
       continue;
     }
     if (debug) {
-      fprintf(stderr, "Using %s for unwind data for %s, %x bytes offset %x\n",
+      fprintf(stderr, "Using %s for unwind data for %s, 0x%" PRIx64 " bytes offset 0x%" PRIx64 "\n",
           s->name, s->container->objname, s->size, s->offset);
     }
 
@@ -652,7 +652,7 @@ static int load_fde(struct gimli_object_mapping *m)
       const uint8_t *next;
       const uint8_t *recstart = eh_frame;
 
-      if (debug) fprintf(stderr, "\noffset: %p\n", eh_frame - eh_start);
+      if (debug) fprintf(stderr, "\noffset: 0x%" PRIx64 "\n", (uint64_t)(eh_frame - eh_start));
       memcpy(&len, eh_frame, sizeof(len));
       if (len == 0 && is_eh_frame) {
         break;
@@ -680,9 +680,11 @@ static int load_fde(struct gimli_object_mapping *m)
       }
       if (debug) {
         fprintf(stderr,
-            "initlen: %lx (next = %lx) is64=%d cie_id=0x%llx (%d)\n",
-            (long)initlen, (long)(next - eh_start), is_64,
-            (long long)cie_id, (long long)cie_id);
+            "initlen: 0x%" PRIx64 " (next = 0x%" PRIx64 ") is64=%d "
+            "cie_id=0x%" PRIx64 " (%" PRIu64 ")\n",
+            initlen, (uint64_t)(next - eh_start),
+            is_64,
+            cie_id, cie_id);
       }
       if ((is_eh_frame && cie_id == 0) ||
           (!is_eh_frame && cie_id == 0xffffffffffffffffULL)) {
@@ -825,9 +827,9 @@ static int load_fde(struct gimli_object_mapping *m)
           return 0;
         }
         if (debug) {
-          fprintf(stderr, "FDE: addr_range raw=%p\ninit_loc=%p addr=%p\n",
-              (void*)(intptr_t)fde->addr_range,
-              (void*)(intptr_t)fde->initial_loc,
+          fprintf(stderr, "FDE: addr_range raw=0x%" PRIx64 "\ninit_loc=%" PRIx64 " addr=0x%" PRIX64 "\n",
+              fde->addr_range,
+              fde->initial_loc,
               s->addr);
         }
         fde->initial_loc += m->objfile->base_addr;
@@ -926,10 +928,10 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
   }
 
   if (debug) {
-    fprintf(stderr, "FDE: init=" PTRFMT "-" PTRFMT " pc=" PTRFMT "\n",
-        (void*)(intptr_t)fde->initial_loc,
-        (void*)(intptr_t)fde->addr_range,
-        (void*)cur->st.pc);
+    fprintf(stderr, "FDE: init=" PTRFMT "-" PTRFMT " pc=%p\n",
+        fde->initial_loc,
+        fde->addr_range,
+        cur->st.pc);
     fprintf(stderr, "CIE: aug=%s\n", fde->cie->aug);
   }
 

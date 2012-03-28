@@ -29,7 +29,7 @@ static int push(struct dw_expr *e, struct dw_stack_val *v)
     return 0;
   }
   e->stack[++e->top] = *v;
-  if (debug) printf("push: sp=%d %llx\n", e->top, e->stack[e->top].v.u64);
+  if (debug) printf("push: sp=%d %" PRIx64 "\n", e->top, e->stack[e->top].v.u64);
   return 1;
 }
 
@@ -40,7 +40,7 @@ static int pop(struct dw_expr *e, struct dw_stack_val *v)
     return 0;
   }
   *v = e->stack[e->top--];
-  if (debug) printf("pop: sp=%d %llx\n", e->top, v->v.u64);
+  if (debug) printf("pop: sp=%d %" PRIx64 "\n", e->top, v->v.u64);
   return 1;
 }
 
@@ -75,7 +75,7 @@ static int deref(gimli_proc_t proc, uint64_t addr, uint64_t *resp, uint8_t opsiz
       opsize, ptr);
     return 0;
   }
-  if (debug) printf("deref: addr=%p opsize=%d res=%llx\n", ptr, opsize, res);
+  if (debug) printf("deref: addr=%p opsize=%d res=0x%x\n", ptr, opsize, res);
   *resp = res;
   return 1;
 }
@@ -143,7 +143,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
       val.is_signed = 0;
       val.is_stack = 1;
       if (!get_reg(cur, op - DW_OP_breg0, &val.v.u64)) return 0;
-      if (debug) printf("OP_breg%d val=%llx\n", op - DW_OP_breg0, val.v.u64);
+      if (debug) printf("OP_breg%d val=%" PRIx64 "\n", op - DW_OP_breg0, val.v.u64);
       val.v.u64 += s64;
       if (!push(&e, &val)) return 0;
       continue;
@@ -152,7 +152,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
       val.is_signed = 0;
       val.is_stack = 0;
       if (!get_reg(cur, op - DW_OP_reg0, &val.v.u64)) return 0;
-      if (debug) printf("OP_reg%d -> %llx\n", op - DW_OP_reg0, val.v.u64);
+      if (debug) printf("OP_reg%d -> %" PRIx64 "\n", op - DW_OP_reg0, val.v.u64);
       if (!push(&e, &val)) return 0;
       continue;
     }
@@ -169,7 +169,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
           memcpy(&val.v.u64, e.ops, sizeof(val.v.u64));
           e.ops += sizeof(val.v.u64);
         }
-        if (debug) printf("OP_addr: %llx\n", val.v.u64);
+        if (debug) printf("OP_addr: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -178,7 +178,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.is_signed = 0;
         val.is_stack = 1;
         val.v.u64 = u8;
-        if (debug) printf("OP_const1u: %llx\n", val.v.u64);
+        if (debug) printf("OP_const1u: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -187,7 +187,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.is_signed = 1;
         val.is_stack = 1;
         val.v.s64 = s8;
-        if (debug) printf("OP_const1s: %llx\n", val.v.u64);
+        if (debug) printf("OP_const1s: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -196,7 +196,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.is_signed = 0;
         val.is_stack = 1;
         val.v.u64 = u16;
-        if (debug) printf("OP_const2u: %llx\n", val.v.u64);
+        if (debug) printf("OP_const2u: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -205,7 +205,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.is_signed = 1;
         val.is_stack = 1;
         val.v.s64 = s16;
-        if (debug) printf("OP_const2s: %llx\n", val.v.u64);
+        if (debug) printf("OP_const2s: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -214,7 +214,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.is_signed = 0;
         val.is_stack = 1;
         val.v.u64 = u32;
-        if (debug) printf("OP_const4u: %llx\n", val.v.u64);
+        if (debug) printf("OP_const4u: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -223,7 +223,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.is_signed = 1;
         val.is_stack = 1;
         val.v.s64 = s32;
-        if (debug) printf("OP_const4s: %llx\n", val.v.u64);
+        if (debug) printf("OP_const4s: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -231,7 +231,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         memcpy(&val.v.u64, e.ops, sizeof(val.v.u64));
         val.is_signed = 0;
         val.is_stack = 1;
-        if (debug) printf("OP_const8u: %llx\n", val.v.u64);
+        if (debug) printf("OP_const8u: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -239,7 +239,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         memcpy(&val.v.s64, e.ops, sizeof(val.v.s64));
         val.is_signed = 1;
         val.is_stack = 1;
-        if (debug) printf("OP_const8s: %llx\n", val.v.u64);
+        if (debug) printf("OP_const8s: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -247,7 +247,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.v.u64 = dw_read_uleb128(&e.ops, e.end);
         val.is_signed = 0;
         val.is_stack = 1;
-        if (debug) printf("OP_constu: %llx\n", val.v.u64);
+        if (debug) printf("OP_constu: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -255,7 +255,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.v.s64 = dw_read_leb128(&e.ops, e.end);
         val.is_signed = 1;
         val.is_stack = 1;
-        if (debug) printf("OP_consts: %llx\n", val.v.u64);
+        if (debug) printf("OP_consts: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -264,7 +264,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.is_signed = 0;
         val.is_stack = 1;
         val.v.u64 = frame_base + s64;
-        if (debug) printf("OP_fbreg: %llx\n", val.v.u64);
+        if (debug) printf("OP_fbreg: %" PRIx64 "\n", val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -275,7 +275,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.is_stack = 1;
         if (!get_reg(cur, u64, &val.v.u64)) return 0;
         val.v.u64 += s64;
-        if (debug) printf("OP_breg%d: %llx\n", u64, val.v.u64);
+        if (debug) printf("OP_breg%" PRId64 ": %" PRIx64 "\n", u64, val.v.u64);
         if (!push(&e, &val)) return 0;
         continue;
 
@@ -284,7 +284,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         val.is_signed = 0;
         val.is_stack = 0;
         if (!get_reg(cur, u64, &val.v.u64)) return 0;
-        if (debug) printf("OP_reg%d\n", u64);
+        if (debug) printf("OP_reg%" PRId64 "\n", u64);
         if (!push(&e, &val)) return 0;
         continue;
        
@@ -302,9 +302,9 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
       case DW_OP_pick:
         memcpy(&u8, e.ops, sizeof(u8));
         e.ops += sizeof(u8);
-        if (debug) printf("OP_pick %u\n", u8);
+        if (debug) printf("OP_pick %" PRIu8 "\n", u8);
         if (e.top - u8 < 0) {
-          fprintf(stderr, "DWARF:expr: DW_OP_pick(%d): stack underflow\n");
+          fprintf(stderr, "DWARF:expr: DW_OP_pick(%" PRIu8 "): stack underflow\n", u8);
           return 0;
         }
         val = e.stack[e.top - u8];
@@ -574,7 +574,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
 
   if (is_stack) *is_stack = e.stack[e.top].is_stack;
   *result = e.stack[e.top].v.u64;
-  if (debug) printf("eval expr: result=%llx\n", *result);
+  if (debug) printf("eval expr: result=%" PRIx64 "\n", *result);
   return 1;
 }
 

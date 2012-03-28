@@ -305,7 +305,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
     data += sizeof(ver);
 
     if (debug) {
-      fprintf(stderr, "initlen is %llx (%d bit) ver=%u\n", 
+      fprintf(stderr, "initlen is 0x%" PRIx64 " (%d bit) ver=%u\n",
         len, is_64 ? 64 : 32, ver);
     }
 
@@ -323,7 +323,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
 
     if (debug) {
       fprintf(stderr,
-        "headerlen is %llu, min_insn_len=%u line_base=%d line_range=%u\n"
+        "headerlen is %" PRIu64 ", min_insn_len=%u line_base=%d line_range=%u\n"
         "opcode_base=%u\n",
         len, hdr_1.min_insn_len, hdr_1.line_base, hdr_1.line_range,
         hdr_1.opcode_base);
@@ -333,7 +333,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
     for (i = 1; i < hdr_1.opcode_base; i++) {
       opcode_lengths[i-1] = dw_read_uleb128(&data, cuend);
       if (debug) {
-        fprintf(stderr, "op len [%d] = %llu\n", i, opcode_lengths[i-1]);
+        fprintf(stderr, "op len [%d] = %" PRIu64 "\n", i, opcode_lengths[i-1]);
       }
     }
     /* include_directories */
@@ -401,13 +401,13 @@ static int process_line_numbers(gimli_mapped_object_t f)
               data += strlen(fname)+1;
               fno = dw_read_uleb128(&data, cuend);
               filenames[fno] = fname;
-              if (debug) fprintf(stderr, "define_files[%d] = %s\n", fno, fname);
+              if (debug) fprintf(stderr, "define_files[%" PRIu64 "] = %s\n", fno, fname);
               break;
             }
 
           default:
             fprintf(stderr,
-              "DWARF: line nos.: unhandled extended op=%02x, len=%llu\n",
+              "DWARF: line nos.: unhandled extended op=%02x, len=%" PRIu32 "\n",
               op, initlen);
             ;
         }
@@ -425,7 +425,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
             {
               int64_t d = dw_read_leb128(&data, cuend);
               if (debug) {
-                fprintf(stderr, "advance_line from %lld to %lld\n",
+                fprintf(stderr, "advance_line from %" PRId64 " to %" PRId64 "\n",
                   regs.line, regs.line + d);
               }
               regs.line += d;
@@ -437,7 +437,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
               uint64_t u = dw_read_uleb128(&data, cuend);
               regs.address += u * hdr_1.min_insn_len;
               if (debug) {
-                fprintf(stderr, "advance_pc: addr=%llx\n", regs.address);
+                fprintf(stderr, "advance_pc: addr=0x%" PRIx64 "\n", (uintptr_t)regs.address);
               }
               break;
             }
@@ -445,14 +445,14 @@ static int process_line_numbers(gimli_mapped_object_t f)
           {
             uint64_t u = dw_read_uleb128(&data, cuend);
             regs.file = u;
-            if (debug) fprintf(stderr, "set_file: %llu\n", regs.file);
+            if (debug) fprintf(stderr, "set_file: %" PRIu64 "\n", regs.file);
             break;
           }
           case DW_LNS_set_column:
           {
             uint64_t u = dw_read_uleb128(&data, cuend);
             regs.column = u;
-            if (debug) fprintf(stderr, "set_column: %llu\n", regs.column);
+            if (debug) fprintf(stderr, "set_column: %" PRIu64 "\n", regs.column);
             break;
           }
           case DW_LNS_negate_stmt:
@@ -467,7 +467,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
             regs.address += ((255 - hdr_1.opcode_base) /
                             hdr_1.line_range) * hdr_1.min_insn_len;
             if (debug) {
-              fprintf(stderr, "const_add_pc: addr=%llx\n", regs.address);
+              fprintf(stderr, "const_add_pc: addr=0x%" PRIx64 "\n", (uintptr_t)regs.address);
             }
             break;
           case DW_LNS_fixed_advance_pc:
@@ -477,7 +477,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
             data += sizeof(u);
             regs.address += u;
             if (debug) {
-              fprintf(stderr, "fixed_advance_pc: %llx\n", regs.address);
+              fprintf(stderr, "fixed_advance_pc: 0x%" PRIx64 "\n", (uintptr_t)regs.address);
             }
             break;
           }
@@ -496,7 +496,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
           case DW_LNS_set_isa:
             regs.isa = dw_read_uleb128(&data, cuend);
             if (debug) {
-              fprintf(stderr, "set_isa: %llx\n", regs.isa);
+              fprintf(stderr, "set_isa: 0x%" PRIx64 "\n", regs.isa);
             }
             break;
           default:
@@ -511,7 +511,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
         op -= hdr_1.opcode_base;
 
         if (debug) {
-          fprintf(stderr, "special before: addr = %p, line = %lld\n",
+          fprintf(stderr, "special before: addr = %p, line = %" PRId64 "\n",
               regs.address, regs.line);
           fprintf(stderr, "line_base = %d, line_range = %d\n",
             hdr_1.line_base, hdr_1.line_range);
@@ -520,7 +520,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
         regs.address += (op / hdr_1.line_range) * hdr_1.min_insn_len;
         regs.line += hdr_1.line_base + (op % hdr_1.line_range);
         if (debug) {
-          fprintf(stderr, "special: addr = %p, line = %lld\n",
+          fprintf(stderr, "special: addr = %p, line = %" PRId64 "\n",
             regs.address, regs.line);
         }
       }
@@ -837,7 +837,7 @@ static uint64_t get_value(uint64_t form, uint64_t addr_size, int is_64,
       return get_value(form, addr_size, is_64, datap, end, vptr, byteptr, elf);
 
     default:
-      printf("DWARF: unhandled FORM: 0x%llx\n", form);
+      printf("DWARF: unhandled FORM: 0x%" PRIx64 "\n", form);
       return 0;
   }
 
@@ -873,7 +873,7 @@ static uint64_t get_value(uint64_t form, uint64_t addr_size, int is_64,
       break;
   }
   if (debug) {
-  printf("value normalized to form 0x%llx val=0x%llx bytep=%p %s\n",
+    printf("value normalized to form 0x%" PRIx64 " val=0x%" PRIx64 " bytep=%p %s\n",
        form, *vptr, *byteptr, form == DW_FORM_string ? (char*)*byteptr : "");
   }
 
@@ -913,7 +913,7 @@ static struct gimli_dwarf_die *process_die(
   }
   abbr = find_abbr(abbrstart, abbrend, abbr_code);
   if (!abbr) {
-    printf("Couldn't locate abbrev code %lld\n", abbr_code);
+    printf("Couldn't locate abbrev code %" PRId64 "\n", abbr_code);
     *datap = data;
     return NULL;
   }
@@ -926,7 +926,7 @@ static struct gimli_dwarf_die *process_die(
   die = calloc(1, sizeof(*die));
   die->offset = offset;
   die->tag = tag;
-  snprintf(diename, sizeof(diename)-1, "%llx", offset);
+  snprintf(diename, sizeof(diename)-1, "%" PRIx64, offset);
   gimli_hash_insert(diehash, diename, die);
 //  printf("die @ %s tag=%llx\n", diename, die->tag);
 
@@ -1100,7 +1100,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
     }
   }
 
-  snprintf(diename, sizeof(diename)-1, "%llx", offset);
+  snprintf(diename, sizeof(diename)-1, "%" PRIx64, offset);
   if (gimli_hash_find(f->dies, diename, (void**)&die)) {
     return die;
   }
@@ -1419,7 +1419,7 @@ const char *gimli_dwarf_resolve_type_name(gimli_mapped_object_t f,
           if (kid->tag != DW_TAG_subrange_type) continue;
           if (gimli_dwarf_die_get_uint64_t_attr(kid, DW_AT_upper_bound, &upper))
           {
-            sprintf((char*)namestr, "[%llu]", upper);
+            sprintf((char*)namestr, "[%" PRIu64 "]", upper);
             namestr += strlen(namestr);
           } else {
             sprintf((char*)namestr, "[]");
@@ -1429,7 +1429,7 @@ const char *gimli_dwarf_resolve_type_name(gimli_mapped_object_t f,
         return strdup(namebuf);
 
       default:
-        printf("Unhandled tag %llx for type name (offset=<%llx>)\n", td->tag, td->offset);
+        printf("Unhandled tag 0x%" PRIx64 " for type name (offset=<%" PRIx64 ">)\n", td->tag, td->offset);
         return NULL;
     }
   }
@@ -1657,7 +1657,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
                   u64 >>= shift;
                   u64 &= mask;
                 }
-                printf("%llu (0x%llx)\n", u64, u64);
+                printf("%" PRIu64 " (0x%" PRIx64 ")\n", u64, u64);
                 break;
               case 4:
                 gimli_dwarf_read_value(cur->proc, addr, is_stack, &u32, size);
@@ -1684,7 +1684,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
                 printf("%u (0x%2x)\n", u8, u8);
                 break;
               default:
-                printf("unhandled byte size %lld\n", size);
+                printf("unhandled byte size %" PRIu64 "\n", size);
                 return 0;
             }
             break;
@@ -1698,7 +1698,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
                   s64 >>= shift;
                   s64 &= mask;
                 }
-                printf("%lld (0x%llx)\n", s64, s64);
+                printf("%" PRId64 " (0x%" PRIx64 ")\n", s64, s64);
                 break;
               case 4:
                 gimli_dwarf_read_value(cur->proc, addr, is_stack, &s32, size);
@@ -1725,7 +1725,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
                 printf("%d (0x%2x)\n", s8, s8);
                 break;
               default:
-                printf("unhandled byte size %lld\n", size);
+                printf("unhandled byte size %" PRId64 "\n", size);
                 return 0;
             }
             break;
@@ -1770,7 +1770,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
             }
           }
         }
-        printf("%lld (0x%llx)\n", s64, s64);
+        printf("%" PRId64 " (0x%" PRIx64 ")\n", s64, s64);
         if (do_hook) do_after(cur, type_name, name, addr, size);
         return 1;
 
@@ -1881,7 +1881,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
             }
           } else if (loc) {
             root = 0;
-            printf("Unhandled location form %llx for struct member\n",
+            printf("Unhandled location form 0x%" PRIx64 " for struct member\n",
               loc->form);
           } else {
             /* an omitted member location implies that it occupies the
@@ -1923,7 +1923,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
         if (do_hook) do_after(cur, type_name, name, addr, size);
         return 1;
       default:
-        printf("Unhandled tag 0x%llx in show_param\n", td->tag);
+        printf("Unhandled tag 0x%" PRIx64 " in show_param\n", td->tag);
     }
   } else {
     printf("no type information\n");
@@ -1967,7 +1967,7 @@ int gimli_get_parameter(void *context, const char *varname,
             frame_base_attr->code, &frame_base, NULL, &is_stack);
         break;
       default:
-        printf("Unhandled frame base form %llx\n",
+        printf("Unhandled frame base form 0x%" PRIx64 "\n",
             frame_base_attr->form);
     }
   } 
@@ -1998,10 +1998,10 @@ int gimli_get_parameter(void *context, const char *varname,
             }
             break;
           default:
-            printf("Unhandled location form %llx\n", location->form);
+            printf("Unhandled location form 0x%" PRIx64 "\n", location->form);
         }
       } else {
-        printf("no location attribute for parameter %s die->offset=%llx %s\n",
+        printf("no location attribute for parameter %s die->offset=0x%" PRIx64 " %s\n",
           name ? (char*)name->ptr : "?", die->offset, m->objfile->objname);
       }
 
@@ -2054,7 +2054,7 @@ static int show_die(struct gimli_unwind_cursor *cur,
         }
         break;
       default:
-        printf("Unhandled location form %llx\n", location->form);
+        printf("Unhandled location form 0x%" PRIx64 "\n", location->form);
     }
   } else if (name) {
     /* no location defined, so assume the compiler optimized it away */
@@ -2070,7 +2070,7 @@ static int show_die(struct gimli_unwind_cursor *cur,
   if (!show_param(cur, m->objfile, type,
         (void*)(intptr_t)res, is_stack,
         name ? (char*)name->ptr : "?", NULL, 2, 0, 0)) {
-    printf("    %s @ %llx (type data @ %llx)\n",
+    printf("    %s @ 0x%" PRIx64 " (type data @ 0x%" PRIx64 ")\n",
         name->ptr, res, type->code);
   }
 
@@ -2109,7 +2109,7 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
             frame_base_attr->code, &frame_base, NULL, &is_stack);
         break;
       default:
-        printf("Unhandled frame base form %llx\n",
+        printf("Unhandled frame base form 0x%" PRIx64 "\n",
             frame_base_attr->form);
     }
   } 
