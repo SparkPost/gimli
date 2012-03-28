@@ -4,16 +4,16 @@ RLCFLAGS = @RL_CFLAGS@
 TRACELDFLAGS = @CORONER_LDFLAGS@
 bin_PROGRAMS = monitor glider #wdb
 noinst_PROGRAMS = wedgie
-lib_LTLIBRARIES = libgimli.la
-noinst_LTLIBRARIES = liblua.la libtrace.la
+lib_LTLIBRARIES = libgimli.la libgimli_ana.la
+noinst_LTLIBRARIES = liblua.la
 man1_MANS = man/monitor.1 man/glider.1
 include_HEADERS = libgimli.h libgimli_ana.h
 
 monitor_SOURCES = main.c proctitle.c config.c
 glider_SOURCES = glider.c
-glider_LDADD = libtrace.la liblua.la $(TRACELDFLAGS)
+glider_LDADD = libgimli_ana.la liblua.la $(TRACELDFLAGS)
 
-libtrace_la_SOURCES = \
+libgimli_ana_la_SOURCES = \
 	trace.c linux.c elf.c hash.c elf-read.c dwarf-read.c dwarf-unwind.c \
 	dwarf-expr.c darwin.c solaris.c demangle.c freebsd.c proc.c \
 	proc_service.c symbols.c types.c maps.c apiv2.c
@@ -31,7 +31,7 @@ liblua_la_SOURCES = \
 
 wdb_SOURCES = wdb.c wdb-objs.c
 wdb_CPPFLAGS = -Ilua $(RLCFLAGS)
-wdb_LDADD = libtrace.la liblua.la $(RLLDFLAGS) $(TRACELDFLAGS)
+wdb_LDADD = libgimli_ana.la liblua.la $(RLLDFLAGS) $(TRACELDFLAGS)
 
 wedgie_SOURCES = wedgie.c
 wedgie_LDADD = libgimli.la -lpthread
