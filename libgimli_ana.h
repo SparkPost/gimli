@@ -280,14 +280,45 @@ void gimli_mem_ref_addref(gimli_mem_ref_t mem);
 /* --- types */
 
 struct gimli_type;
-/** represents type information from various sources */
-typedef gimli_type *gimli_type_t;
+struct gimli_type_collection;
 
-/** adds a reference to the type */
-void gimli_type_addref(gimli_type_t t);
+/** a container of type information */
+typedef struct gimli_type_collection *gimli_type_collection_t;
 
-/** deletes a reference */
-void gimli_type_delete(gimli_type_t t);
+/** represents type information */
+typedef struct gimli_type *gimli_type_t;
+
+
+/** create a new empty type collection object */
+gimli_type_collection_t gimli_type_collection_new(void);
+
+/** add a reference to a type collection */
+void gimli_type_collection_addref(gimli_type_collection_t col);
+
+/** deletes a reference to a type collection */
+void gimli_type_collection_delete(gimli_type_collection_t col);
+
+/** lookup a type by name */
+gimli_type_t gimli_type_collection_find_type(
+    gimli_type_collection_t col, const char *name);
+
+/** lookup a function by name */
+gimli_type_t gimli_type_collection_find_function(
+    gimli_type_collection_t col, const char *name);
+
+/** callback function for visiting types in a collection */
+typedef gimli_iter_status_t gimli_type_collection_visit_f(
+    /** collection being walked */
+    gimli_type_collection_t col,
+    /** type being visited */
+    gimli_type_t t,
+    /** caller provided closure */
+    void *arg);
+
+/** visit each type in the collection */
+gimli_iter_status_t gimli_type_collection_visit(
+    gimli_type_collection_t col,
+    gimli_type_collection_visit_f func, void *arg);
 
 /** returns the name of the variable or member for this type */
 const char *gimli_type_name(gimli_type_t t);
@@ -332,25 +363,37 @@ void gimli_type_encoding(gimli_type_t t,
     struct gimli_type_encoding *enc);
 
 /** create an instance of an integer type */
-gimli_type_t gimli_type_new_integer(uint32_t flag,
+gimli_type_t gimli_type_new_integer(gimli_type_collection_t col,
     const char *name, const struct gimli_type_encoding *enc);
 
+/** create an instance of a float type */
+gimli_type_t gimli_type_new_float(gimli_type_collection_t col,
+    const char *name, const struct gimli_type_encoding *enc);
+
+/** follow a type graph, skipping aliasing nodes (typedef, volatile, const,
+ * restrict) until we reach a base type */
+gimli_type_t gimli_type_resolve(gimli_type_t t);
+
 /** create a new volatile type */
-gimli_type_t gimli_type_new_volatile(uint32_t flag,
+gimli_type_t gimli_type_new_volatile(gimli_type_collection_t col,
     gimli_type_t t);
 
 /** create a new "restrict" type */
-gimli_type_t gimli_type_new_restrict(uint32_t flag,
+gimli_type_t gimli_type_new_restrict(gimli_type_collection_t col,
     gimli_type_t t);
 
 /** create a new "const" type */
-gimli_type_t gimli_type_new_const(uint32_t flag,
+gimli_type_t gimli_type_new_const(gimli_type_collection_t col,
     gimli_type_t t);
+
+/** create a new pointer type */
+gimli_type_t gimli_type_new_pointer(gimli_type_collection_t col,
+    gimli_type_t target);
 
 /** information about struct/union members */
 struct gimli_type_membinfo {
-  /** type and name of member */
-  gimli_type_t t;
+  /** type of member */
+  gimli_type_t type;
   /** offset in bits */
   uint64_t offset;
 };
@@ -362,7 +405,8 @@ int gimli_type_membinfo(gimli_type_t t,
     struct gimli_type_membinfo *info);
 
 /** create an instance of a structure type */
-gimli_type_t gimli_type_new_struct(uint32_t flag, const char *name);
+gimli_type_t gimli_type_new_struct(gimli_type_collection_t col,
+    const char *name);
 
 /** add a new member to a structure type.
  * Note that you can set the encoding on membertype
@@ -382,7 +426,7 @@ struct gimli_type_arinfo {
 };
 
 /** returns array information */
-int gimli_type_arinfo(gimli_type_t t
+int gimli_type_arinfo(gimli_type_t t,
     struct gimli_type_arinfo *info);
 
 /** information about functions */
@@ -398,7 +442,7 @@ struct gimli_type_funcinfo {
 };
 
 /** returns function information */
-int gimli_type_funcinfo(gimli_type_t t
+int gimli_type_funcinfo(gimli_type_t t,
     struct gimli_type_funcinfo *info);
 
 /** callback function for recursively visiting a
