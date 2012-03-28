@@ -826,7 +826,7 @@ static uint64_t get_value(uint64_t form, uint64_t addr_size, int is_64,
       *vptr = strlen((char*)data);
       data += 1 + *vptr;
       break;
-    
+
     case DW_FORM_indirect:
       form = dw_read_uleb128(datap, end);
       if (form == DW_FORM_indirect) {
@@ -1512,7 +1512,7 @@ static int do_before(
 }
 
 static int do_after(
-    struct gimli_unwind_cursor *cur,
+    struct gimli_unwind_cursor *cur, // FIXME: gimli_stack_frame_t
 //    int tid, int frameno, void *pcaddr, void *context,
     const char *datatype, const char *varname,
     void *varaddr, uint64_t varsize)
@@ -1632,7 +1632,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
       case DW_TAG_packed_type:
         /* resolve to underlying type */
         type = gimli_dwarf_die_get_attr(td, DW_AT_type);
-        return show_param(cur, f, type, addr, is_stack, 
+        return show_param(cur, f, type, addr, is_stack,
                   name, type_name, indent,
           mask, shift);
 
@@ -1761,7 +1761,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
         for (kid = td->kids; kid; kid = kid->next) {
           if (kid->tag == DW_TAG_enumerator) {
             struct gimli_dwarf_attr *cv;
-            
+
             cv = gimli_dwarf_die_get_attr(kid, DW_AT_const_value);
             if (cv && (int64_t)cv->code == s64) {
               cv = gimli_dwarf_die_get_attr(kid, DW_AT_name);
@@ -1934,7 +1934,8 @@ static int show_param(struct gimli_unwind_cursor *cur,
 int gimli_get_parameter(void *context, const char *varname,
   const char **datatype, void **addr, uint64_t *size)
 {
-  struct gimli_unwind_cursor *cur = context;
+  gimli_stack_frame_t frame = context;
+  struct gimli_unwind_cursor *cur = &frame->cur;
   struct gimli_dwarf_die *die = gimli_dwarf_get_die_for_pc(cur);
   struct gimli_dwarf_die *td;
   uint64_t frame_base = 0;
@@ -1951,7 +1952,7 @@ int gimli_get_parameter(void *context, const char *varname,
   }
 
   if (die->parent->tag == DW_TAG_compile_unit) {
-    gimli_dwarf_die_get_uint64_t_attr(die->parent, 
+    gimli_dwarf_die_get_uint64_t_attr(die->parent,
       DW_AT_low_pc, &comp_unit_base);
   }
 
@@ -1970,7 +1971,7 @@ int gimli_get_parameter(void *context, const char *varname,
         printf("Unhandled frame base form 0x%" PRIx64 "\n",
             frame_base_attr->form);
     }
-  } 
+  }
 
   for (die = die->kids; die; die = die->next) {
     if (die->tag == DW_TAG_formal_parameter) {
@@ -2091,7 +2092,7 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
   }
 
   if (die->parent->tag == DW_TAG_compile_unit) {
-    gimli_dwarf_die_get_uint64_t_attr(die->parent, 
+    gimli_dwarf_die_get_uint64_t_attr(die->parent,
       DW_AT_low_pc, &comp_unit_base);
   }
 
@@ -2112,7 +2113,7 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
         printf("Unhandled frame base form 0x%" PRIx64 "\n",
             frame_base_attr->form);
     }
-  } 
+  }
 
   for (die = die->kids; die; die = die->next) {
     if (die->tag == DW_TAG_formal_parameter || die->tag == DW_TAG_variable) {

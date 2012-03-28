@@ -14,6 +14,34 @@
 extern "C" {
 #endif
 
+/* forward declarations */
+struct libgimli_hash_table;
+struct gimli_proc;
+struct gimli_mem_ref;
+struct gimli_type;
+struct gimli_type_collection;
+struct gimli_thread_state;
+struct gimli_stack_frame;
+struct gimli_stack_trace;
+
+/** a container of type information */
+typedef struct gimli_type_collection *gimli_type_collection_t;
+/** represents type information */
+typedef struct gimli_type *gimli_type_t;
+/** a hash table */
+typedef struct libgimli_hash_table *gimli_hash_t;
+/** opaque type represents a target process, which may be myself */
+typedef struct gimli_proc *gimli_proc_t;
+/** Represents a mapping to the target process address space */
+typedef struct gimli_mem_ref *gimli_mem_ref_t;
+/** Represents a thread in a target process */
+typedef struct gimli_thread_state *gimli_thread_t;
+/** Represents a stack trace */
+typedef struct gimli_stack_trace *gimli_stack_trace_t;
+/** Represents a stack frame in a stack trace */
+typedef struct gimli_stack_frame *gimli_stack_frame_t;
+
+
 struct gimli_symbol {
   /** de-mangled symbol name */
   char *name;
@@ -60,7 +88,8 @@ struct gimli_ana_api {
 
   /** Given a context, locate a named parameter and return its
    * C-style datatype name, address and size.  Returns 1 if located.
-   * 0 otherwise. */
+   * 0 otherwise.
+   * context is a gimli_stack_frame_t */
   int (*get_parameter)(void *context, const char *varname,
     const char **datatype, void **addr, uint64_t *size);
 
@@ -132,7 +161,7 @@ struct gimli_ana_module {
   /* called after gimli prints a parameter in the trace.
    * FRAMENO gives the ordinal number of the frame (0 being top of stack),
    * PCADDR is the instruction address of that frame, and CONTEXT is the
-   * gimli internal context that can be used to interrogate that frame.
+   * gimli_stack_frame_t that can be used to interrogate that frame.
    * DATATYPE is the textual, C-style, rendition of the data type name.
    * VARNAME is the identifier for the parameter.
    * VARADDR is the address of the parameter in memory. */
@@ -144,7 +173,7 @@ struct gimli_ana_module {
   /* called after gimli prints a frame in the trace.
    * FRAMENO gives the ordinal number of the frame (0 being top of stack),
    * PCADDR is the instruction address of that frame, and CONTEXT is the
-   * gimli internal context that can be used to interrogate that frame */
+   * gimli_stack_frame_t that can be used to interrogate that frame */
   void (*after_print_frame)(
     const struct gimli_ana_api *api, const char *object, int tid,
     int frameno, void *pcaddr, void *context);
@@ -152,7 +181,7 @@ struct gimli_ana_module {
    * NFRAMES is the number of stack frames found for this thread.
    * PCADDRS is an array containing the instruction addresses of each
    * frame.
-   * CONTEXTS is an array of gimli internal context information that
+   * CONTEXTS is an array of gimli_stack_frame_t that
    * can be passed to the API to interrogate the respective frames.
    */
   void (*on_end_thread_trace)(
@@ -167,7 +196,6 @@ extern struct gimli_ana_module *gimli_ana_init(const struct gimli_ana_api *api);
 /* Version 3 APIs start here */
 
 /** hash table utility API */
-typedef struct libgimli_hash_table *gimli_hash_t;
 
 typedef enum {
   /** done iterating */
@@ -209,9 +237,6 @@ typedef enum {
 /** represents a pointer on any architecture */
 typedef uint64_t gimli_addr_t;
 
-/** opaque type represents a target process, which may be myself */
-typedef struct gimli_proc *gimli_proc_t;
-
 /** deletes a reference to a proc handle.
  * When the final handle is deleted, the process will be detached
  * (and continued) if it was a remote process.
@@ -231,8 +256,41 @@ gimli_err_t gimli_proc_attach(int pid, gimli_proc_t *proc);
  * A PID of 0 is returned if the target process is myself */
 int gimli_proc_pid(gimli_proc_t proc);
 
-/** Represents a mapping to the target process address space */
-typedef struct gimli_mem_ref *gimli_mem_ref_t;
+typedef gimli_iter_status_t gimli_proc_visit_thread_f(
+    gimli_proc_t proc,
+    gimli_thread_t thread,
+    void *arg);
+
+/** visit each of the threads associated with a proc */
+gimli_iter_status_t gimli_proc_visit_threads(
+    gimli_proc_t proc,
+    gimli_proc_visit_thread_f func,
+    void *arg);
+
+/** Obtain a stack trace from a thread */
+gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames);
+
+void gimli_stack_trace_addref(gimli_stack_trace_t trace);
+void gimli_stack_trace_delete(gimli_stack_trace_t trace);
+
+int gimli_stack_trace_num_frames(gimli_stack_trace_t trace);
+
+
+
+/** visit each frame of a stack trace */
+typedef gimli_iter_status_t gimli_stack_trace_visit_f(
+      gimli_proc_t proc,
+      gimli_thread_t thread,
+      gimli_stack_frame_t frame,
+      void *arg);
+
+gimli_iter_status_t gimli_stack_trace_visit(
+    gimli_stack_trace_t trace,
+    gimli_stack_trace_visit_f func,
+    void *arg);
+
+gimli_addr_t gimli_stack_frame_pcaddr(gimli_stack_frame_t frame);
+int gimli_stack_frame_number(gimli_stack_frame_t frame);
 
 /** Returns mapping to the target address space.
  * Depending on the system and the target, this may be a live mapping
@@ -278,15 +336,6 @@ void gimli_mem_ref_addref(gimli_mem_ref_t mem);
 
 
 /* --- types */
-
-struct gimli_type;
-struct gimli_type_collection;
-
-/** a container of type information */
-typedef struct gimli_type_collection *gimli_type_collection_t;
-
-/** represents type information */
-typedef struct gimli_type *gimli_type_t;
 
 
 /** create a new empty type collection object */

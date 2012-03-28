@@ -113,6 +113,8 @@ struct gimli_heartbeat {
 struct gimli_thread_state {
   STAILQ_ENTRY(gimli_thread_state) threadlist;
 
+  gimli_proc_t proc;
+
   void *pc; /* pc in frame 0 */
   void *fp; /* frame pointer */
   void *sp; /* stack pointer */
@@ -133,6 +135,7 @@ struct gimli_thread_state {
   x86_thread_state32_t regs;
 #endif
 };
+
 struct gimli_unwind_cursor {
   gimli_proc_t proc;
   struct gimli_thread_state st;
@@ -150,6 +153,25 @@ struct dw_secinfo {
   char *data, *end;
   char *cur;
 };
+
+struct gimli_stack_frame {
+  STAILQ_ENTRY(gimli_stack_frame) frames;
+
+  struct gimli_unwind_cursor cur;
+};
+
+struct gimli_stack_trace {
+  int refcnt;
+
+  /** associated thread */
+  gimli_thread_t thr;
+
+  /** number of frames */
+  int num_frames;
+
+  STAILQ_HEAD(frames, gimli_stack_frame) frames;
+};
+
 
 struct gimli_line_info {
   char *filename;
@@ -202,7 +224,7 @@ struct gimli_mapped_object {
 
   struct gimli_line_info *lines;
   uint64_t linecount;
-  
+
   struct dw_fde *fdes;
   unsigned int num_fdes;
 
@@ -237,6 +259,8 @@ struct gimli_proc {
   int pid;
   /** when it falls to zero, we tidy everything up */
   int refcnt;
+
+  struct gimli_proc_stat proc_stat;
 
   /** target dependent data */
 #ifdef __linux__

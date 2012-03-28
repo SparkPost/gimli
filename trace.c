@@ -9,208 +9,80 @@ int debug = 0;
 int max_frames = 256;
 gimli_proc_t the_proc = NULL;
 
-static struct gimli_proc_stat proc_stat = { 0, };
-
-static const struct gimli_proc_stat *gimli_get_proc_stat(void)
+gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames)
 {
-  return &proc_stat;
-}
+  gimli_stack_trace_t trace = calloc(1, sizeof(*trace));
+  struct gimli_unwind_cursor cur;
+  gimli_stack_frame_t frame;
 
-static int gimli_get_source_info(void *addr, char *buf,
-  int buflen, int *lineno)
-{
-  uint64_t l;
-  int ret = dwarf_determine_source_line_number(the_proc, addr, buf, buflen, &l);
-  if (ret) {
-    *lineno = (int)l;
-  }
-  return ret;
-}
+  if (!trace) return NULL;
 
-static char *gimli_get_string_symbol(gimli_proc_t proc, const char *obj, const char *name)
-{
-  struct gimli_symbol *sym;
+  trace->refcnt = 1;
+  trace->thr = thr;
+  STAILQ_INIT(&trace->frames);
 
-  sym = gimli_sym_lookup(proc, obj, name);
-  if (sym) {
-    void *addr;
+  memset(&cur, 0, sizeof(cur));
+  cur.proc = thr->proc;
 
-    if (gimli_read_mem(proc, sym->addr, &addr, sizeof(addr)) == sizeof(addr)) {
-      return gimli_read_string(proc, addr);
-    }
-  }
-  return NULL;
-}
-
-static int gimli_copy_from_symbol(const char *obj, const char *name,
-  int deref, void *buf, uint32_t size)
-{
-  struct gimli_symbol *sym;
-
-  sym = gimli_sym_lookup(the_proc, obj, name);
-  if (sym) {
-    void *addr = sym->addr;
-
-    while (deref--) {
-      if (gimli_read_mem(the_proc, addr, &addr, sizeof(addr)) != sizeof(addr)) {
-        return 0;
-      }
-    }
-
-    return gimli_read_mem(the_proc, addr, buf, size) == size;
-  }
-  return 0;
-}
-
-struct gimli_ana_api ana_api = {
-  GIMLI_ANA_API_VERSION,
-#if 0
-  gimli_sym_lookup,
-  gimli_pc_sym_name,
-  gimli_read_mem,
-  gimli_read_string,
-  gimli_get_source_info,
-  gimli_get_parameter,
-  gimli_get_string_symbol,
-  gimli_copy_from_symbol,
-  gimli_get_proc_stat,
-#endif
-};
-
-char *gimli_read_string(gimli_proc_t proc, void *addr)
-{
-  gimli_mem_ref_t ref;
-  gimli_err_t err;
-  char *buf, *end;
-  int totlen = 0, len, i;
-  void *cursor;
-#define STRING_AT_ONCE 1024
-
-  /* try to efficiently find a string in the target */
-  if (proc->pid == 0) {
-    /* easy case is when it's local */
-    return strdup((char*)addr);
-  }
-
-  /* map in a block at a time and look for the terminator */
-  cursor = addr;
-  err = gimli_proc_mem_ref(proc, (gimli_addr_t)addr, STRING_AT_ONCE, &ref);
-  if (err != GIMLI_ERR_OK) {
+  if (!gimli_init_unwind(&cur, thr)) {
+    free(trace);
     return NULL;
   }
+  do {
+    frame = calloc(1, sizeof(*frame));
 
-  while (1) {
-    buf = gimli_mem_ref_local(ref);
-    len = gimli_mem_ref_size(ref);
-    cursor += len;
-    totlen += len;
-    end = memchr(buf, '\0', len);
+    cur.frameno = trace->num_frames++;
+    cur.tid = thr->lwpid;
 
-    if (end) {
-      len = end - buf;
+    frame->cur = cur;
+    STAILQ_INSERT_TAIL(&trace->frames, frame, frames);
 
-      /* now we know our total length */
-      if (cursor == addr) {
-        /* can simply dup it out of the ref */
-        buf = strdup(buf);
-        gimli_mem_ref_delete(ref);
-        return buf;
-      }
-      /* re-request a ref with the desired length */
-      gimli_mem_ref_delete(ref);
-      err = gimli_proc_mem_ref(proc, (gimli_addr_t)addr, totlen + 1, &ref);
-      if (err != GIMLI_ERR_OK) {
-        return NULL;
-      }
-      buf = gimli_mem_ref_local(ref);
-      buf = strdup(buf);
-      gimli_mem_ref_delete(ref);
-      return buf;
+  } while (trace->num_frames < max_frames &&
+      cur.st.pc && gimli_unwind_next(&cur) && cur.st.pc);
+
+  return trace;
+}
+
+int gimli_stack_trace_num_frames(gimli_stack_trace_t trace)
+{
+  return trace->num_frames;
+}
+
+void gimli_stack_trace_addref(gimli_stack_trace_t trace)
+{
+  trace->refcnt++;
+}
+
+void gimli_stack_trace_delete(gimli_stack_trace_t trace)
+{
+  gimli_stack_frame_t frame;
+
+  if (--trace->refcnt) return;
+
+  while (STAILQ_FIRST(&trace->frames)) {
+    frame = STAILQ_FIRST(&trace->frames);
+    STAILQ_REMOVE_HEAD(&trace->frames, frames);
+    free(frame);
+  }
+
+  free(trace);
+}
+
+gimli_iter_status_t gimli_stack_trace_visit(
+    gimli_stack_trace_t trace,
+    gimli_stack_trace_visit_f func,
+    void *arg)
+{
+  gimli_stack_frame_t frame;
+  gimli_iter_status_t status = GIMLI_ITER_CONT;
+
+  STAILQ_FOREACH(frame, &trace->frames, frames) {
+    status = func(trace->thr->proc, trace->thr, frame, arg);
+    if (status != GIMLI_ITER_CONT) {
+      break;
     }
-
-    /* didn't find the terminator; get the next chunk and examine */
-    gimli_mem_ref_delete(ref);
-    err = gimli_proc_mem_ref(proc, (gimli_addr_t)cursor, STRING_AT_ONCE, &ref);
-  } while (err != GIMLI_ERR_OK);
-  return NULL;
-}
-
-static int sort_compare_mapping(const void *A, const void *B)
-{
-  struct gimli_object_mapping *a = *(struct gimli_object_mapping**)A;
-  struct gimli_object_mapping *b = *(struct gimli_object_mapping**)B;
-
-  if (a->base < b->base) {
-    return -1;
   }
-  if (a->base > b->base) {
-    return 1;
-  }
-
-  return a->len - b->len;
-}
-
-static int search_compare_mapping(const void *addr, const void *L)
-{
-  struct gimli_object_mapping *m = *(struct gimli_object_mapping**)L;
-
-  if (addr < m->base) {
-    return -1;
-  }
-  if (addr < m->base + m->len) {
-    return 0;
-  }
-  return 1;
-}
-
-struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, void *addr)
-{
-  struct gimli_object_mapping **m;
-
-  if (proc->maps_changed) {
-    int i;
-
-    /* (re)sort the list of maps */
-    qsort(proc->mappings, proc->nmaps, sizeof(struct gimli_object_mapping*),
-        sort_compare_mapping);
-    proc->maps_changed = 0;
-
-    for (i = 0; i < proc->nmaps; i++) {
-      struct gimli_object_mapping *map = proc->mappings[i];
-      printf("MAP: %p - %p %s\n", map->base, map->base + map->len, map->objfile->objname);
-    }
-    printf("--\n");
-  }
-
-  m = bsearch(addr, proc->mappings, proc->nmaps, sizeof(struct gimli_object_mapping*),
-      search_compare_mapping);
-  if (m) {
-    return *m;
-  }
-  return NULL;
-}
-
-const char *gimli_pc_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen)
-{
-  struct gimli_object_mapping *m;
-  struct gimli_symbol *s;
-
-  m = gimli_mapping_for_addr(proc, addr);
-  if (m) {
-    s = find_symbol_for_addr(m->objfile, addr);
-    if (s) {
-      if (addr == s->addr) {
-        snprintf(buf, buflen-1, "%s`%s", m->objfile->objname, s->name);
-      } else {
-        snprintf(buf, buflen-1, "%s`%s+%lx",
-            m->objfile->objname, s->name, (uintmax_t)(addr - s->addr));
-      }
-    } else {
-      snprintf(buf, buflen-1, "%s`%p", m->objfile->objname, addr);
-    }
-    return buf;
-  }
-  return "";
+  return status;
 }
 
 int gimli_render_siginfo(gimli_proc_t proc, siginfo_t *si, char *buf, size_t bufsize)
@@ -354,13 +226,24 @@ int gimli_render_siginfo(gimli_proc_t proc, siginfo_t *si, char *buf, size_t buf
       pidbuf, addrbuf);
 }
 
-void gimli_render_frame(int tid, int nframe, struct gimli_unwind_cursor *frame)
+gimli_addr_t gimli_stack_frame_pcaddr(gimli_stack_frame_t frame)
+{
+  return (gimli_addr_t)frame->cur.st.pc;
+}
+
+int gimli_stack_frame_number(gimli_stack_frame_t frame)
+{
+  return frame->cur.frameno;
+}
+
+
+void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
 {
   const char *name;
   char namebuf[1024];
   char filebuf[1024];
   uint64_t lineno;
-  struct gimli_unwind_cursor cur = *frame;
+  struct gimli_unwind_cursor cur = frame->cur;
 
   if (gimli_is_signal_frame(&cur)) {
     if (cur.si.si_signo) {
@@ -380,175 +263,6 @@ void gimli_render_frame(int tid, int nframe, struct gimli_unwind_cursor *frame)
     gimli_show_param_info(&cur);
   }
 }
-
-struct gimli_thread_state *gimli_proc_thread_by_lwpid(gimli_proc_t proc, int lwpid, int create)
-{
-  struct gimli_thread_state *thr;
-
-  STAILQ_FOREACH(thr, &proc->threads, threadlist) {
-    if (thr->lwpid == lwpid) {
-      return thr;
-    }
-  }
-
-  if (create) {
-    thr = calloc(1, sizeof(*thr));
-    thr->lwpid = lwpid;
-
-    STAILQ_INSERT_TAIL(&proc->threads, thr, threadlist);
-    return thr;
-  }
-
-  return NULL;
-}
-
-int gimli_stack_trace(gimli_proc_t proc, struct gimli_thread_state *thr, struct gimli_unwind_cursor *frames, int nframes)
-{
-  struct gimli_unwind_cursor cur;
-  int i;
-
-  if (!thr) {
-    return 0;
-  }
-
-  memset(&cur, 0, sizeof(cur));
-  cur.proc = the_proc;
-  if (gimli_init_unwind(&cur, thr)) {
-    int frame = 0;
-    do {
-      cur.frameno = frame;
-      cur.tid = thr->lwpid;
-      frames[frame++] = cur;
-    } while (frame < nframes &&
-        cur.st.pc && gimli_unwind_next(&cur) && cur.st.pc);
-    return frame;
-  }
-  return 0;
-}
-
-static void populate_proc_stat(int pid)
-{
-  int fd, ret;
-  char buffer[1024];
-
-#ifdef __linux__
-  /* see proc(5) for details on statm */
-  snprintf(buffer, sizeof(buffer), "/proc/%d/statm", pid);
-  fd = open(buffer, O_RDONLY);
-  if (fd >= 0) {
-    ret = read(fd, buffer, sizeof(buffer));
-    if (ret > 0) {
-      unsigned long a, b;
-
-      buffer[ret] = '\0';
-      /* want first two fields */
-      if (sscanf(buffer, "%lu %lu", &a, &b) == 2) {
-        proc_stat.pr_size = a * PAGE_SIZE;
-        proc_stat.pr_rssize = b * PAGE_SIZE;
-      }
-    }
-    close(fd);
-  }
-#elif defined(sun)
-  psinfo_t info;
-
-  snprintf(buffer, sizeof(buffer), "/proc/%d/psinfo", pid);
-  fd = open(buffer, O_RDONLY);
-  if (fd >= 0) {
-    ret = read(fd, &info, sizeof(info));
-    if (ret == sizeof(info)) {
-      proc_stat.pr_size = info.pr_size * 1024;
-      proc_stat.pr_rssize = info.pr_rssize * 1024;
-    }
-    close(fd);
-  }
-#endif
-  proc_stat.pid = pid;
-}
-
-struct gimli_object_mapping *gimli_add_mapping(
-  gimli_proc_t proc,
-  const char *objname, void *base, unsigned long len,
-  unsigned long offset)
-{
-  struct gimli_object_mapping *m = calloc(1, sizeof(*m));
-
-  m->proc = proc; // FIXME: refcnt
-  m->base = base;
-  m->len = len;
-  if (debug) {
-    fprintf(stderr, "MAP: %p - %p %s\n", (void*)m->base,
-      (void*)(m->base + m->len),  objname);
-  }
-  m->offset = offset;
-  m->objfile = gimli_find_object(proc, objname);
-  if (!m->objfile) {
-    m->objfile = gimli_add_object(proc, objname, base);
-  }
-
-  /* add to our collection */
-  proc->mappings = realloc(proc->mappings, (proc->nmaps + 1) * sizeof(m));
-  proc->mappings[proc->nmaps++] = m;
-  proc->maps_changed = 1;
-
-  return m;
-}
-
-gimli_mapped_object_t gimli_find_object(
-  gimli_proc_t proc,
-  const char *objname)
-{
-  gimli_mapped_object_t f;
-
-  if (objname == NULL) {
-    return proc->first_file;
-  }
-
-  if (gimli_hash_find(proc->files, objname, (void**)&f)) {
-    return f;
-  }
-
-  return NULL;
-}
-
-gimli_mapped_object_t gimli_add_object(
-  gimli_proc_t proc,
-  const char *objname, void *base)
-{
-  gimli_mapped_object_t f = gimli_find_object(proc, objname);
-  struct gimli_symbol *sym;
-  char *name = NULL;
-
-  if (f) return f;
-
-  f = calloc(1, sizeof(*f));
-  f->objname = strdup(objname);
-  f->sections = gimli_hash_new(NULL);
-
-  gimli_hash_insert(proc->files, f->objname, f);
-
-  if (proc->first_file == NULL) {
-    proc->first_file = f;
-  }
-
-#ifndef __MACH__
-  f->elf = gimli_elf_open(f->objname);
-  if (f->elf) {
-    f->elf->gobject = f;
-    /* need to determine the base address offset for this object */
-    f->base_addr = (intptr_t)base - f->elf->vaddr;
-    if (debug) {
-      printf("ELF: %s %d base=%p vaddr=" PTRFMT " base_addr=" PTRFMT "\n",
-        f->objname, f->elf->e_type, base, f->elf->vaddr, f->base_addr);
-    }
-
-    gimli_process_elf(f);
-  }
-#endif
-
-  return f;
-}
-
 
 static void detachatexit(void)
 {
@@ -573,7 +287,6 @@ int tracer_attach(int pid)
   atexit(detachatexit);
   if (gimli_proc_attach(pid, &the_proc) == GIMLI_ERR_OK) {
     gimli_mapped_object_t file;
-    populate_proc_stat(pid);
 
     gimli_hash_iter(the_proc->files, process_file, NULL);
     return 1;
