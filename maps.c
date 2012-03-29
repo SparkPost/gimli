@@ -33,7 +33,7 @@ static int search_compare_mapping(const void *addr, const void *L)
   return 1;
 }
 
-struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, void *addr)
+struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, gimli_addr_t addr)
 {
   struct gimli_object_mapping **m;
 

@@ -24,7 +24,7 @@
  *
  * CDDL HEADER END
  */
-/* (Portions derived from ctf_types.c)
+/* (Portions derived from ctf_types.c and ctf_decl.c)
  * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
@@ -48,9 +48,10 @@ struct gimli_type {
   int kind;
   char *name;
   char *declname;
-  size_t size;
   struct gimli_type_encoding enc;
   gimli_type_t target;
+
+  struct gimli_type_arinfo arinfo;
 
   struct {
     char *name;
@@ -58,6 +59,259 @@ struct gimli_type {
   } *members;
   int num_members;
 };
+
+/* Some definitions for canonicalizing type names */
+/*
+ * CTF Declaration Stack
+ *
+ * In order to implement ctf_type_name(), we must convert a type graph back
+ * into a C type declaration.  Unfortunately, a type graph represents a storage
+ * class ordering of the type whereas a type declaration must obey the C rules
+ * for operator precedence, and the two orderings are frequently in conflict.
+ * For example, consider these CTF type graphs and their C declarations:
+ *
+ * CTF_K_POINTER -> CTF_K_FUNCTION -> CTF_K_INTEGER  : int (*)()
+ * CTF_K_POINTER -> CTF_K_ARRAY -> CTF_K_INTEGER     : int (*)[]
+ *
+ * In each case, parentheses are used to raise operator * to higher lexical
+ * precedence, so the string form of the C declaration cannot be constructed by
+ * walking the type graph links and forming the string from left to right.
+ *
+ * The functions in this file build a set of stacks from the type graph nodes
+ * corresponding to the C operator precedence levels in the appropriate order.
+ * The code in ctf_type_name() can then iterate over the levels and nodes in
+ * lexical precedence order and construct the final C declaration string.
+ */
+
+typedef enum {
+  PREC_BASE,
+  PREC_POINTER,
+  PREC_ARRAY,
+  PREC_FUNCTION,
+  PREC_MAX
+} decl_prec_t;
+
+typedef struct decl_node {
+  /* linkage */
+  TAILQ_ENTRY(decl_node) list;
+  /* type */
+  gimli_type_t type;
+  /* type dimension if array */
+  unsigned int n;
+} *decl_node_t;
+
+typedef struct decl {
+  /* declaration node stacks */
+  TAILQ_HEAD(nodes, decl_node) nodes[PREC_MAX];
+  /* storage order of decls */
+  int order[PREC_MAX];
+  /* qualifier precision */
+  decl_prec_t qualp;
+  /* ordered precision */
+  decl_prec_t ordp;
+  /* buffer for output */
+  char *buf;
+  /* buffer location */
+  char *ptr;
+  /* buffer limit */
+  char *end;
+  /* space required */
+  size_t len;
+} *decl_t;
+
+static void decl_init(decl_t cd, char *buf, size_t len)
+{
+  int i;
+
+  memset(cd, 0, sizeof(*cd));
+
+  for (i = PREC_BASE; i < PREC_MAX; i++) {
+    cd->order[i] = PREC_BASE - 1;
+    TAILQ_INIT(&cd->nodes[i]);
+  }
+  cd->qualp = PREC_BASE;
+  cd->ordp = PREC_BASE;
+  cd->buf = buf;
+  cd->ptr = buf;
+  cd->end = buf + len;
+}
+
+static void decl_fini(decl_t cd)
+{
+  decl_node_t cdp, ndp;
+  int i;
+
+  for (i = PREC_BASE; i < PREC_MAX; i++) {
+    TAILQ_FOREACH_SAFE(cdp, &cd->nodes[i], list, ndp) {
+      free(cdp);
+    }
+  }
+}
+
+static void decl_push(decl_t cd, gimli_type_t type)
+{
+  decl_node_t cdp;
+  decl_prec_t prec;
+  int n = 1;
+  int is_qual = 0;
+
+  switch (type->kind) {
+    case GIMLI_K_ARRAY:
+      decl_push(cd, type->arinfo.contents);
+      n = type->arinfo.nelems;
+      prec = PREC_ARRAY;
+      break;
+
+    case GIMLI_K_TYPEDEF:
+      if (type->name[0] == '\0') {
+        decl_push(cd, type->target);
+        return;
+      }
+      prec = PREC_BASE;
+      break;
+
+    case GIMLI_K_FUNCTION:
+      decl_push(cd, type->target);
+      prec = PREC_FUNCTION;
+      break;
+
+    case GIMLI_K_POINTER:
+      decl_push(cd, type->target);
+      prec = PREC_POINTER;
+      break;
+
+    case GIMLI_K_VOLATILE:
+    case GIMLI_K_CONST:
+    case GIMLI_K_RESTRICT:
+      decl_push(cd, type->target);
+      prec = cd->qualp;
+      is_qual++;
+      break;
+
+    default:
+      prec = PREC_BASE;
+  }
+
+  cdp = calloc(1, sizeof(*cdp));
+  cdp->type = type;
+  cdp->n = n;
+
+  if (TAILQ_FIRST(&cd->nodes[prec]) == NULL) {
+    cd->order[prec] = cd->ordp++;
+  }
+
+  /* reset qualp to the highest precedence level that we've seen
+   * so far that can be qualified (BASE or POINTER) */
+  if (prec > cd->qualp && prec < PREC_ARRAY) {
+    cd->qualp = prec;
+  }
+
+  /* C array declarators are ordered inside-out, so prepend them.
+   * Also by convention qualifiers of base types precede the type
+   * specified (e.g.: const int vs int const) even though the two
+   * forms are equivalent */
+  if (type->kind == GIMLI_K_ARRAY || (is_qual && prec == PREC_BASE)) {
+    TAILQ_INSERT_HEAD(&cd->nodes[prec], cdp, list);
+  } else {
+    TAILQ_INSERT_TAIL(&cd->nodes[prec], cdp, list);
+  }
+}
+
+static void decl_sprintf(decl_t cd, const char *fmt, ...)
+{
+  size_t len = (size_t)(cd->end - cd->ptr);
+  va_list ap;
+  size_t n;
+
+  va_start(ap, fmt);
+  n = vsnprintf(cd->ptr, len, fmt, ap);
+  va_end(ap);
+
+  cd->ptr += n < len ? n : len;
+  cd->len += n;
+}
+
+/* print a string name for a type into buf.
+ * Return the actual number of bytes (not including \0) needed to
+ * format the name.
+ */
+static ssize_t decl_lname(gimli_type_t type, char *buf, size_t len)
+{
+  struct decl cd;
+  decl_node_t cdp;
+  decl_prec_t prec, lp, rp;
+  int ptr, arr;
+  int k;
+
+  decl_init(&cd, buf, len);
+  decl_push(&cd, type);
+
+  ptr = cd.order[PREC_POINTER] > PREC_POINTER;
+  arr = cd.order[PREC_ARRAY] > PREC_ARRAY;
+
+  rp = arr ? PREC_ARRAY : ptr ? PREC_POINTER : -1;
+  lp = ptr ? PREC_POINTER : arr ? PREC_ARRAY : -1;
+
+  /* avoid leading whitespace (see below) */
+  k = GIMLI_K_POINTER;
+
+  for (prec = PREC_BASE; prec < PREC_MAX; prec++) {
+    TAILQ_FOREACH(cdp, &cd.nodes[prec], list) {
+
+      if (k != GIMLI_K_POINTER && k != GIMLI_K_ARRAY) {
+        decl_sprintf(&cd, " ");
+      }
+
+      if (lp == prec) {
+        decl_sprintf(&cd, "(");
+        lp = -1;
+      }
+
+      switch (cdp->type->kind) {
+        case GIMLI_K_INTEGER:
+        case GIMLI_K_FLOAT:
+        case GIMLI_K_TYPEDEF:
+          decl_sprintf(&cd, "%s", cdp->type->name);
+          break;
+        case GIMLI_K_POINTER:
+          decl_sprintf(&cd, "*");
+          break;
+        case GIMLI_K_ARRAY:
+          decl_sprintf(&cd, "[%u]", cdp->n);
+          break;
+        case GIMLI_K_FUNCTION:
+          decl_sprintf(&cd, "()");
+          break;
+        case GIMLI_K_STRUCT:
+//        case GIMLI_K_FORWARD:
+          decl_sprintf(&cd, "struct %s", cdp->type->name);
+          break;
+        case GIMLI_K_UNION:
+          decl_sprintf(&cd, "union %s", cdp->type->name);
+          break;
+        case GIMLI_K_ENUM:
+          decl_sprintf(&cd, "enum %s", cdp->type->name);
+          break;
+        case GIMLI_K_VOLATILE:
+          decl_sprintf(&cd, "volatile");
+          break;
+        case GIMLI_K_CONST:
+          decl_sprintf(&cd, "const");
+          break;
+        case GIMLI_K_RESTRICT:
+          decl_sprintf(&cd, "restrict");
+          break;
+      }
+      k = cdp->type->kind;
+    }
+
+    if (rp == prec) {
+      decl_sprintf(&cd, ")");
+    }
+  }
+  decl_fini(&cd);
+  return cd.len;
+}
 
 gimli_type_collection_t gimli_type_collection_new(void)
 {
@@ -83,6 +337,40 @@ static void delete_type(gimli_type_t t)
   free(t->name);
   free(t->declname);
   free(t);
+}
+
+static gimli_iter_status_t type_rvisit(gimli_type_t t, 
+    gimli_type_visit_f func,
+    void *arg, const char *name, uint64_t offset, int depth)
+{
+  gimli_iter_status_t status;
+  int i;
+
+  status = func(name, t, offset, depth, arg);
+
+  if (status != GIMLI_ITER_CONT) {
+    return status;
+  }
+
+  if (t->kind != GIMLI_K_STRUCT && t->kind != GIMLI_K_UNION) {
+    return GIMLI_ITER_CONT;
+  }
+
+  for (i = 0; i < t->num_members; i++) {
+    status = type_rvisit(t->members[i].info.type, func, arg,
+        t->members[i].name, offset + t->members[i].info.offset, depth + 1);
+    if (status != GIMLI_ITER_CONT) {
+      return status;
+    }
+  }
+  return GIMLI_ITER_CONT;
+}
+
+gimli_iter_status_t gimli_type_visit(gimli_type_t t,
+    gimli_type_visit_f func,
+    void *arg)
+{
+  return type_rvisit(t, func, arg, "", 0, 0);
 }
 
 void gimli_type_collection_delete(gimli_type_collection_t col)
@@ -149,13 +437,24 @@ const char *gimli_type_name(gimli_type_t t)
 
 const char *gimli_type_declname(gimli_type_t t)
 {
-  if (t) return t->declname;
-  return NULL;
+  char buf[256];
+  ssize_t size;
+
+  if (t->declname) return t->declname;
+  size = decl_lname(t, buf, sizeof(buf));
+  if (size > sizeof(buf) - 1) {
+    t->declname = malloc(size + 1);
+    decl_lname(t, t->declname, size + 1);
+  } else {
+    t->declname = strdup(buf);
+  }
+
+  return t->declname;
 }
 
 size_t gimli_type_size(gimli_type_t t)
 {
-  return t->size;
+  return t->enc.bits;
 }
 
 int gimli_type_kind(gimli_type_t t)
@@ -198,6 +497,16 @@ static gimli_type_t new_type(gimli_type_collection_t col,
         break;
     }
   }
+
+  return t;
+}
+
+gimli_type_t gimli_type_new_array(gimli_type_collection_t col,
+    const struct gimli_type_arinfo *info)
+{
+  gimli_type_t t = new_type(col, GIMLI_K_ARRAY, NULL, NULL);
+
+  memcpy(&t->arinfo, info, sizeof(*info));
 
   return t;
 }
@@ -255,6 +564,19 @@ static gimli_type_t new_alias(gimli_type_collection_t col,
 gimli_type_t gimli_type_new_struct(gimli_type_collection_t col, const char *name)
 {
   return new_type(col, GIMLI_K_STRUCT, name, NULL);
+}
+
+gimli_type_t gimli_type_new_union(gimli_type_collection_t col, const char *name)
+{
+  return new_type(col, GIMLI_K_UNION, name, NULL);
+}
+
+gimli_type_t gimli_type_new_typedef(gimli_type_collection_t col,
+    gimli_type_t target, const char *name)
+{
+  gimli_type_t t = new_type(col, GIMLI_K_TYPEDEF, name, NULL);
+  if (t) t->target = target;
+  return t;
 }
 
 gimli_type_t gimli_type_new_volatile(gimli_type_collection_t col,

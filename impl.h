@@ -154,10 +154,22 @@ struct dw_secinfo {
   char *cur;
 };
 
+struct gimli_variable {
+  STAILQ_ENTRY(gimli_variable) vars;
+
+  const char *varname;
+  gimli_addr_t addr;
+  gimli_type_t type;
+  int is_param;
+};
+
 struct gimli_stack_frame {
   STAILQ_ENTRY(gimli_stack_frame) frames;
 
   struct gimli_unwind_cursor cur;
+
+  STAILQ_HEAD(vars, gimli_variable) vars;
+  int loaded_vars;
 };
 
 struct gimli_stack_trace {
@@ -236,6 +248,9 @@ struct gimli_mapped_object {
   struct gimli_ana_module *tracer_module;
 
   gimli_hash_t sections; /* sectname => gimli_section_data */
+
+  gimli_type_collection_t types;
+  gimli_hash_t die_to_type; /* die-addr => gimli_type_t */
 };
 
 #ifdef __linux__
@@ -346,7 +361,7 @@ struct gimli_object_mapping *gimli_add_mapping(
   gimli_proc_t proc,
   const char *objname, void *base, unsigned long len,
   unsigned long offset);
-struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, void *addr);
+struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, gimli_addr_t addr);
 
 gimli_mapped_object_t gimli_add_object(
   gimli_proc_t proc,
@@ -407,6 +422,7 @@ void gimli_user_regs_to_thread(prgregset_t *ur,
   struct gimli_thread_state *thr);
 struct gimli_thread_state *gimli_proc_thread_by_lwpid(gimli_proc_t proc, int lwpid, int create);
 int gimli_stack_trace(gimli_proc_t proc, struct gimli_thread_state *thr, struct gimli_unwind_cursor *frames, int nframes);
+int gimli_dwarf_load_frame_var_info(gimli_stack_frame_t frame);
 
 #ifdef __cplusplus
 }

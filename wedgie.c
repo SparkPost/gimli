@@ -82,6 +82,8 @@ static void func_two(void)
 {
   union wedgie_union u;
   struct wedgie_data d = { 42, "forty-two" };
+  char multidim[4][8][16] = {0};
+  short otherdim[3][6];
 
   printf("initialize some data\n"); fflush(stdout);
   u.one = 1;

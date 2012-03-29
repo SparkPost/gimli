@@ -31,6 +31,7 @@ gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames)
   do {
     frame = calloc(1, sizeof(*frame));
 
+    STAILQ_INIT(&frame->vars);
     cur.frameno = trace->num_frames++;
     cur.tid = thr->lwpid;
 
@@ -236,6 +237,77 @@ int gimli_stack_frame_number(gimli_stack_frame_t frame)
   return frame->cur.frameno;
 }
 
+gimli_iter_status_t gimli_stack_frame_visit_vars(
+    gimli_stack_frame_t frame,
+    int filter,
+    gimli_stack_frame_visit_f func,
+    void *arg)
+{
+  gimli_dwarf_load_frame_var_info(frame);
+  gimli_var_t var;
+  gimli_iter_status_t status = GIMLI_ITER_CONT;
+
+  /* iterate */
+  STAILQ_FOREACH(var, &frame->vars, vars) {
+    if ((var->is_param & filter) == 0) continue;
+
+    status = func(frame, var, arg);
+  }
+
+  return status;
+}
+
+struct var_data {
+  int is_param;
+  gimli_var_t var;
+  gimli_addr_t addr;
+  gimli_mem_ref_t mem;
+  char *ptr;
+};
+
+static gimli_iter_status_t print_var(
+    /** name of member */
+    const char *name,
+    /** type being visited */
+    gimli_type_t t,
+    /** offset in bits */
+    uint64_t offset,
+    /** depth of recursion */
+    int depth,
+    /** caller provided closure */
+    void *arg)
+{
+  struct var_data *data = arg;
+
+  printf("{%d} t=%p %s %s <offsetbits:%" PRIu64 ">\n",
+      depth, t, gimli_type_declname(t),
+      depth ? name : data->var->varname,
+      offset);
+
+  return GIMLI_ITER_CONT;
+}
+
+static gimli_iter_status_t show_var(
+    gimli_stack_frame_t frame,
+    gimli_var_t var,
+    void *arg)
+{
+  struct var_data data;
+
+  data.var = var;
+  data.is_param = var->is_param;
+  data.addr = var->addr;
+
+  if (var->type) {
+    gimli_type_visit(var->type, print_var, &data);
+  } else {
+    printf("%s %s @ " PTRFMT ": t=%p is_param=%d\n",
+        var->type ? gimli_type_declname(var->type) : "?",
+        var->varname, var->addr,
+        var->type, var->is_param);
+  }
+  return GIMLI_ITER_CONT;
+}
 
 void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
 {
@@ -260,7 +332,8 @@ void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
       printf(" (%s:%" PRId64 ")", filebuf, lineno);
     }
     printf("\n");
-    gimli_show_param_info(&cur);
+    gimli_stack_frame_visit_vars(frame, GIMLI_WANT_ALL, show_var, NULL);
+//    gimli_show_param_info(&cur);
   }
 }
 

@@ -23,6 +23,7 @@ struct gimli_type_collection;
 struct gimli_thread_state;
 struct gimli_stack_frame;
 struct gimli_stack_trace;
+struct gimli_variable;
 
 /** a container of type information */
 typedef struct gimli_type_collection *gimli_type_collection_t;
@@ -40,6 +41,8 @@ typedef struct gimli_thread_state *gimli_thread_t;
 typedef struct gimli_stack_trace *gimli_stack_trace_t;
 /** Represents a stack frame in a stack trace */
 typedef struct gimli_stack_frame *gimli_stack_frame_t;
+/** Represents a variable */
+typedef struct gimli_variable *gimli_var_t;
 
 
 struct gimli_symbol {
@@ -292,6 +295,23 @@ gimli_iter_status_t gimli_stack_trace_visit(
 gimli_addr_t gimli_stack_frame_pcaddr(gimli_stack_frame_t frame);
 int gimli_stack_frame_number(gimli_stack_frame_t frame);
 
+/** visit each variable in a frame of a stack trace */
+typedef gimli_iter_status_t gimli_stack_frame_visit_f(
+    gimli_stack_frame_t frame,
+    gimli_var_t var,
+    void *arg);
+
+#define GIMLI_WANT_PARAMS  0x1
+#define GIMLI_WANT_LOCALS  0x2
+#define GIMLI_WANT_ALL     (GIMLI_WANT_PARAMS|GIMLI_WANT_LOCALS)
+
+gimli_iter_status_t gimli_stack_frame_visit_vars(
+    gimli_stack_frame_t frame,
+    int filter,
+    gimli_stack_frame_visit_f func,
+    void *arg);
+
+
 /** Returns mapping to the target address space.
  * Depending on the system and the target, this may be a live mapping
  * wherein writes to the local area are immediately reflected in the
@@ -375,7 +395,7 @@ const char *gimli_type_name(gimli_type_t t);
 /** returns the C-style type name for this type */
 const char *gimli_type_declname(gimli_type_t t);
 
-/** returns the padded and aligned size requirements
+/** returns the number of bits required
  * to hold an instance of this type */
 size_t gimli_type_size(gimli_type_t t);
 
@@ -394,6 +414,15 @@ int gimli_type_kind(gimli_type_t t);
 #define GIMLI_K_VOLATILE 10
 #define GIMLI_K_CONST    11
 #define GIMLI_K_RESTRICT 12
+
+/** integer is signed (otherwise unsigned) */
+#define GIMLI_INT_SIGNED 0x1
+/** character display format */
+#define GIMLI_INT_CHAR   0x2
+/** boolean display format */
+#define GIMLI_INT_BOOL   0x4
+/** varargs display format */
+#define GIMLI_INT_VARARGS 0x8
 
 /** generic encoding information */
 struct gimli_type_encoding {
@@ -439,6 +468,10 @@ gimli_type_t gimli_type_new_const(gimli_type_collection_t col,
 gimli_type_t gimli_type_new_pointer(gimli_type_collection_t col,
     gimli_type_t target);
 
+/** create a new "typedef" type */
+gimli_type_t gimli_type_new_typedef(gimli_type_collection_t col,
+    gimli_type_t target, const char *name);
+
 /** information about struct/union members */
 struct gimli_type_membinfo {
   /** type of member */
@@ -457,6 +490,10 @@ int gimli_type_membinfo(gimli_type_t t,
 gimli_type_t gimli_type_new_struct(gimli_type_collection_t col,
     const char *name);
 
+/** create an instance of a union type */
+gimli_type_t gimli_type_new_union(gimli_type_collection_t col,
+    const char *name);
+
 /** add a new member to a structure type.
  * Note that you can set the encoding on membertype
  * to control the offset and size of the member */
@@ -468,8 +505,10 @@ int gimli_type_add_member(gimli_type_t t,
 struct gimli_type_arinfo {
   /** type of array elements */
   gimli_type_t contents;
+#if 0
   /** type of array index */
   gimli_type_t idx;
+#endif
   /** size of the array */
   uint32_t nelems;
 };
@@ -477,6 +516,10 @@ struct gimli_type_arinfo {
 /** returns array information */
 int gimli_type_arinfo(gimli_type_t t,
     struct gimli_type_arinfo *info);
+
+/** create a new array type */
+gimli_type_t gimli_type_new_array(gimli_type_collection_t col,
+    const struct gimli_type_arinfo *info);
 
 /** information about functions */
 struct gimli_type_funcinfo {
@@ -509,7 +552,7 @@ typedef gimli_iter_status_t gimli_type_visit_f(
     void *arg);
 
 /** recursively visit a type */
-int gimli_type_visit(gimli_type_t t,
+gimli_iter_status_t gimli_type_visit(gimli_type_t t,
     gimli_type_visit_f func,
     void *arg);
 
