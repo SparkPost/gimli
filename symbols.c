@@ -145,6 +145,7 @@ struct gimli_symbol *find_symbol_for_addr(gimli_mapped_object_t f,
   int i, n, bu, cu;
 
   bake_symtab(f);
+  if (!f->symcount) return NULL;
 
   csym = bsearch(addr, f->symtab, f->symcount,
       sizeof(struct gimli_symbol), search_compare_symaddr);
@@ -204,6 +205,8 @@ static struct gimli_symbol *sym_lookup(gimli_mapped_object_t file,
   struct gimli_symbol *sym = NULL;
 
   bake_symtab(file);
+  if (!file->symcount) return NULL;
+
   if (gimli_hash_find(file->symhash, name, (void**)&sym)) {
     return sym;
   }
