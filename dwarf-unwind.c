@@ -463,7 +463,8 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
           fprintf(stderr, "col %d: CFA relative, reading %p + %" PRIu64 " = %p\n", i,
             fp, cur->dw.cols[i].value, regaddr);
         }
-        if (gimli_read_mem(cur->proc, regaddr, &val, sizeof(val)) != sizeof(val)) {
+        if (gimli_read_mem(cur->proc, (gimli_addr_t)regaddr,
+              &val, sizeof(val)) != sizeof(val)) {
           fprintf(stderr, "col %d: couldn't read value\n", i);
           return 0;
         }
@@ -837,10 +838,10 @@ static int load_fde(struct gimli_object_mapping *m)
           char name[1024];
           const char *sym = gimli_pc_sym_name(
               m->proc,
-              (void*)(intptr_t)fde->initial_loc, name, sizeof(name));
-          fprintf(stderr, "FDE: init=%p-%p %s aug=%s\n",
-              (char*)(intptr_t)fde->initial_loc,
-              (char*)(intptr_t)(fde->initial_loc + fde->addr_range),
+              fde->initial_loc, name, sizeof(name));
+          fprintf(stderr, "FDE: init=" PTRFMT "-" PTRFMT " %s aug=%s\n",
+              fde->initial_loc,
+              (fde->initial_loc + fde->addr_range),
               sym,
               fde->cie->aug);
         }

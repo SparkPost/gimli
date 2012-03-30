@@ -331,16 +331,16 @@ ps_err_e ps_pglobal_sym(struct ps_prochandle *h,
 #endif
 
 #ifndef __FreeBSD__
-int gimli_write_mem(gimli_proc_t proc, void *ptr, const void *buf, int len)
+int gimli_write_mem(gimli_proc_t proc, gimli_addr_t ptr, const void *buf, int len)
 {
-  int ret = pwrite(proc->proc_mem, buf, len, (intptr_t)ptr);
+  int ret = pwrite(proc->proc_mem, buf, len, ptr);
   if (ret < 0) ret = 0;
   return ret;
 }
 
-int gimli_read_mem(gimli_proc_t proc, void *src, void *dest, int len)
+int gimli_read_mem(gimli_proc_t proc, gimli_addr_t src, void *dest, int len)
 {
-  int ret = pread(proc->proc_mem, dest, len, (intptr_t)src);
+  int ret = pread(proc->proc_mem, dest, len, src);
   if (ret < 0) ret = 0;
   return ret;
 }
@@ -349,25 +349,29 @@ int gimli_read_mem(gimli_proc_t proc, void *src, void *dest, int len)
 ps_err_e ps_pread(struct ps_prochandle *h,
 			psaddr_t addr, void *buf, size_t size)
 {
-  return gimli_read_mem(h, (void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
+  return gimli_read_mem(h, (gimli_addr_t)addr, buf, size)
+    == size ? PS_OK : PS_BADADDR;
 }
 
 ps_err_e ps_pdread(struct ps_prochandle *h, psaddr_t addr,
   void *buf, size_t size)
 {
-  return gimli_read_mem(h, (void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
+  return gimli_read_mem(h, (gimli_addr_t)addr, buf, size)
+    == size ? PS_OK : PS_BADADDR;
 }
 
 ps_err_e ps_pwrite(struct ps_prochandle *h,
 			psaddr_t addr, const void *buf, size_t size)
 {
-  return gimli_write_mem(h, (void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
+  return gimli_write_mem(h, (gimli_addr_t)addr, buf, size)
+    == size ? PS_OK : PS_BADADDR;
 }
 
 ps_err_e ps_pdwrite(struct ps_prochandle *h, psaddr_t addr,
   const void *buf, size_t size)
 {
-  return gimli_write_mem(h, (void*)addr, buf, size) == size ? PS_OK : PS_BADADDR;
+  return gimli_write_mem(h, (gimli_addr_t)addr, buf, size)
+    == size ? PS_OK : PS_BADADDR;
 }
 
 #ifdef __linux__

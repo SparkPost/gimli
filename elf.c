@@ -21,7 +21,7 @@ static int for_each_symbol(struct gimli_elf_ehdr *elf,
 
   if (sym->st_size && sym->name[0] && !strchr(sym->name, '.') &&
       !strchr(sym->name, '$')) {
-    gimli_add_symbol(f, sym->name, (void*)sym->st_value, sym->st_size);
+    gimli_add_symbol(f, sym->name, sym->st_value, sym->st_size);
     return 1;
   }
   return 0;

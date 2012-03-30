@@ -360,15 +360,15 @@ extern void logprint(const char *fmt, ...);
 
 struct gimli_object_mapping *gimli_add_mapping(
   gimli_proc_t proc,
-  const char *objname, void *base, unsigned long len,
+  const char *objname, gimli_addr_t base, unsigned long len,
   unsigned long offset);
 struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, gimli_addr_t addr);
 
 gimli_mapped_object_t gimli_add_object(
   gimli_proc_t proc,
-  const char *objname, void *base);
+  const char *objname, gimli_addr_t base);
 struct gimli_symbol *gimli_add_symbol(gimli_mapped_object_t f,
-  const char *name, void *addr, uint32_t size);
+  const char *name, gimli_addr_t addr, uint32_t size);
 gimli_mapped_object_t gimli_find_object(
   gimli_proc_t proc,
   const char *objname);
@@ -406,16 +406,16 @@ int gimli_demangle(const char *mangled, char *out, int out_size);
 gimli_err_t gimli_attach(gimli_proc_t proc);
 gimli_err_t gimli_detach(gimli_proc_t proc);
 
-const char *gimli_data_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen);
-const char *gimli_pc_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen);
-int gimli_read_mem(gimli_proc_t proc, void *src, void *dest, int len);
-int gimli_write_mem(gimli_proc_t proc, void *src, const void *dest, int len);
+const char *gimli_data_sym_name(gimli_proc_t proc, gimli_addr_t addr, char *buf, int buflen);
+const char *gimli_pc_sym_name(gimli_proc_t proc, gimli_addr_t addr, char *buf, int buflen);
+int gimli_read_mem(gimli_proc_t proc, gimli_addr_t src, void *dest, int len);
+int gimli_write_mem(gimli_proc_t proc, gimli_addr_t src, const void *dest, int len);
 struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const char *name);
-char *gimli_read_string(gimli_proc_t proc, void *addr);
+char *gimli_read_string(gimli_proc_t proc, gimli_addr_t addr);
 int gimli_get_parameter(void *context, const char *varname,
   const char **datatype, void **addr, uint64_t *size);
 extern struct gimli_symbol *find_symbol_for_addr(gimli_mapped_object_t f,
-  void *addr);
+  gimli_addr_t addr);
 struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode);
 gimli_err_t gimli_proc_service_init(gimli_proc_t proc);

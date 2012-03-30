@@ -177,7 +177,7 @@ gimli_err_t gimli_proc_mem_ref(gimli_proc_t p,
       return GIMLI_ERR_OOM;
     }
     ref->map_type = gimli_mem_ref_is_malloc;
-    actual = gimli_read_mem(p, (void*)(intptr_t)ref->target, ref->base, ref->size);
+    actual = gimli_read_mem(p, ref->target, ref->base, ref->size);
     if (actual == 0) {
       gimli_mem_ref_delete(ref);
       return GIMLI_ERR_BAD_ADDR;
@@ -205,7 +205,8 @@ gimli_err_t gimli_proc_mem_commit(gimli_mem_ref_t ref)
   }
 
   /* store it back to the target */
-  return gimli_write_mem(ref->proc, (void*)ref->target, ref->base, ref->size) == ref->size;
+  return gimli_write_mem(ref->proc, ref->target,
+      ref->base, ref->size) == ref->size;
 }
 
 /** Returns base address of a mapping, in the target address space */
@@ -279,13 +280,13 @@ struct gimli_thread_state *gimli_proc_thread_by_lwpid(gimli_proc_t proc, int lwp
   return NULL;
 }
 
-char *gimli_read_string(gimli_proc_t proc, void *addr)
+char *gimli_read_string(gimli_proc_t proc, gimli_addr_t addr)
 {
   gimli_mem_ref_t ref;
   gimli_err_t err;
   char *buf, *end;
   int totlen = 0, len, i;
-  void *cursor;
+  gimli_addr_t cursor;
 #define STRING_AT_ONCE 1024
 
   /* try to efficiently find a string in the target */
@@ -296,7 +297,7 @@ char *gimli_read_string(gimli_proc_t proc, void *addr)
 
   /* map in a block at a time and look for the terminator */
   cursor = addr;
-  err = gimli_proc_mem_ref(proc, (gimli_addr_t)addr, STRING_AT_ONCE, &ref);
+  err = gimli_proc_mem_ref(proc, addr, STRING_AT_ONCE, &ref);
   if (err != GIMLI_ERR_OK) {
     return NULL;
   }
@@ -320,7 +321,7 @@ char *gimli_read_string(gimli_proc_t proc, void *addr)
       }
       /* re-request a ref with the desired length */
       gimli_mem_ref_delete(ref);
-      err = gimli_proc_mem_ref(proc, (gimli_addr_t)addr, totlen + 1, &ref);
+      err = gimli_proc_mem_ref(proc, addr, totlen + 1, &ref);
       if (err != GIMLI_ERR_OK) {
         return NULL;
       }
@@ -332,7 +333,7 @@ char *gimli_read_string(gimli_proc_t proc, void *addr)
 
     /* didn't find the terminator; get the next chunk and examine */
     gimli_mem_ref_delete(ref);
-    err = gimli_proc_mem_ref(proc, (gimli_addr_t)cursor, STRING_AT_ONCE, &ref);
+    err = gimli_proc_mem_ref(proc, cursor, STRING_AT_ONCE, &ref);
   } while (err != GIMLI_ERR_OK);
   return NULL;
 }

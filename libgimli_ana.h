@@ -43,7 +43,8 @@ typedef struct gimli_stack_trace *gimli_stack_trace_t;
 typedef struct gimli_stack_frame *gimli_stack_frame_t;
 /** Represents a variable */
 typedef struct gimli_variable *gimli_var_t;
-
+/** represents a pointer on any architecture */
+typedef uint64_t gimli_addr_t;
 
 struct gimli_symbol {
   /** de-mangled symbol name */
@@ -51,7 +52,7 @@ struct gimli_symbol {
   /** raw, un-mangled symbol name */
   char *rawname;
   /** resolved address in the target process */
-  void *addr;
+  gimli_addr_t addr;
   /** size of the symbol. Not all systems provide this information
    * for all symbols */
   uint32_t size;
@@ -236,9 +237,6 @@ typedef enum {
   GIMLI_ERR_TIMEOUT,
   GIMLI_ERR_THREAD_DEBUGGER_INIT_FAILED,
 } gimli_err_t;
-
-/** represents a pointer on any architecture */
-typedef uint64_t gimli_addr_t;
 
 /** deletes a reference to a proc handle.
  * When the final handle is deleted, the process will be detached

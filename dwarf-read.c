@@ -71,13 +71,13 @@ int dw_read_encptr(gimli_proc_t proc,
     return 0;
 
     if (sizeof(void*) == 8) {
-      if (gimli_read_mem(proc, (void*)(intptr_t)res, &res, sizeof(res))
+      if (gimli_read_mem(proc, res, &res, sizeof(res))
           != sizeof(*output)) {
         return 0;
       }
     } else {
       uint32_t r;
-      if (gimli_read_mem(proc, (void*)(intptr_t)res, &r, sizeof(r)) != sizeof(r)) {
+      if (gimli_read_mem(proc, res, &r, sizeof(r)) != sizeof(r)) {
         return 0;
       }
       res = r;
@@ -1434,7 +1434,7 @@ const char *gimli_dwarf_resolve_type_name(gimli_mapped_object_t f,
 }
 
 int gimli_dwarf_read_value(gimli_proc_t proc,
-    void *addr, int is_stack, void *out, uint64_t size)
+    gimli_addr_t addr, int is_stack, void *out, uint64_t size)
 {
   uint32_t u32;
   uint16_t u16;
@@ -1445,7 +1445,7 @@ int gimli_dwarf_read_value(gimli_proc_t proc,
     return gimli_read_mem(proc, addr, out, size) == size;
   }
   /* otherwise, addr actually contains the value */
-  v = (uint64_t)(intptr_t)addr;
+  v = addr;
   switch (size) {
     case 8:
       memcpy(out, &v, size);
@@ -1498,7 +1498,8 @@ static int do_before(
     char namebuf[1024];
     siginfo_t si;
 
-    if (gimli_read_mem(cur->proc, varaddr, &si, sizeof(si)) == sizeof(si)) {
+    if (gimli_read_mem(cur->proc, (gimli_addr_t)varaddr,
+          &si, sizeof(si)) == sizeof(si)) {
       gimli_render_siginfo(cur->proc, &si, namebuf, sizeof(namebuf));
       printf("  siginfo_t *%s = %p\n    %s\n",
           varname, varaddr, namebuf);
@@ -1581,6 +1582,7 @@ done:
   gimli_mem_ref_delete(ref);
 }
 
+#if 0
 static int show_param(struct gimli_unwind_cursor *cur,
   gimli_mapped_object_t f,
   struct gimli_dwarf_attr *type, void *addr, int is_stack,
@@ -1927,6 +1929,7 @@ static int show_param(struct gimli_unwind_cursor *cur,
   }
   return 0;
 }
+#endif
 
 int gimli_get_parameter(void *context, const char *varname,
   const char **datatype, void **addr, uint64_t *size)
@@ -2018,6 +2021,7 @@ int gimli_get_parameter(void *context, const char *varname,
   return 0;
 }
 
+#if 0
 static int show_die(struct gimli_unwind_cursor *cur,
     struct gimli_dwarf_die *die,
     uint64_t frame_base, uint64_t comp_unit_base,
@@ -2074,7 +2078,9 @@ static int show_die(struct gimli_unwind_cursor *cur,
 
   return 1;
 }
+#endif
 
+#if 0
 int gimli_show_param_info(struct gimli_unwind_cursor *cur)
 {
   struct gimli_dwarf_die *die = gimli_dwarf_get_die_for_pc(cur->proc, (gimli_addr_t)cur->st.pc);
@@ -2126,6 +2132,7 @@ int gimli_show_param_info(struct gimli_unwind_cursor *cur)
 
   return 0;
 }
+#endif
 
 static gimli_type_t load_type(
     gimli_mapped_object_t file,

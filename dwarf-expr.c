@@ -44,14 +44,13 @@ static int pop(struct dw_expr *e, struct dw_stack_val *v)
   return 1;
 }
 
-static int deref(gimli_proc_t proc, uint64_t addr, uint64_t *resp, uint8_t opsize)
+static int deref(gimli_proc_t proc, uint64_t ptr, uint64_t *resp, uint8_t opsize)
 {
   uint8_t u8;
   uint16_t u16;
   uint32_t u32;
   uint64_t u64;
   int res;
-  void *ptr = (void*)(intptr_t)addr;
 
   switch (opsize) {
     case 1:
@@ -75,7 +74,7 @@ static int deref(gimli_proc_t proc, uint64_t addr, uint64_t *resp, uint8_t opsiz
       opsize, ptr);
     return 0;
   }
-  if (debug) printf("deref: addr=%p opsize=%d res=0x%x\n", ptr, opsize, res);
+  if (debug) printf("deref: addr=" PTRFMT " opsize=%d res=0x%x\n", ptr, opsize, res);
   *resp = res;
   return 1;
 }

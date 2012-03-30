@@ -6,7 +6,7 @@
 #include "impl.h"
 
 struct gimli_symbol *gimli_add_symbol(gimli_mapped_object_t f,
-  const char *name, void *addr, uint32_t size)
+  const char *name, gimli_addr_t addr, uint32_t size)
 {
   struct gimli_symbol *s;
   char buf[1024];
@@ -125,8 +125,9 @@ static int calc_readability(const char *name)
   return value;
 }
 
-static int search_compare_symaddr(const void *addr, const void *S)
+static int search_compare_symaddr(const void *addrp, const void *S)
 {
+  gimli_addr_t addr = *(gimli_addr_t*)addrp;
   struct gimli_symbol *s = (struct gimli_symbol*)S;
 
   if (addr < s->addr) {
@@ -139,7 +140,7 @@ static int search_compare_symaddr(const void *addr, const void *S)
 }
 
 struct gimli_symbol *find_symbol_for_addr(gimli_mapped_object_t f,
-  void *addr)
+  gimli_addr_t addr)
 {
   struct gimli_symbol *csym, *best, *last;
   int i, n, bu, cu;
@@ -147,7 +148,7 @@ struct gimli_symbol *find_symbol_for_addr(gimli_mapped_object_t f,
   bake_symtab(f);
   if (!f->symcount) return NULL;
 
-  csym = bsearch(addr, f->symtab, f->symcount,
+  csym = bsearch(&addr, f->symtab, f->symcount,
       sizeof(struct gimli_symbol), search_compare_symaddr);
 
   if (!csym) {

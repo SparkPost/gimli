@@ -66,7 +66,7 @@ struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, gimli_add
   return NULL;
 }
 
-const char *gimli_data_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen)
+const char *gimli_data_sym_name(gimli_proc_t proc, gimli_addr_t addr, char *buf, int buflen)
 {
   struct gimli_object_mapping *m;
   struct gimli_symbol *s;
@@ -91,7 +91,7 @@ const char *gimli_data_sym_name(gimli_proc_t proc, void *addr, char *buf, int bu
   return "";
 }
 
-const char *gimli_pc_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen)
+const char *gimli_pc_sym_name(gimli_proc_t proc, gimli_addr_t addr, char *buf, int buflen)
 {
   struct gimli_object_mapping *m;
   struct gimli_symbol *s;
@@ -116,7 +116,7 @@ const char *gimli_pc_sym_name(gimli_proc_t proc, void *addr, char *buf, int bufl
 
 struct gimli_object_mapping *gimli_add_mapping(
   gimli_proc_t proc,
-  const char *objname, void *base, unsigned long len,
+  const char *objname, gimli_addr_t base, unsigned long len,
   unsigned long offset)
 {
   struct gimli_object_mapping *m = calloc(1, sizeof(*m));
@@ -161,7 +161,7 @@ gimli_mapped_object_t gimli_find_object(
 
 gimli_mapped_object_t gimli_add_object(
   gimli_proc_t proc,
-  const char *objname, void *base)
+  const char *objname, gimli_addr_t base)
 {
   gimli_mapped_object_t f = gimli_find_object(proc, objname);
   struct gimli_symbol *sym;

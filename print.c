@@ -58,7 +58,7 @@ static void print_float(gimli_proc_t proc,
 
   addr += (offset / 8);
 
-  if (gimli_read_mem(proc, (void*)addr, &u.f, bytes) != bytes) {
+  if (gimli_read_mem(proc, addr, &u.f, bytes) != bytes) {
     printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
       bytes, addr);
     return;
@@ -98,7 +98,7 @@ static void print_enum(gimli_proc_t proc,
   addr += (offset / 8);
   u.u64 = 0;
 
-  if (gimli_read_mem(proc, (void*)addr, &u.u64, bytes) != bytes) {
+  if (gimli_read_mem(proc, addr, &u.u64, bytes) != bytes) {
     printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
         bytes, addr);
     return;
@@ -164,7 +164,7 @@ static void print_integer(struct print_data *data,
       printf("??? <invalid bitfield size %" PRIu64 ">", bits);
       return;
     }
-    if (gimli_read_mem(proc, (void*)addr, &u.u64, bytes) != bytes) {
+    if (gimli_read_mem(proc, addr, &u.u64, bytes) != bytes) {
       printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
         bytes, addr);
       return;
@@ -177,7 +177,7 @@ static void print_integer(struct print_data *data,
 
     bytes = 8;
 
-  } else if (gimli_read_mem(proc, (void*)addr, &u.u64, bytes) != bytes) {
+  } else if (gimli_read_mem(proc, addr, &u.u64, bytes) != bytes) {
     printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
         bytes, addr);
     return;
@@ -249,7 +249,7 @@ static void print_array(struct print_data *data, gimli_type_t t)
   if (gimli_type_kind(arinfo.contents) == GIMLI_K_INTEGER &&
       enc.format & GIMLI_INT_CHAR) {
     /* Could be a string; try to read and print it as such */
-    char *str = gimli_read_string(data->proc, (void*)addr);
+    char *str = gimli_read_string(data->proc, addr);
 
     if (str) {
       printf("[ \"%s\" ]", str);
@@ -291,7 +291,8 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
 {
   gimli_type_t target = gimli_type_resolve(gimli_type_follow_pointer(t));
   struct gimli_type_encoding enc;
-  void *ptr;
+  void *tptr;
+  gimli_addr_t ptr;
   gimli_addr_t addr = data->addr + (data->offset / 8);
   gimli_addr_t addrsave = data->addr;
   int depth = data->depth;
@@ -306,12 +307,13 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
     return;
   }
 
-  if (gimli_read_mem(data->proc, (void*)addr, &ptr,
-        sizeof(ptr)) != sizeof(ptr)) {
+  if (gimli_read_mem(data->proc, addr, &tptr,
+        sizeof(tptr)) != sizeof(tptr)) {
     printf("<unable to read %d bytes at " PTRFMT ">",
         sizeof(ptr), data->addr);
     return;
   }
+  ptr = (gimli_addr_t)tptr;
 
   if (ptr == 0) {
     printf("nil");
@@ -320,8 +322,7 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
 
   gimli_type_encoding(target, &enc);
 
-  symname = gimli_data_sym_name(data->proc, (void*)ptr,
-      namebuf, sizeof(namebuf));
+  symname = gimli_data_sym_name(data->proc, ptr, namebuf, sizeof(namebuf));
   if (symname && strlen(symname)) {
     printf("(%s) ", symname);
   }
@@ -473,7 +474,8 @@ void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
       printf("#%-2d signal handler\n", nframe);
     }
   } else {
-    name = gimli_pc_sym_name(cur.proc, cur.st.pc, namebuf, sizeof(namebuf));
+    name = gimli_pc_sym_name(cur.proc, (gimli_addr_t)cur.st.pc,
+        namebuf, sizeof(namebuf));
     printf("#%-2d " PTRFMT " %s", nframe, (PTRFMT_T)cur.st.pc, name);
     if (dwarf_determine_source_line_number(cur.proc, cur.st.pc,
           filebuf, sizeof(filebuf), &lineno)) {

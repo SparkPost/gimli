@@ -409,7 +409,7 @@ struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode);
 const char *gimli_dwarf_resolve_type_name(gimli_mapped_object_t f,
   struct gimli_dwarf_attr *type);
-int gimli_dwarf_read_value(gimli_proc_t proc, void *addr, int is_stack, void *out, uint64_t size);
+int gimli_dwarf_read_value(gimli_proc_t proc, gimli_addr_t addr, int is_stack, void *out, uint64_t size);
 
 
 #ifdef __cplusplus

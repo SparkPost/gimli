@@ -102,15 +102,15 @@ static void read_maps(gimli_proc_t proc)
     }
     if (tok && *tok) {
       unsigned long long v;
-      void *base;
+      gimli_addr_t base;
       unsigned long len;
       char *objname = tok;
 
       if (*tok != '/') continue;
 
-      base = (void*)(intptr_t)strtoull(line, &tok, 16);
+      base = strtoull(line, &tok, 16);
       v = strtoull(tok + 1, NULL, 16);
-      len = v - (intptr_t)base;
+      len = v - base;
       gimli_add_mapping(proc, objname, base, len, 0);
     }
   }
@@ -174,10 +174,10 @@ static void hexdump(gimli_proc_t proc, void *addr, int p, int n)
   addr = (char*)addr - (p * sizeof(data));
 
   for (i = 0; i < n; i++) {
-    x = gimli_read_mem(proc, addr, data, sizeof(data));
+    x = gimli_read_mem(proc, (gimli_addr_t)addr, data, sizeof(data));
     printf("%p:   ", addr);
     for (j = 0; j < 4; j++) {
-      void *a = (void*)(intptr_t)data[j];
+      gimli_addr_t a = data[j];
       struct gimli_object_mapping *m = gimli_mapping_for_addr(proc, a);
       if (m) {
         sym = find_symbol_for_addr(m->objfile, a);
@@ -202,8 +202,10 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
    * used for the sigreturn handling in glibc */
 #ifdef __x86_64__
   uint64_t a, b;
-  if (gimli_read_mem(cur->proc, cur->st.pc, &a, sizeof(a)) == sizeof(a) &&
-      gimli_read_mem(cur->proc, cur->st.pc + sizeof(a), &b, sizeof(b)) == sizeof(b)) {
+  if (gimli_read_mem(cur->proc, (gimli_addr_t)cur->st.pc, &a,
+        sizeof(a)) == sizeof(a) &&
+      gimli_read_mem(cur->proc, (gimli_addr_t)cur->st.pc + sizeof(a),
+        &b, sizeof(b)) == sizeof(b)) {
     if ((a == 0x0f0000000fc0c748) && ((b & 0xff) == 5)) {
       void *siptr;
       int signo;
@@ -213,8 +215,9 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
        * to down down one level and look at the args passed to the
        * signal handler itself. */
 
-      if (gimli_read_mem(cur->proc, cur->st.fp + sizeof(struct gimli_kernel_ucontext),
-          &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
+      if (gimli_read_mem(cur->proc,
+            (gimli_addr_t)cur->st.fp + sizeof(struct gimli_kernel_ucontext),
+            &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
         /* can't tell the user anything useful */
         memset(&cur->si, 0, sizeof(cur->si));
       }
@@ -285,7 +288,8 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 #ifdef __x86_64__
     struct gimli_kernel_ucontext uc;
 
-    if (gimli_read_mem(cur->proc, cur->st.fp, &uc, sizeof(uc)) != sizeof(uc)) {
+    if (gimli_read_mem(cur->proc, (gimli_addr_t)cur->st.fp,
+          &uc, sizeof(uc)) != sizeof(uc)) {
       return 0;
     }
     cur->st.regs.r8 = uc.uc_mcontext.r8;
@@ -406,13 +410,14 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 //printf("fp=%p sp=%p pc=%p\n", c.st.fp, c.st.sp, c.st.pc);
 
   if (c.st.fp) {
-    if (gimli_read_mem(cur->proc, c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
+    if (gimli_read_mem(cur->proc, (gimli_addr_t)c.st.fp,
+          &frame, sizeof(frame)) != sizeof(frame)) {
       memset(&frame, 0, sizeof(frame));
     }
 //    printf("read frame: fp=%p pc=%p\n", frame.next, frame.retpc);
     /* If we don't appear to be making progress, or we end up in page 0,
      * then assume we're done */
-    if (c.st.fp == frame.next || frame.next == 0 || frame.retpc < 1024) {
+    if (c.st.fp == frame.next || frame.next == (void*)0 || frame.retpc < (void*)1024) {
       return 0;
     }
     cur->st.fp = frame.next;
