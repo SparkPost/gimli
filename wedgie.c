@@ -29,6 +29,8 @@ struct wedgie_data {
   double aftermoo;
 };
 
+char global_string[] = "global!";
+
 union wedgie_union {
   int one;
   char *two;
@@ -39,9 +41,12 @@ union wedgie_union {
   struct timeval tv;
 };
 
+int global_int = 360;
+
 static void handler(int signo, siginfo_t *si, void *v)
 {
   char buf[1024];
+
   printf("pid: %d signal handler invoked signo=%d si=%p v=%p\n", getpid(), signo, si, v);
   printf("top of stack %p\n", &signo);
   snprintf(buf, sizeof(buf)-1, "./glider %d", getpid());
@@ -57,6 +62,11 @@ static void handler(int signo, siginfo_t *si, void *v)
 
 static void mr_wedge(struct wedgie_data *data, int port)
 {
+  char *sptr = global_string;
+  int *iptr = &global_int;
+
+  printf("printing global string via local var %s, iptr = %p\n", sptr, iptr);
+
   fprintf(stderr, "taking a nap in func %p\n", mr_wedge);
   fflush(stderr);
   sleep(2);

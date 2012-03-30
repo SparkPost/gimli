@@ -509,6 +509,7 @@ static gimli_type_t new_type(gimli_type_collection_t col,
 {
   gimli_type_t t;
 
+#if 0
   if (name) {
     switch (kind) {
       case GIMLI_K_FUNCTION:
@@ -523,6 +524,7 @@ static gimli_type_t new_type(gimli_type_collection_t col,
         break;
     }
   }
+#endif
 
   t = calloc(1, sizeof(*t));
   if (!t) return NULL;
@@ -550,6 +552,13 @@ static gimli_type_t new_type(gimli_type_collection_t col,
   } else {
     t->name = strdup("<anon>");
   }
+
+#if 0
+  printf(
+      "TYPE: %p %s kind=%d format=%" PRIx64
+      " offset=%" PRIu32 " bits=%" PRIu32 "\n",
+      t, t->name, t->kind, t->enc.format, t->enc.offset, t->enc.bits);
+#endif
 
   return t;
 }

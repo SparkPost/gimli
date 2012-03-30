@@ -374,10 +374,10 @@ gimli_mapped_object_t gimli_find_object(
   const char *objname);
 
 #if SIZEOF_VOIDP == 8
-# define PTRFMT "0x%016" PRIx64
+# define PTRFMT "0x%" PRIx64
 # define PTRFMT_T uint64_t
 #else
-# define PTRFMT "0x%08" PRIx32
+# define PTRFMT "0x%" PRIx32
 # define PTRFMT_T uint32_t
 #endif
 
@@ -406,6 +406,7 @@ int gimli_demangle(const char *mangled, char *out, int out_size);
 gimli_err_t gimli_attach(gimli_proc_t proc);
 gimli_err_t gimli_detach(gimli_proc_t proc);
 
+const char *gimli_data_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen);
 const char *gimli_pc_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen);
 int gimli_read_mem(gimli_proc_t proc, void *src, void *dest, int len);
 int gimli_write_mem(gimli_proc_t proc, void *src, const void *dest, int len);

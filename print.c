@@ -183,6 +183,13 @@ static void print_integer(struct print_data *data,
     return;
   }
 
+#if 0
+  printf("bytes = %" PRIu64 " bits = %" PRIu64 " offset=%" PRIu64 "\n",
+      bytes, bits, offset);
+
+  printf("RAW %p INT @ " PTRFMT " -> %" PRIu64 "\n", t, addr, u.u64);
+#endif
+
   gimli_type_encoding(t, &enc);
 
   switch (bytes) {
@@ -290,6 +297,9 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
   int depth = data->depth;
   char addrkey[64];
   int dummy;
+  char namebuf[1024];
+  const char *symname;
+  struct print_data savdata = *data;
 
   if (data->addr == 0) {
     printf("nil");
@@ -303,7 +313,18 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
     return;
   }
 
+  if (ptr == 0) {
+    printf("nil");
+    return;
+  }
+
   gimli_type_encoding(target, &enc);
+
+  symname = gimli_data_sym_name(data->proc, (void*)ptr,
+      namebuf, sizeof(namebuf));
+  if (symname && strlen(symname)) {
+    printf("(%s) ", symname);
+  }
 
   /* if we are a char*, render as a string */
   if (gimli_type_kind(target) == GIMLI_K_INTEGER &&
@@ -320,11 +341,6 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
     return;
   }
 
-  if (ptr == 0) {
-    printf("nil");
-    return;
-  }
-
   snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, target, data->addr);
   if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
     printf(" " PTRFMT " [deref'd above]\n", ptr);
@@ -335,11 +351,12 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
 
   data->depth++;
   data->addr = (gimli_addr_t)ptr;
+  data->offset = 0;
+  data->size = gimli_type_size(target);
 
   print_var(data, target, "[deref]");
 
-  data->depth = depth;
-  data->addr = addrsave;
+  *data = savdata;
 }
 
 static int print_var(struct print_data *data, gimli_type_t t, const char *varname)

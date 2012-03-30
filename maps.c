@@ -66,6 +66,31 @@ struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, gimli_add
   return NULL;
 }
 
+const char *gimli_data_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen)
+{
+  struct gimli_object_mapping *m;
+  struct gimli_symbol *s;
+
+  m = gimli_mapping_for_addr(proc, (gimli_addr_t)addr);
+  if (m) {
+    s = find_symbol_for_addr(m->objfile, addr);
+    if (s) {
+      if (addr == s->addr) {
+        snprintf(buf, buflen-1, "%s`%s", m->objfile->objname, s->name);
+      } else {
+        snprintf(buf, buflen-1, "%s`%s+%lx",
+            m->objfile->objname, s->name, (uintmax_t)(addr - s->addr));
+      }
+    } else {
+      /* just identify the containing module; the caller will typically
+       * annotate with the address */
+      snprintf(buf, buflen-1, "%s", m->objfile->objname);
+    }
+    return buf;
+  }
+  return "";
+}
+
 const char *gimli_pc_sym_name(gimli_proc_t proc, void *addr, char *buf, int buflen)
 {
   struct gimli_object_mapping *m;
