@@ -26,6 +26,7 @@ struct wedgie_data {
   unsigned bit1:1;
   unsigned bit2:1;
   signed moo:5;
+  double aftermoo;
 };
 
 union wedgie_union {

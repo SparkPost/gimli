@@ -55,7 +55,10 @@ struct gimli_type {
 
   struct {
     char *name;
-    struct gimli_type_membinfo info;
+    union {
+      struct gimli_type_membinfo info;
+      int value;
+    } u;
   } *members;
   int num_members;
 };
@@ -339,7 +342,7 @@ static void delete_type(gimli_type_t t)
   free(t);
 }
 
-static gimli_iter_status_t type_rvisit(gimli_type_t t, 
+static gimli_iter_status_t type_rvisit(gimli_type_t t,
     gimli_type_visit_f func,
     void *arg, const char *name, uint64_t offset, int depth)
 {
@@ -357,8 +360,8 @@ static gimli_iter_status_t type_rvisit(gimli_type_t t,
   }
 
   for (i = 0; i < t->num_members; i++) {
-    status = type_rvisit(t->members[i].info.type, func, arg,
-        t->members[i].name, offset + t->members[i].info.offset, depth + 1);
+    status = type_rvisit(t->members[i].u.info.type, func, arg,
+        t->members[i].name, offset + t->members[i].u.info.offset, depth + 1);
     if (status != GIMLI_ITER_CONT) {
       return status;
     }
@@ -371,6 +374,31 @@ gimli_iter_status_t gimli_type_visit(gimli_type_t t,
     void *arg)
 {
   return type_rvisit(t, func, arg, "", 0, 0);
+}
+
+gimli_iter_status_t gimli_type_member_visit(
+    gimli_type_t t,
+    gimli_type_member_visit_f func,
+    void *arg
+    )
+{
+  gimli_iter_status_t status = GIMLI_ITER_CONT;
+  int i;
+
+  if (t->kind != GIMLI_K_STRUCT && t->kind != GIMLI_K_UNION) {
+    return GIMLI_ITER_ERR;
+  }
+
+  for (i = 0; i < t->num_members; i++) {
+    status = func(t->members[i].name,
+        t->members[i].u.info.type,
+        t->members[i].u.info.offset,
+        arg);
+    if (status != GIMLI_ITER_CONT) {
+      break;
+    }
+  }
+  return status;
 }
 
 void gimli_type_collection_delete(gimli_type_collection_t col)
@@ -496,6 +524,8 @@ static gimli_type_t new_type(gimli_type_collection_t col,
         gimli_hash_insert(col->type_by_name, name, t);
         break;
     }
+  } else {
+    t->name = strdup("<anon>");
   }
 
   return t;
@@ -603,6 +633,28 @@ gimli_type_t gimli_type_new_pointer(gimli_type_collection_t col,
   return new_alias(col, GIMLI_K_POINTER, target);
 }
 
+gimli_type_t gimli_type_new_enum(gimli_type_collection_t col,
+    const char *name, const struct gimli_type_encoding *enc)
+{
+  return new_type(col, GIMLI_K_ENUM, name, enc);
+}
+
+int gimli_type_enum_add(gimli_type_t t, const char *name, int value)
+{
+  int n;
+
+  if (t->kind != GIMLI_K_ENUM) {
+    return -1;
+  }
+
+  t->members = realloc(t->members, (t->num_members + 1) * sizeof(*t->members));
+  n = t->num_members++;
+  t->members[n].name = strdup(name);
+  t->members[n].u.value = value;
+
+  return n;
+}
+
 int gimli_type_membinfo(gimli_type_t t,
     const char *name,
     struct gimli_type_membinfo *info)
@@ -613,7 +665,7 @@ int gimli_type_membinfo(gimli_type_t t,
 
   for (i = 0; i < t->num_members; i++) {
     if (!strcmp(t->members[i].name, name)) {
-      memcpy(info, &t->members[i].info, sizeof(*info));
+      memcpy(info, &t->members[i].u.info, sizeof(*info));
       return 1;
     }
   }
@@ -622,7 +674,9 @@ int gimli_type_membinfo(gimli_type_t t,
 
 int gimli_type_add_member(gimli_type_t t,
     const char *name,
-    gimli_type_t membertype)
+    gimli_type_t membertype,
+    uint64_t size,
+    uint64_t offset)
 {
   int n;
 
@@ -636,10 +690,21 @@ int gimli_type_add_member(gimli_type_t t,
 
   t->members = realloc(t->members, (t->num_members + 1) * sizeof(*t->members));
   n = t->num_members++;
-  t->members[n].name = strdup(name);
-  t->members[n].info.type = membertype;
+  if (size) {
+    t->members[n].u.info.size = size;
+    t->members[n].u.info.offset = offset;
+  } else {
+    t->members[n].u.info.offset = 0;
+    if (n > 0) {
+      t->members[n].u.info.offset =
+          t->members[n - 1].u.info.offset
+          + gimli_type_size(t->members[n - 1].u.info.type);
+    }
+    t->members[n].u.info.size = gimli_type_size(membertype);
+  }
 
-  /* FIXME: t->mbmers[n].info.offset */
+  t->members[n].name = strdup(name);
+  t->members[n].u.info.type = membertype;
 
   return n;
 }

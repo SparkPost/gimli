@@ -243,9 +243,10 @@ gimli_iter_status_t gimli_stack_frame_visit_vars(
     gimli_stack_frame_visit_f func,
     void *arg)
 {
-  gimli_dwarf_load_frame_var_info(frame);
   gimli_var_t var;
   gimli_iter_status_t status = GIMLI_ITER_CONT;
+
+  gimli_dwarf_load_frame_var_info(frame);
 
   /* iterate */
   STAILQ_FOREACH(var, &frame->vars, vars) {
@@ -258,31 +259,57 @@ gimli_iter_status_t gimli_stack_frame_visit_vars(
 }
 
 struct var_data {
-  int is_param;
+  int is_param, depth;
   gimli_var_t var;
   gimli_addr_t addr;
   gimli_mem_ref_t mem;
+  uint64_t offset;
   char *ptr;
 };
 
-static gimli_iter_status_t print_var(
-    /** name of member */
-    const char *name,
-    /** type being visited */
-    gimli_type_t t,
-    /** offset in bits */
-    uint64_t offset,
-    /** depth of recursion */
-    int depth,
-    /** caller provided closure */
-    void *arg)
+static const char indentstr[] =
+"                                                                    ";
+static int print_var(struct var_data *data, gimli_type_t t, const char *varname);
+
+static gimli_iter_status_t print_member(const char *name,
+    gimli_type_t t, uint64_t offset, void *arg)
 {
   struct var_data *data = arg;
 
-  printf("{%d} t=%p %s %s <offsetbits:%" PRIu64 ">\n",
-      depth, t, gimli_type_declname(t),
-      depth ? name : data->var->varname,
-      offset);
+  data->offset += offset;
+  print_var(data, t, name);
+  data->offset -= offset;
+
+  return GIMLI_ITER_CONT;
+}
+
+static int print_var(struct var_data *data, gimli_type_t t, const char *varname)
+{
+  int indent = 4 * (data->depth + 1);
+
+  if (indent > sizeof(indentstr) - 1) {
+    indent = sizeof(indentstr) - 1;
+  }
+  printf("%.*s%s %s <offsetbits:%" PRIu64 ">",
+      indent, indentstr,
+      gimli_type_declname(t),
+      varname,
+      data->offset);
+
+  t = gimli_type_resolve(t);
+
+  switch (gimli_type_kind(t)) {
+    case GIMLI_K_STRUCT:
+    case GIMLI_K_UNION:
+      printf(" {\n");
+      data->depth++;
+      gimli_type_member_visit(t, print_member, data);
+      data->depth--;
+      printf("%.*s}\n", indent, indentstr);
+      break;
+    default:
+      printf("\n");
+  }
 
   return GIMLI_ITER_CONT;
 }
@@ -292,14 +319,14 @@ static gimli_iter_status_t show_var(
     gimli_var_t var,
     void *arg)
 {
-  struct var_data data;
+  struct var_data *data = arg;
 
-  data.var = var;
-  data.is_param = var->is_param;
-  data.addr = var->addr;
+  data->var = var;
+  data->is_param = var->is_param;
+  data->addr = var->addr;
 
   if (var->type) {
-    gimli_type_visit(var->type, print_var, &data);
+    print_var(data, var->type, var->varname);
   } else {
     printf("%s %s @ " PTRFMT ": t=%p is_param=%d\n",
         var->type ? gimli_type_declname(var->type) : "?",
@@ -316,6 +343,7 @@ void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
   char filebuf[1024];
   uint64_t lineno;
   struct gimli_unwind_cursor cur = frame->cur;
+  struct var_data data;
 
   if (gimli_is_signal_frame(&cur)) {
     if (cur.si.si_signo) {
@@ -332,7 +360,9 @@ void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
       printf(" (%s:%" PRId64 ")", filebuf, lineno);
     }
     printf("\n");
-    gimli_stack_frame_visit_vars(frame, GIMLI_WANT_ALL, show_var, NULL);
+
+    memset(&data, 0, sizeof(data));
+    gimli_stack_frame_visit_vars(frame, GIMLI_WANT_ALL, show_var, &data);
 //    gimli_show_param_info(&cur);
   }
 }

@@ -883,7 +883,7 @@ static struct dw_fde *find_fde(gimli_proc_t proc, void *pc)
   struct gimli_object_mapping *m;
   struct dw_fde *fde;
 
-  m = gimli_mapping_for_addr(proc, pc);
+  m = gimli_mapping_for_addr(proc, (gimli_addr_t)pc);
   if (!m) {
     return NULL;
   }
@@ -974,7 +974,7 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur)
    * This implies that we may have a faulty unwinder and this should
    * be investigated, but for now, we fall back to frame pointer
    * unwinding when things look bad */
-  if (!gimli_mapping_for_addr(cur->proc, cur->st.pc)) {
+  if (!gimli_mapping_for_addr(cur->proc, (gimli_addr_t)cur->st.pc)) {
     if (debug) {
       fprintf(stderr, "DWARF: unwind gave bogus pc\n");
     }

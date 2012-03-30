@@ -424,6 +424,11 @@ int gimli_type_kind(gimli_type_t t);
 /** varargs display format */
 #define GIMLI_INT_VARARGS 0x8
 
+#define GIMLI_FP_SINGLE 1
+#define GIMLI_FP_DOUBLE 2
+#define GIMLI_FP_COMPLEX 3
+#define GIMLI_FP_IMAGINARY 4
+
 /** generic encoding information */
 struct gimli_type_encoding {
   /** GIMLI_INT_XXX for integer types,
@@ -478,6 +483,8 @@ struct gimli_type_membinfo {
   gimli_type_t type;
   /** offset in bits */
   uint64_t offset;
+  /** size it bits */
+  uint64_t size;
 };
 
 /** returns information about a type member */
@@ -485,6 +492,20 @@ int gimli_type_membinfo(gimli_type_t t,
     /** name of the member */
     const char *name,
     struct gimli_type_membinfo *info);
+
+typedef gimli_iter_status_t gimli_type_member_visit_f(
+    const char *name,
+    gimli_type_t t,
+    uint64_t offset,
+    void *arg
+    );
+
+/** visit each member of a structure or union type */
+gimli_iter_status_t gimli_type_member_visit(
+    gimli_type_t t,
+    gimli_type_member_visit_f func,
+    void *arg
+    );
 
 /** create an instance of a structure type */
 gimli_type_t gimli_type_new_struct(gimli_type_collection_t col,
@@ -499,7 +520,21 @@ gimli_type_t gimli_type_new_union(gimli_type_collection_t col,
  * to control the offset and size of the member */
 int gimli_type_add_member(gimli_type_t t,
     const char *name,
-    gimli_type_t membertype);
+    gimli_type_t membertype,
+    /* if 0, size and offset are computed from membertype,
+     * otherwise, specify size and offset in bits */
+    uint64_t size,
+    uint64_t offset
+    );
+
+/** add a new "enum" type */
+gimli_type_t gimli_type_new_enum(gimli_type_collection_t col,
+    const char *name, const struct gimli_type_encoding *enc);
+
+/** add an enum value */
+int gimli_type_enum_add(gimli_type_t t, const char *name,
+    int value);
+
 
 /** information about arrays */
 struct gimli_type_arinfo {

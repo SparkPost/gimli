@@ -157,6 +157,7 @@ struct dw_secinfo {
 struct gimli_variable {
   STAILQ_ENTRY(gimli_variable) vars;
 
+  gimli_proc_t proc;
   const char *varname;
   gimli_addr_t addr;
   gimli_type_t type;
@@ -212,7 +213,7 @@ struct gimli_section_data *gimli_get_section_by_name(
 
 struct gimli_object_mapping {
   gimli_proc_t proc;
-  void *base;
+  gimli_addr_t base;
   unsigned long len;
   unsigned long offset;
   gimli_mapped_object_t objfile;

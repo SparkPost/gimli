@@ -12,7 +12,7 @@ struct gimli_symbol *gimli_add_symbol(gimli_mapped_object_t f,
   char buf[1024];
 
   if (f->symcount + 1 >= f->symallocd) {
-    f->symallocd += 1024;
+    f->symallocd = f->symallocd ? f->symallocd * 2 : 1024;
     f->symtab = realloc(f->symtab, f->symallocd * sizeof(*s));
   }
 
@@ -147,7 +147,7 @@ struct gimli_symbol *find_symbol_for_addr(gimli_mapped_object_t f,
   bake_symtab(f);
 
   csym = bsearch(addr, f->symtab, f->symcount,
-      sizeof(*csym), search_compare_symaddr);
+      sizeof(struct gimli_symbol), search_compare_symaddr);
 
   if (!csym) {
     return NULL;

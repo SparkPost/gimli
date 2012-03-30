@@ -2140,7 +2140,9 @@ static void populate_struct_or_union(
   uint64_t root = 0;
   struct gimli_unwind_cursor cur;
   int is_stack = 1;
-  uint64_t u64;
+  uint64_t size, offset;
+  gimli_type_t memt;
+
 
   for (die = die->kids; die; die = die->next) {
     if (die->tag != DW_TAG_member) continue;
@@ -2162,8 +2164,21 @@ static void populate_struct_or_union(
     type = gimli_dwarf_die_get_attr(die, DW_AT_type);
     mname = gimli_dwarf_die_get_attr(die, DW_AT_name);
 
+    memt = load_type(file, type);
+    if (!memt) {
+      printf("failed to load type info for member %s\n", mname->ptr);
+    }
+    if (gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_bit_size, &size)) {
+      if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_bit_offset, &offset)) {
+        offset = 1;
+      }
+    } else {
+      size = 0;
+      offset = 0;
+    }
+
     gimli_type_add_member(t, mname ? (char*)mname->ptr : NULL,
-        load_type(file, type));
+        memt, size, offset);
   }
 }
 
@@ -2189,7 +2204,7 @@ static gimli_type_t array_dim(gimli_mapped_object_t file,
     info.nelems = 0;
   }
 
-  return gimli_type_new_array(file, &info);
+  return gimli_type_new_array(file->types, &info);
 }
 
 static gimli_type_t populate_array(gimli_mapped_object_t file,
@@ -2213,13 +2228,13 @@ static gimli_type_t load_type(
     gimli_mapped_object_t file,
     struct gimli_dwarf_attr *type)
 {
-  gimli_type_t t, target = NULL;
+  gimli_type_t t = NULL, target = NULL;
   struct gimli_dwarf_die *die;
   char diekey[64];
   uint64_t ate, size = 0;
   struct gimli_type_encoding enc;
-  const char *type_name;
-  struct gimli_dwarf_attr *name;
+  const char *type_name = NULL;
+  struct gimli_dwarf_attr *name = NULL;
 
   die = gimli_dwarf_get_die(file, type->code);
   if (!die) {
@@ -2255,51 +2270,53 @@ static gimli_type_t load_type(
         ate = DW_ATE_signed;
       }
       memset(&enc, 0, sizeof(enc));
-      if (gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_bit_size, &size)) {
-        uint64_t off;
 
-        /* it's a bit field */
-        enc.bits = size * 8;
-
-        if (!gimli_dwarf_die_get_uint64_t_attr(die,
-              DW_AT_bit_offset, &off)) {
-          off = 1;
-        }
-        enc.offset = off;
-      } else {
-        gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_byte_size, &size);
-        enc.bits = size * 8;
-      }
+      gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_byte_size, &size);
+      enc.bits = size * 8;
 
       switch (ate) {
         case DW_ATE_unsigned_char:
           enc.format = GIMLI_INT_CHAR;
+          t = gimli_type_new_integer(file->types, type_name, &enc);
           break;
         case DW_ATE_unsigned:
+          t = gimli_type_new_integer(file->types, type_name, &enc);
           break;
         case DW_ATE_signed:
           enc.format = GIMLI_INT_SIGNED;
+          t = gimli_type_new_integer(file->types, type_name, &enc);
           break;
         case DW_ATE_signed_char:
           enc.format = GIMLI_INT_SIGNED|GIMLI_INT_CHAR;
+          t = gimli_type_new_integer(file->types, type_name, &enc);
+          break;
+        case DW_ATE_float:
+          enc.format = GIMLI_FP_SINGLE;
+          t = gimli_type_new_float(file->types, type_name, &enc);
+          break;
+        case DW_ATE_complex_float:
+          enc.format = GIMLI_FP_COMPLEX;
+          t = gimli_type_new_float(file->types, type_name, &enc);
+          break;
+        case DW_ATE_imaginary_float:
+          enc.format = GIMLI_FP_IMAGINARY;
+          t = gimli_type_new_float(file->types, type_name, &enc);
           break;
         default:
           printf("unhandled DW_AT_encoding for base_type: 0x%" PRIx64 "\n", ate);
       }
-      t = gimli_type_new_integer(file->types, type_name, &enc);
       break;
 
     case DW_TAG_pointer_type:
-      if (type_name) {
-        printf(" XXX: got DW_TAG_pointer with type_name %s\n",
-            type_name);
-      }
       type = gimli_dwarf_die_get_attr(die, DW_AT_type);
       if (type) {
         target = load_type(file, type);
-        if (target) {
-          t = gimli_type_new_pointer(file->types, target);
-        }
+      } else {
+        memset(&enc, 0, sizeof(enc));
+        target = gimli_type_new_integer(file->types, "void", &enc);
+      }
+      if (target) {
+        t = gimli_type_new_pointer(file->types, target);
       }
       break;
     case DW_TAG_const_type:
@@ -2358,6 +2375,33 @@ static gimli_type_t load_type(
       break;
 
     case DW_TAG_enumeration_type:
+      memset(&enc, 0, sizeof(enc));
+      gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_byte_size, &size);
+      enc.bits = size * 8;
+
+      t = gimli_type_new_enum(file->types, type_name, &enc);
+      for (die = die->kids; die; die = die->next) {
+        struct gimli_dwarf_attr *cv;
+
+        if (die->tag != DW_TAG_enumerator) {
+          printf("unexpected tag 0x%" PRIx64 " in enumeration_type\n",
+              die->tag);
+          return NULL;
+        }
+        name = gimli_dwarf_die_get_attr(die, DW_AT_name);
+        if (!name) {
+          printf("expected name for enumerator!\n");
+          return NULL;
+        }
+
+        cv = gimli_dwarf_die_get_attr(die, DW_AT_const_value);
+        if (!cv) {
+          printf("missing const_value for enumerator\n");
+          return NULL;
+        }
+        gimli_type_enum_add(t, (char*)name->ptr, (int)cv->code);
+      }
+      break;
 
     default:
       printf("unhandled tag 0x%" PRIx64 " in load_type\n", die->tag);
@@ -2420,6 +2464,7 @@ static void load_var(
   var = calloc(1, sizeof(*var));
   var->varname = name ? name->ptr : NULL;
   var->addr = res;
+  var->proc = frame->cur.proc;
   var->type = load_type(m->objfile, type);
   var->is_param = (die->tag == DW_TAG_formal_parameter) ?
     GIMLI_WANT_PARAMS : GIMLI_WANT_LOCALS;

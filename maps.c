@@ -20,8 +20,9 @@ static int sort_compare_mapping(const void *A, const void *B)
   return a->len - b->len;
 }
 
-static int search_compare_mapping(const void *addr, const void *L)
+static int search_compare_mapping(const void *addrp, const void *L)
 {
+  gimli_addr_t addr = *(gimli_addr_t*)addrp;
   struct gimli_object_mapping *m = *(struct gimli_object_mapping**)L;
 
   if (addr < m->base) {
@@ -35,7 +36,7 @@ static int search_compare_mapping(const void *addr, const void *L)
 
 struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, gimli_addr_t addr)
 {
-  struct gimli_object_mapping **m;
+  struct gimli_object_mapping **mptr, *m;
 
   if (proc->maps_changed) {
     int i;
@@ -47,15 +48,20 @@ struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, gimli_add
 
     for (i = 0; i < proc->nmaps; i++) {
       struct gimli_object_mapping *map = proc->mappings[i];
-      printf("MAP: %p - %p %s\n", map->base, map->base + map->len, map->objfile->objname);
+      printf("MAP: " PTRFMT " - " PTRFMT " %s\n",
+          map->base, map->base + map->len, map->objfile->objname);
     }
     printf("--\n");
   }
 
-  m = bsearch(addr, proc->mappings, proc->nmaps, sizeof(struct gimli_object_mapping*),
+  mptr = bsearch(&addr, proc->mappings, proc->nmaps, sizeof(struct gimli_object_mapping*),
       search_compare_mapping);
-  if (m) {
-    return *m;
+
+  if (mptr) {
+    m = *mptr;
+    if (addr < m->base + m->len) {
+      return m;
+    }
   }
   return NULL;
 }
@@ -65,7 +71,7 @@ const char *gimli_pc_sym_name(gimli_proc_t proc, void *addr, char *buf, int bufl
   struct gimli_object_mapping *m;
   struct gimli_symbol *s;
 
-  m = gimli_mapping_for_addr(proc, addr);
+  m = gimli_mapping_for_addr(proc, (gimli_addr_t)addr);
   if (m) {
     s = find_symbol_for_addr(m->objfile, addr);
     if (s) {
