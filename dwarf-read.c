@@ -2144,11 +2144,15 @@ static void populate_struct_or_union(
   gimli_type_t memt;
 
 
+  memset(&cur, 0, sizeof(cur));
+
   for (die = die->kids; die; die = die->next) {
     if (die->tag != DW_TAG_member) continue;
 
     loc = gimli_dwarf_die_get_attr(die, DW_AT_data_member_location);
     is_stack = 1;
+    /* assume start of struct */
+    root = 0;
     if (loc && loc->form == DW_FORM_block) {
       if (!dw_eval_expr(&cur, (uint8_t*)loc->ptr, loc->code, 0,
             &root, &root, &is_stack)) {
@@ -2158,8 +2162,6 @@ static void populate_struct_or_union(
     } else if (loc) {
       printf("Unhandled location form 0x%" PRIx64 " for struct member\n",
           loc->form);
-    } else {
-      root = 0; /* it must be at the start of the struct */
     }
     type = gimli_dwarf_die_get_attr(die, DW_AT_type);
     mname = gimli_dwarf_die_get_attr(die, DW_AT_name);
@@ -2168,17 +2170,17 @@ static void populate_struct_or_union(
     if (!memt) {
       printf("failed to load type info for member %s\n", mname->ptr);
     }
+    offset = 0;
     if (gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_bit_size, &size)) {
       if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_bit_offset, &offset)) {
         offset = 1;
       }
     } else {
-      size = 0;
-      offset = 0;
+      size = gimli_type_size(memt);
     }
 
     gimli_type_add_member(t, mname ? (char*)mname->ptr : NULL,
-        memt, size, offset);
+        memt, size, (root * 8) + offset);
   }
 }
 

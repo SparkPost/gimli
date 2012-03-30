@@ -482,7 +482,17 @@ const char *gimli_type_declname(gimli_type_t t)
 
 size_t gimli_type_size(gimli_type_t t)
 {
-  return t->enc.bits;
+  size_t s;
+
+  t = gimli_type_resolve(t);
+
+  s = t->enc.bits;
+
+  if (s == 0) {
+    printf("gimli_type_size: kind=%d name=%s has 0 size!\n",
+        t->kind, t->name);
+  }
+  return s;
 }
 
 int gimli_type_kind(gimli_type_t t)
@@ -500,8 +510,24 @@ static gimli_type_t new_type(gimli_type_collection_t col,
     int kind, const char *name,
     const struct gimli_type_encoding *enc)
 {
-  gimli_type_t t = calloc(1, sizeof(*t));
+  gimli_type_t t;
 
+  if (name) {
+    switch (kind) {
+      case GIMLI_K_FUNCTION:
+        if (gimli_hash_find(col->func_by_name, name, (void**)&t)) {
+          return t;
+        }
+        break;
+      default:
+        if (gimli_hash_find(col->type_by_name, name, (void**)&t)) {
+          return t;
+        }
+        break;
+    }
+  }
+
+  t = calloc(1, sizeof(*t));
   if (!t) return NULL;
 
   STAILQ_INSERT_TAIL(&col->typelist, t, typelist);
@@ -537,6 +563,8 @@ gimli_type_t gimli_type_new_array(gimli_type_collection_t col,
   gimli_type_t t = new_type(col, GIMLI_K_ARRAY, NULL, NULL);
 
   memcpy(&t->arinfo, info, sizeof(*info));
+
+  t->enc.bits = t->arinfo.nelems * gimli_type_size(t->arinfo.contents);
 
   return t;
 }
@@ -583,7 +611,14 @@ gimli_type_t gimli_type_resolve(gimli_type_t t)
 static gimli_type_t new_alias(gimli_type_collection_t col,
     int kind, gimli_type_t target)
 {
-  gimli_type_t t = new_type(col, kind, NULL, NULL);
+  struct gimli_type_encoding enc;
+  gimli_type_t t;
+
+  memset(&enc, 0, sizeof(enc));
+  if (kind == GIMLI_K_POINTER) {
+    enc.bits = sizeof(void*);
+  }
+  t = new_type(col, kind, NULL, &enc);
 
   if (!t) return NULL;
   t->target = target;
@@ -678,7 +713,8 @@ int gimli_type_add_member(gimli_type_t t,
     uint64_t size,
     uint64_t offset)
 {
-  int n;
+  int n, i;
+  uint64_t biggest;
 
   switch (t->kind) {
     case GIMLI_K_STRUCT:
@@ -694,6 +730,8 @@ int gimli_type_add_member(gimli_type_t t,
     t->members[n].u.info.size = size;
     t->members[n].u.info.offset = offset;
   } else {
+    /* calculate something reasonable.
+     * TODO: verify alignment! */
     t->members[n].u.info.offset = 0;
     if (n > 0) {
       t->members[n].u.info.offset =
@@ -705,6 +743,17 @@ int gimli_type_add_member(gimli_type_t t,
 
   t->members[n].name = strdup(name);
   t->members[n].u.info.type = membertype;
+
+  /* re-compute overall size */
+  t->enc.bits = 0;
+  biggest = 0;
+  for (i = 0; i < t->num_members; i++) {
+    size = t->members[i].u.info.offset + gimli_type_size(t->members[i].u.info.type);
+    if (size > biggest) {
+      biggest = size;
+    }
+  }
+  t->enc.bits = biggest;
 
   return n;
 }

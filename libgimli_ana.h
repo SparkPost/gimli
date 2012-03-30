@@ -483,7 +483,7 @@ struct gimli_type_membinfo {
   gimli_type_t type;
   /** offset in bits */
   uint64_t offset;
-  /** size it bits */
+  /** size in bits */
   uint64_t size;
 };
 

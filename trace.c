@@ -276,9 +276,8 @@ static gimli_iter_status_t print_member(const char *name,
 {
   struct var_data *data = arg;
 
-  data->offset += offset;
+  data->offset = offset;
   print_var(data, t, name);
-  data->offset -= offset;
 
   return GIMLI_ITER_CONT;
 }
@@ -299,8 +298,8 @@ static int print_var(struct var_data *data, gimli_type_t t, const char *varname)
   t = gimli_type_resolve(t);
 
   switch (gimli_type_kind(t)) {
-    case GIMLI_K_STRUCT:
     case GIMLI_K_UNION:
+    case GIMLI_K_STRUCT:
       printf(" {\n");
       data->depth++;
       gimli_type_member_visit(t, print_member, data);
@@ -324,6 +323,7 @@ static gimli_iter_status_t show_var(
   data->var = var;
   data->is_param = var->is_param;
   data->addr = var->addr;
+  data->offset = 0;
 
   if (var->type) {
     print_var(data, var->type, var->varname);
