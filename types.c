@@ -390,10 +390,7 @@ gimli_iter_status_t gimli_type_member_visit(
   }
 
   for (i = 0; i < t->num_members; i++) {
-    status = func(t->members[i].name,
-        t->members[i].u.info.type,
-        t->members[i].u.info.offset,
-        arg);
+    status = func(t->members[i].name, &t->members[i].u.info, arg);
     if (status != GIMLI_ITER_CONT) {
       break;
     }
@@ -668,6 +665,11 @@ gimli_type_t gimli_type_new_pointer(gimli_type_collection_t col,
   return new_alias(col, GIMLI_K_POINTER, target);
 }
 
+gimli_type_t gimli_type_follow_pointer(gimli_type_t t)
+{
+  return t->target;
+}
+
 gimli_type_t gimli_type_new_enum(gimli_type_collection_t col,
     const char *name, const struct gimli_type_encoding *enc)
 {
@@ -688,6 +690,22 @@ int gimli_type_enum_add(gimli_type_t t, const char *name, int value)
   t->members[n].u.value = value;
 
   return n;
+}
+
+const char *gimli_type_enum_resolve(gimli_type_t t, int value)
+{
+  int i;
+
+  if (t->kind != GIMLI_K_ENUM) {
+    return NULL;
+  }
+
+  for (i = 0; i < t->num_members; i++) {
+    if (t->members[i].u.value == value) {
+      return t->members[i].name;
+    }
+  }
+  return NULL;
 }
 
 int gimli_type_membinfo(gimli_type_t t,

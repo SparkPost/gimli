@@ -8,6 +8,7 @@
 int debug = 0;
 int max_frames = 256;
 gimli_proc_t the_proc = NULL;
+static gimli_hash_t derefd = NULL;
 
 gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames)
 {
@@ -259,11 +260,13 @@ gimli_iter_status_t gimli_stack_frame_visit_vars(
 }
 
 struct var_data {
+  gimli_proc_t proc;
   int is_param, depth;
   gimli_var_t var;
   gimli_addr_t addr;
   gimli_mem_ref_t mem;
   uint64_t offset;
+  uint64_t size;
   char *ptr;
 };
 
@@ -272,43 +275,290 @@ static const char indentstr[] =
 static int print_var(struct var_data *data, gimli_type_t t, const char *varname);
 
 static gimli_iter_status_t print_member(const char *name,
-    gimli_type_t t, uint64_t offset, void *arg)
+    struct gimli_type_membinfo *info,
+    void *arg)
 {
   struct var_data *data = arg;
 
-  data->offset = offset;
-  print_var(data, t, name);
+  data->offset = info->offset;
+  data->size = info->size;
+  print_var(data, info->type, name);
 
   return GIMLI_ITER_CONT;
+}
+
+static void print_float(gimli_proc_t proc,
+    gimli_type_t t, gimli_addr_t addr,
+    uint64_t offset, uint64_t bits)
+{
+  union {
+    float f;
+    double d;
+    long double ld;
+  } u;
+  uint64_t bytes = bits / 8;
+  struct gimli_type_encoding enc;
+
+  gimli_type_encoding(t, &enc);
+
+  addr += (offset / 8);
+
+  if (gimli_read_mem(proc, (void*)addr, &u.f, bytes) != bytes) {
+    printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
+      bytes, addr);
+    return;
+  }
+
+  switch (enc.format) {
+    case GIMLI_FP_SINGLE:
+      printf("%f", u.f);
+      break;
+    case GIMLI_FP_DOUBLE:
+      printf("%f", u.d);
+      break;
+    case GIMLI_FP_LONG_DOUBLE:
+      printf("%lf", u.ld);
+      break;
+    default:
+      printf("??? <unsupported FP format %" PRIu64 " %" PRIu64 " bits>",
+          enc.format, bits);
+  }
+}
+
+static void print_enum(gimli_proc_t proc,
+    gimli_type_t t, gimli_addr_t addr,
+    uint64_t offset, uint64_t bits)
+{
+  uint64_t bytes;
+  union {
+    uint64_t u64;
+    uint32_t u32;
+    uint16_t u16;
+    uint8_t  u8;
+  } u;
+  int val;
+  const char *label;
+
+  bytes = bits / 8;
+  addr += (offset / 8);
+  u.u64 = 0;
+
+  if (gimli_read_mem(proc, (void*)addr, &u.u64, bytes) != bytes) {
+    printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
+        bytes, addr);
+    return;
+  }
+
+  switch (bytes) {
+    case 1:
+      val = u.u8;
+      break;
+    case 2:
+      val = u.u16;
+      break;
+    case 3:
+      val = u.u32;
+      break;
+    case 4:
+      val = u.u64;
+      break;
+  }
+
+  label = gimli_type_enum_resolve(t, val);
+  if (label) {
+    printf("%s %u (0x%x)", label, val, val);
+  } else {
+    printf("<invalid enum value> %u (0x%x)", val, val);
+  }
+}
+
+static void print_integer(gimli_proc_t proc,
+    gimli_type_t t, gimli_addr_t addr,
+    uint64_t offset, uint64_t bits)
+{
+  uint64_t bytes;
+  union {
+    uint64_t u64;
+    uint32_t u32;
+    uint16_t u16;
+    uint8_t  u8;
+  } u;
+
+  bytes = bits / 8;
+  addr += (offset / 8);
+  u.u64 = 0;
+
+  if (bytes > 8 || (bits % 8 != 0) || (bytes & (bytes - 1)) != 0) {
+    /* it's a bitfield */
+    uint8_t shift = offset - (bits - 1);
+    uint64_t mask = (1ULL << bits) - 1;
+
+    bytes = (bits + 7) / 8;
+    if (bytes > sizeof(u.u64)) {
+      printf("??? <invalid bitfield size %" PRIu64 ">", bits);
+      return;
+    }
+    if (gimli_read_mem(proc, (void*)addr, &u.u64, bytes) != bytes) {
+      printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
+        bytes, addr);
+      return;
+    }
+    if (offset % 8 != 0) {
+      /* not at a byte boundary, so shift it down to the lowest bits */
+      u.u64 >>= shift;
+    }
+    u.u64 &= mask;
+
+  } else if (gimli_read_mem(proc, (void*)addr, &u.u64, bytes) != bytes) {
+    printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
+        bytes, addr);
+    return;
+  }
+
+  switch (bytes) {
+    case 1:
+      printf("%u (0x%x)", u.u8, u.u8);
+      break;
+    case 2:
+      printf("%u (0x%x)", u.u16, u.u16);
+      break;
+    case 4:
+      printf("%u (0x%x)", u.u32, u.u32);
+      break;
+    case 8:
+      printf("%" PRIu64 " (0x%" PRIx64 ")", u.u64, u.u64);
+      break;
+  }
+}
+
+static void print_pointer(struct var_data *data, gimli_type_t t)
+{
+  gimli_type_t target = gimli_type_resolve(gimli_type_follow_pointer(t));
+  struct gimli_type_encoding enc;
+  void *ptr;
+  gimli_addr_t addr = data->addr + (data->offset / 8);
+  gimli_addr_t addrsave = data->addr;
+  int depth = data->depth;
+  char addrkey[64];
+  int dummy;
+
+  if (data->addr == 0) {
+    printf("nil");
+    return;
+  }
+
+  if (gimli_read_mem(data->proc, (void*)addr, &ptr,
+        sizeof(ptr)) != sizeof(ptr)) {
+    printf("<unable to read %d bytes at " PTRFMT ">",
+        sizeof(ptr), data->addr);
+    return;
+  }
+
+  gimli_type_encoding(target, &enc);
+
+  /* if we are a char*, render as a string */
+  if (gimli_type_kind(target) == GIMLI_K_INTEGER &&
+      (enc.format & GIMLI_INT_CHAR)) {
+    char *str = gimli_read_string(data->proc, ptr);
+
+    printf(PTRFMT, ptr);
+    if (str) {
+      printf(" \"%s\"", str);
+      free(str);
+    } else {
+      printf(" <unable to read string>");
+    }
+    return;
+  }
+
+  if (ptr == 0) {
+    printf("nil");
+    return;
+  }
+
+  snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, target, data->addr);
+  if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
+    printf(" " PTRFMT " [deref'd above]\n", ptr);
+    return;
+  }
+
+  printf(PTRFMT " [deref'ing]\n", ptr);
+
+  data->depth++;
+  data->addr = (gimli_addr_t)ptr;
+
+  print_var(data, target, "[deref]");
+
+  data->depth = depth;
+  data->addr = addrsave;
 }
 
 static int print_var(struct var_data *data, gimli_type_t t, const char *varname)
 {
   int indent = 4 * (data->depth + 1);
+  gimli_addr_t addr;
+  char addrkey[64];
+  int dummy;
 
   if (indent > sizeof(indentstr) - 1) {
     indent = sizeof(indentstr) - 1;
   }
-  printf("%.*s%s %s <offsetbits:%" PRIu64 ">",
+
+  printf("%.*s%s %s",
       indent, indentstr,
       gimli_type_declname(t),
-      varname,
-      data->offset);
+      varname);
 
   t = gimli_type_resolve(t);
 
   switch (gimli_type_kind(t)) {
     case GIMLI_K_UNION:
     case GIMLI_K_STRUCT:
-      printf(" {\n");
+      snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, t, data->addr);
+      if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
+        printf(" " PTRFMT " [deref'd above]\n", data->addr);
+        return;
+      }
+      if (!gimli_hash_insert(derefd, addrkey, NULL)) {
+        printf(" " PTRFMT " [insert failed]\n", data->addr);
+        return;
+      }
+
+      printf(" " PTRFMT " = {\n", data->addr);
       data->depth++;
+      addr = data->addr;
       gimli_type_member_visit(t, print_member, data);
       data->depth--;
+      data->addr = addr;
       printf("%.*s}\n", indent, indentstr);
       break;
+    case GIMLI_K_INTEGER:
+      printf(" = ");
+      print_integer(data->proc, t, data->addr, data->offset, data->size);
+      printf("\n");
+      break;
+    case GIMLI_K_FLOAT:
+      printf(" = ");
+      print_float(data->proc, t, data->addr, data->offset, data->size);
+      printf("\n");
+      break;
+    case GIMLI_K_POINTER:
+      printf(" = ");
+      print_pointer(data, t);
+      printf("\n");
+      break;
+    case GIMLI_K_ENUM:
+      printf(" = ");
+      print_enum(data->proc, t, data->addr, data->offset, data->size);
+      printf("\n");
+      break;
     default:
+      printf(" <offsetbits:%" PRIu64 " @" PTRFMT ">",
+        data->offset,
+        data->addr + (data->offset / 8));
       printf("\n");
   }
+
 
   return GIMLI_ITER_CONT;
 }
@@ -326,6 +576,7 @@ static gimli_iter_status_t show_var(
   data->offset = 0;
 
   if (var->type) {
+    data->size = gimli_type_size(var->type);
     print_var(data, var->type, var->varname);
   } else {
     printf("%s %s @ " PTRFMT ": t=%p is_param=%d\n",
@@ -362,6 +613,10 @@ void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
     printf("\n");
 
     memset(&data, 0, sizeof(data));
+    data.proc = frame->cur.proc;
+    if (!derefd) {
+      derefd = gimli_hash_new(NULL);
+    }
     gimli_stack_frame_visit_vars(frame, GIMLI_WANT_ALL, show_var, &data);
 //    gimli_show_param_info(&cur);
   }

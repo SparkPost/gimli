@@ -428,6 +428,7 @@ int gimli_type_kind(gimli_type_t t);
 #define GIMLI_FP_DOUBLE 2
 #define GIMLI_FP_COMPLEX 3
 #define GIMLI_FP_IMAGINARY 4
+#define GIMLI_FP_LONG_DOUBLE 5
 
 /** generic encoding information */
 struct gimli_type_encoding {
@@ -473,6 +474,9 @@ gimli_type_t gimli_type_new_const(gimli_type_collection_t col,
 gimli_type_t gimli_type_new_pointer(gimli_type_collection_t col,
     gimli_type_t target);
 
+/** return the target of a pointer type */
+gimli_type_t gimli_type_follow_pointer(gimli_type_t t);
+
 /** create a new "typedef" type */
 gimli_type_t gimli_type_new_typedef(gimli_type_collection_t col,
     gimli_type_t target, const char *name);
@@ -495,8 +499,7 @@ int gimli_type_membinfo(gimli_type_t t,
 
 typedef gimli_iter_status_t gimli_type_member_visit_f(
     const char *name,
-    gimli_type_t t,
-    uint64_t offset,
+    struct gimli_type_membinfo *info,
     void *arg
     );
 
@@ -534,6 +537,9 @@ gimli_type_t gimli_type_new_enum(gimli_type_collection_t col,
 /** add an enum value */
 int gimli_type_enum_add(gimli_type_t t, const char *name,
     int value);
+
+/** resolve an enum value to a label */
+const char *gimli_type_enum_resolve(gimli_type_t t, int value);
 
 
 /** information about arrays */

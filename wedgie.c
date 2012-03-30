@@ -92,6 +92,7 @@ static void func_two(void)
   d.bit1 = 1;
   d.bit2 = 0;
   d.moo = 13;
+  d.aftermoo = 4.5;
 
   printf("call func_one\n"); fflush(stdout);
   func_one(&d, 32, "hello", wee_two, d

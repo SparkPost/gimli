@@ -2172,9 +2172,18 @@ static void populate_struct_or_union(
     }
     offset = 0;
     if (gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_bit_size, &size)) {
+      uint64_t bytesize;
+
       if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_bit_offset, &offset)) {
         offset = 1;
       }
+      /* convert to bit offset from start of storage */
+      /* FIXME: check this for big endian systems */
+      if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_byte_size, &bytesize)) {
+        bytesize = gimli_type_size(memt);
+      }
+      offset = ((bytesize * 8) - 1) - offset;
+
     } else {
       size = gimli_type_size(memt);
     }
@@ -2293,7 +2302,17 @@ static gimli_type_t load_type(
           t = gimli_type_new_integer(file->types, type_name, &enc);
           break;
         case DW_ATE_float:
-          enc.format = GIMLI_FP_SINGLE;
+          switch (size) {
+            case sizeof(double):
+              enc.format = GIMLI_FP_DOUBLE;
+              break;
+            case sizeof(float):
+              enc.format = GIMLI_FP_SINGLE;
+              break;
+            case sizeof(long double):
+              enc.format = GIMLI_FP_LONG_DOUBLE;
+              break;
+          }
           t = gimli_type_new_float(file->types, type_name, &enc);
           break;
         case DW_ATE_complex_float:
