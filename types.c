@@ -566,6 +566,14 @@ gimli_type_t gimli_type_new_array(gimli_type_collection_t col,
   return t;
 }
 
+int gimli_type_arinfo(gimli_type_t t,
+    struct gimli_type_arinfo *info)
+{
+  if (t->kind != GIMLI_K_ARRAY) return 0;
+  memcpy(info, &t->arinfo, sizeof(t->arinfo));
+  return 1;
+}
+
 gimli_type_t gimli_type_new_integer(gimli_type_collection_t col,
     const char *name, const struct gimli_type_encoding *enc)
 {
