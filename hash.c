@@ -248,7 +248,7 @@ static void rebucket(gimli_hash_t h, int newsize)
 
 	if (h->no_rebucket) return;
 
-printf("rebucket(%p, %d) %d\n", h, newsize, h->size);
+//printf("rebucket(%p, %d) %d\n", h, newsize, h->size);
 	i = newsize;
 	while (i) {
 		if (i & 1) break;
