@@ -293,6 +293,11 @@ gimli_iter_status_t gimli_stack_trace_visit(
 gimli_addr_t gimli_stack_frame_pcaddr(gimli_stack_frame_t frame);
 int gimli_stack_frame_number(gimli_stack_frame_t frame);
 
+int gimli_stack_frame_resolve_var(gimli_stack_frame_t frame,
+    int filter,
+    const char *varname, gimli_type_t *datatype, gimli_addr_t *addr
+    );
+
 /** visit each variable in a frame of a stack trace */
 typedef gimli_iter_status_t gimli_stack_frame_visit_f(
     gimli_stack_frame_t frame,

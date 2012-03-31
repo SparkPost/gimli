@@ -259,6 +259,30 @@ gimli_iter_status_t gimli_stack_frame_visit_vars(
   return status;
 }
 
+int gimli_stack_frame_resolve_var(gimli_stack_frame_t frame,
+    int filter,
+    const char *varname, gimli_type_t *datatype, gimli_addr_t *addr
+    )
+{
+  gimli_var_t var;
+  gimli_iter_status_t status = GIMLI_ITER_CONT;
+
+  gimli_dwarf_load_frame_var_info(frame);
+
+  /* iterate */
+  STAILQ_FOREACH(var, &frame->vars, vars) {
+    if (!var->varname) continue;
+    if ((var->is_param & filter) == 0) continue;
+    if (strcmp(varname, var->varname)) continue;
+
+    /* got a match */
+    *datatype = var->type;
+    *addr = var->addr;
+    return 1;
+  }
+  return 0;
+}
+
 static void detachatexit(void)
 {
   if (the_proc) {

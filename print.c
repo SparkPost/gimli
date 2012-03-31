@@ -29,6 +29,58 @@ struct print_data {
 
 static int print_var(struct print_data *data, gimli_type_t t, const char *varname);
 
+static void print_quoted_string(gimli_proc_t proc, gimli_addr_t addr)
+{
+  gimli_mem_ref_t ref;
+  gimli_err_t err;
+  char *buf, *end;
+  int len, i;
+#define STRING_AT_ONCE 1024
+
+  err = gimli_proc_mem_ref(proc, addr, STRING_AT_ONCE, &ref);
+  if (err != GIMLI_ERR_OK) {
+    printf("<unable to read string>");
+    return;
+  }
+
+  printf("\"");
+  while (1) {
+    buf = gimli_mem_ref_local(ref);
+    len = gimli_mem_ref_size(ref);
+    addr += len;
+    end = buf + len;
+
+    while (buf < end) {
+      if (buf[0] == '\0') goto done;
+      if (isprint(buf[0])) {
+        printf("%c", buf[0]);
+      } else if (buf[0] == '"') {
+        printf("\\\"");
+      } else if (buf[0] == '\\') {
+        printf("\\\\");
+      } else {
+        printf("\\x%02x", ((int)buf[0]) & 0xff);
+      }
+      buf++;
+    }
+
+    gimli_mem_ref_delete(ref);
+    err = gimli_proc_mem_ref(proc, addr, STRING_AT_ONCE, &ref);
+    if (err != GIMLI_ERR_OK) {
+      break;
+    }
+  }
+done:
+  printf("\"");
+  if (err != GIMLI_ERR_OK) {
+    printf(" <invalid read>");
+  }
+
+  gimli_mem_ref_delete(ref);
+}
+
+
+
 static gimli_iter_status_t print_member(const char *name,
     struct gimli_type_membinfo *info,
     void *arg)
@@ -249,13 +301,11 @@ static void print_array(struct print_data *data, gimli_type_t t)
   if (gimli_type_kind(arinfo.contents) == GIMLI_K_INTEGER &&
       enc.format & GIMLI_INT_CHAR) {
     /* Could be a string; try to read and print it as such */
-    char *str = gimli_read_string(data->proc, addr);
 
-    if (str) {
-      printf("[ \"%s\" ]", str);
-      free(str);
-      return;
-    }
+    printf("[ ");
+    print_quoted_string(data->proc, addr);
+    printf(" ]");
+    return;
   }
 
   printf("\n%.*s[",
@@ -330,15 +380,9 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
   /* if we are a char*, render as a string */
   if (gimli_type_kind(target) == GIMLI_K_INTEGER &&
       (enc.format & GIMLI_INT_CHAR)) {
-    char *str = gimli_read_string(data->proc, ptr);
 
-    printf(PTRFMT, ptr);
-    if (str) {
-      printf(" \"%s\"", str);
-      free(str);
-    } else {
-      printf(" <unable to read string>");
-    }
+    printf(PTRFMT " ", ptr);
+    print_quoted_string(data->proc, ptr);
     return;
   }
 
@@ -431,7 +475,8 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
       printf("%s", data->suffix);
       break;
     default:
-      printf(" <offsetbits:%" PRIu64 " @" PTRFMT ">",
+      printf(" <kind:%" PRIu64 " offsetbits:%" PRIu64 " @" PTRFMT ">",
+        gimli_type_kind(t),
         data->offset,
         data->addr + (data->offset / 8));
       printf("%s", data->suffix);
@@ -453,14 +498,11 @@ static gimli_iter_status_t show_var(
   data->addr = var->addr;
   data->offset = 0;
 
-  if (var->type) {
+  if (var->type && var->addr) {
     data->size = gimli_type_size(var->type);
     print_var(data, var->type, var->varname);
   } else {
-    printf("%s %s @ " PTRFMT ": t=%p is_param=%d\n",
-        var->type ? gimli_type_declname(var->type) : "?",
-        var->varname, var->addr,
-        var->type, var->is_param);
+    printf("    %s <optimized out>\n", var->varname);
   }
   return GIMLI_ITER_CONT;
 }
@@ -502,12 +544,8 @@ void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
     }
 
     gimli_stack_frame_visit_vars(frame, GIMLI_WANT_ALL, show_var, &data);
-//    gimli_show_param_info(&cur);
   }
 }
 
-
-
 /* vim:ts=2:sw=2:et:
  */
-

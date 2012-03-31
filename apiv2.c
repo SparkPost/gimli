@@ -82,6 +82,26 @@ static char *v1_read_string(void *src)
   return gimli_read_string(the_proc, (gimli_addr_t)src);
 }
 
+static int v2_get_parameter(void *context, const char *varname,
+  const char **datatypep, void **addrp, uint64_t *sizep)
+{
+  gimli_stack_frame_t frame = context;
+  gimli_addr_t addr;
+  gimli_type_t t;
+
+  if (!gimli_stack_frame_resolve_var(frame, GIMLI_WANT_PARAMS,
+        varname, &t, &addr)) {
+    return 0;
+  }
+
+  *addrp = (void*)addr;
+  *sizep = gimli_type_size(t);
+  *datatypep = gimli_type_declname(t);
+
+  return 1;
+}
+
+
 struct gimli_ana_api ana_api = {
   GIMLI_ANA_API_VERSION,
   v1_sym_lookup,
@@ -89,7 +109,7 @@ struct gimli_ana_api ana_api = {
   v1_read_mem,
   v1_read_string,
   v2_get_source_info,
-  gimli_get_parameter,
+  v2_get_parameter,
   gimli_get_string_symbol,
   gimli_copy_from_symbol,
   gimli_get_proc_stat,
