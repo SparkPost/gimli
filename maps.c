@@ -165,6 +165,13 @@ void gimli_mapped_object_addref(gimli_mapped_object_t file)
   file->refcnt++;
 }
 
+static void destroy_cu(struct gimli_dwarf_cu *cu)
+{
+  if (cu->left) destroy_cu(cu->left);
+  if (cu->right) destroy_cu(cu->right);
+  free(cu);
+}
+
 void gimli_mapped_object_delete(gimli_mapped_object_t file)
 {
   if (--file->refcnt) return;
@@ -184,9 +191,6 @@ void gimli_mapped_object_delete(gimli_mapped_object_t file)
   if (file->aux_elf) {
     gimli_object_file_destroy(file->aux_elf);
   }
-  if (file->dies) {
-    gimli_hash_destroy(file->dies);
-  }
   if (file->lines) {
     free(file->lines);
   }
@@ -198,6 +202,9 @@ void gimli_mapped_object_delete(gimli_mapped_object_t file)
   }
   if (file->abbr.map) {
     gimli_hash_destroy(file->abbr.map);
+  }
+  if (file->debug_info.cus) {
+    destroy_cu(file->debug_info.cus);
   }
   free(file->arange);
   gimli_dw_fde_destroy(file);
@@ -237,8 +244,8 @@ gimli_mapped_object_t gimli_add_object(
   f->refcnt = 1;
   f->objname = strdup(objname);
   f->sections = gimli_hash_new(destroy_section);
-  gimli_slab_init(&f->dieslab, sizeof(struct gimli_dwarf_die));
-  gimli_slab_init(&f->attrslab, sizeof(struct gimli_dwarf_attr));
+  gimli_slab_init(&f->dieslab, sizeof(struct gimli_dwarf_die), "die");
+  gimli_slab_init(&f->attrslab, sizeof(struct gimli_dwarf_attr), "attr");
 
   gimli_hash_insert(proc->files, f->objname, f);
 

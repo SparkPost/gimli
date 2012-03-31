@@ -241,7 +241,6 @@ closeout:
   }
 
   elf->objname = strdup(filename);
-  printf("elf_open(%s)\n", filename);
 
   if (ident[GIMLI_EI_VERSION] != GIMLI_EV_CURRENT) {
     fprintf(stderr, "ELF: %s: unsupported ELF version %d\n", filename,

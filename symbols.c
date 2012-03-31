@@ -81,7 +81,7 @@ static void bake_symtab(gimli_mapped_object_t f)
   /* sort for bsearch */
   qsort(f->symtab, f->symcount, sizeof(struct gimli_symbol),
     sort_syms_by_addr_asc);
-printf("sorting %d symbols in %s\n", f->symcount, f->objname);
+//printf("sorting %d symbols in %s\n", f->symcount, f->objname);
 
   for (i = 0; i < f->symcount; i++) {
     s = &f->symtab[i];

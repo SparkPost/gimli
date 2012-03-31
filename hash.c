@@ -185,7 +185,7 @@ gimli_hash_t gimli_hash_new_size(gimli_hash_free_func_t dtor, uint32_t flags, si
 	h->table_size = size ? power_2(size) : GIMLI_HASH_INITIAL_SIZE;
 	h->buckets = calloc(h->table_size, sizeof(gimli_hash_bucket*));
 	h->dtor = dtor;
-	gimli_slab_init(&h->bucketslab, sizeof(gimli_hash_bucket));
+	gimli_slab_init(&h->bucketslab, sizeof(gimli_hash_bucket), "buckets");
 
 	if (flags & GIMLI_HASH_PTR_KEYS) {
 		h->compile_key = ptr_key_compile;
@@ -455,7 +455,7 @@ void gimli_hash_delete_all(gimli_hash_t h, int downsize)
 		rebucket(h, GIMLI_HASH_INITIAL_SIZE);
 	}
 	gimli_slab_destroy(&h->bucketslab);
-	gimli_slab_init(&h->bucketslab, sizeof(gimli_hash_bucket));
+	gimli_slab_init(&h->bucketslab, sizeof(gimli_hash_bucket), "buckets");
 }
 
 void gimli_hash_destroy(gimli_hash_t h)
@@ -527,7 +527,7 @@ void gimli_hash_diagnose(gimli_hash_t h)
 
 	printf("num_empty=%d num_perfect=%d num_collided=%d %.0f%% largest=%d\n",
 			num_empty, num_perfect, num_collided,
-			(float)num_collided / (float)h->size * 100.0,
+			h->size ? ((float)num_collided / (float)h->size * 100.0) : 0.0,
 			largest_chain);
 }
 

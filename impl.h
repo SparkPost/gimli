@@ -79,7 +79,7 @@
 struct gimli_mapped_object;
 typedef struct gimli_mapped_object *gimli_mapped_object_t;
 
-
+#include "gimli_dwarf.h"
 #ifdef __MACH__
 #include "gimli_macho.h"
 #else
@@ -226,10 +226,11 @@ struct gimli_slab_page {
 struct gimli_slab {
   LIST_HEAD(slab, gimli_slab_page) pages;
   uint32_t item_size, per_page;
-  uint32_t next_avail;
+  uint32_t next_avail, total_allocd;
+  const char *name;
 };
 
-int gimli_slab_init(struct gimli_slab *slab, uint32_t size);
+int gimli_slab_init(struct gimli_slab *slab, uint32_t size, const char *name);
 void *gimli_slab_alloc(struct gimli_slab *slab);
 void gimli_slab_destroy(struct gimli_slab *slab);
 
@@ -262,14 +263,20 @@ struct gimli_mapped_object {
   uint32_t num_arange;
   uint32_t alloc_arange;
 
+  /* .debug_info */
+  struct {
+    const uint8_t *start, *end;
+    gimli_object_file_t elf;
+    struct gimli_dwarf_cu *cus;
+    uint64_t reloc;
+  } debug_info;
   /* .debug_abbrev */
   struct {
     gimli_hash_t map; /* u64 code => offset to abbr section */
     gimli_object_file_t elf;
     const uint8_t *start, *end;
   } abbr;
-  gimli_hash_t dies; /* offset-string => gimli_dwarf_die */
-  struct gimli_dwarf_die *first_die;
+//  struct gimli_dwarf_die *first_die;
   struct gimli_ana_module *tracer_module;
   struct gimli_slab dieslab, attrslab;
 
@@ -454,6 +461,27 @@ int gimli_dwarf_load_frame_var_info(gimli_stack_frame_t frame);
 void gimli_destroy_mapped_object_hash(void *item);
 void gimli_mapped_object_addref(gimli_mapped_object_t file);
 void gimli_mapped_object_delete(gimli_mapped_object_t file);
+
+int dw_read_encptr(gimli_proc_t proc, uint8_t enc, const uint8_t **ptr, const uint8_t *end,
+  uint64_t pc, uint64_t *output);
+uint64_t dw_read_uleb128(const uint8_t **ptr, const uint8_t *end);
+int64_t dw_read_leb128(const uint8_t **ptr, const uint8_t *end);
+int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
+  uint64_t oplen,
+  uint64_t frame_base, uint64_t *result, uint64_t *prepopulate,
+  int *is_stack);
+
+struct gimli_dwarf_die *gimli_dwarf_get_die(gimli_mapped_object_t f,
+  uint64_t offset);
+
+struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr_t pc);
+struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
+  struct gimli_dwarf_die *die, uint64_t attrcode);
+const char *gimli_dwarf_resolve_type_name(gimli_mapped_object_t f,
+  struct gimli_dwarf_attr *type);
+int gimli_dwarf_read_value(gimli_proc_t proc, gimli_addr_t addr, int is_stack, void *out, uint64_t size);
+
+
 
 /* ensure that the table size is a power of 2 */
 static inline uint32_t power_2(uint32_t x)

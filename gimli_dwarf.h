@@ -385,32 +385,24 @@ struct gimli_dwarf_attr {
   const uint8_t *ptr;
 };
 
+/* compilation unit */
+struct gimli_dwarf_cu {
+  /** offset of CU within .debug_info */
+  uint64_t offset, end;
+  /** offset into abbrev */
+  uint64_t da_offset;
+  struct gimli_dwarf_cu *left, *right;
+  STAILQ_HEAD(cudielist, gimli_dwarf_die) dies;
+};
+
 struct gimli_dwarf_die {
   uint64_t offset;
   uint64_t tag;
-  struct gimli_dwarf_die *next, *kids, *last_kid, *parent;
+  STAILQ_ENTRY(gimli_dwarf_die) siblings;
+  STAILQ_HEAD(dielist, gimli_dwarf_die) kids;
+  struct gimli_dwarf_die *parent;
   struct gimli_dwarf_attr *attrs;
 };
-
-int dw_read_encptr(gimli_proc_t proc, uint8_t enc, const uint8_t **ptr, const uint8_t *end,
-  uint64_t pc, uint64_t *output);
-uint64_t dw_read_uleb128(const uint8_t **ptr, const uint8_t *end);
-int64_t dw_read_leb128(const uint8_t **ptr, const uint8_t *end);
-int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
-  uint64_t oplen,
-  uint64_t frame_base, uint64_t *result, uint64_t *prepopulate,
-  int *is_stack);
-
-struct gimli_dwarf_die *gimli_dwarf_get_die(gimli_mapped_object_t f,
-  uint64_t offset);
-
-struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr_t pc);
-struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
-  struct gimli_dwarf_die *die, uint64_t attrcode);
-const char *gimli_dwarf_resolve_type_name(gimli_mapped_object_t f,
-  struct gimli_dwarf_attr *type);
-int gimli_dwarf_read_value(gimli_proc_t proc, gimli_addr_t addr, int is_stack, void *out, uint64_t size);
-
 
 #ifdef __cplusplus
 }

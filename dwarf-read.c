@@ -542,7 +542,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
   }
 
   qsort(f->lines, f->linecount, sizeof(struct gimli_line_info), sort_by_addr);
-printf("sorting %d lines in %s\n", f->linecount, f->objname);
+//printf("sorting %d lines in %s\n", f->linecount, f->objname);
 
   free(opcode_lengths);
 
@@ -934,13 +934,12 @@ static void destroy_die(void *ptr)
 #endif
 
 static struct gimli_dwarf_die *process_die(
-  uint64_t reloc, const uint8_t *datastart,
+  gimli_mapped_object_t file,
+  struct gimli_dwarf_cu *cu,
   const uint8_t *custart,
   const uint8_t **datap, const uint8_t *end,
   uint64_t da_offset,
-  int is_64, uint8_t addr_size,
-  gimli_object_file_t elf,
-  gimli_hash_t diehash
+  int is_64, uint8_t addr_size
 )
 {
   const uint8_t *data = *datap;
@@ -952,9 +951,9 @@ static struct gimli_dwarf_die *process_die(
   struct gimli_dwarf_die *die = NULL, *kid = NULL;
   struct gimli_dwarf_attr *attr = NULL;
   uint64_t offset;
-  gimli_mapped_object_t file = elf->gobject;
 
-  offset = data - datastart;
+  offset = data - file->debug_info.start;
+
   abbr_code = dw_read_uleb128(&data, end);
   if (abbr_code == 0) {
     // Skip over NUL entry
@@ -978,9 +977,7 @@ static struct gimli_dwarf_die *process_die(
   memset(die, 0, sizeof(*die));
   die->offset = offset;
   die->tag = tag;
-  if (!gimli_hash_insert_u64(diehash, offset, die)) {
-    printf("FAILED to insert %" PRIx64 " into diehash\n", offset);
-  }
+  STAILQ_INIT(&die->kids);
 
   while (data < end && abbr < file->abbr.end) {
     atype = dw_read_uleb128(&abbr, file->abbr.end);
@@ -995,7 +992,7 @@ static struct gimli_dwarf_die *process_die(
     attr->attr = atype;
 
     attr->form = get_value(aform, addr_size, is_64, &data, end,
-        &attr->code, &attr->ptr, elf);
+        &attr->code, &attr->ptr, file->debug_info.elf);
 
     if (attr->form == 0) {
       printf("Failed to resolve value for attribute\n");
@@ -1003,10 +1000,13 @@ static struct gimli_dwarf_die *process_die(
     }
 
     if (attr->form == DW_FORM_addr) {
-      attr->code += reloc;
+      attr->code += file->debug_info.reloc;
     } else if (attr->form == DW_FORM_ref_udata) {
       /* offset from start of its respective CU */
-      attr->code += (int64_t)(custart - datastart);
+//      printf("ref CU, code is %" PRIx64, attr->code);
+      attr->code += (int64_t)(custart - file->debug_info.start);
+//      printf(" fixed up to %" PRIx64 "\n", attr->code);
+      attr->ptr = (const uint8_t*)cu;
       attr->form = DW_FORM_data8;
     }
 
@@ -1019,43 +1019,86 @@ static struct gimli_dwarf_die *process_die(
     /* go recursive and pull those in now.
      * The first child may be NULL and not indicate a terminator */
     while (1) {
-      kid = process_die(reloc, datastart, custart, &data, end, da_offset,
-            is_64, addr_size, elf, diehash);
+      kid = process_die(file, cu, custart, &data, end, da_offset,
+            is_64, addr_size);
       if (kid == NULL) {
-        if (die->last_kid) {
+        if (STAILQ_FIRST(&die->kids)) {
           break;
         }
         continue;
       }
-      if (!die->kids) {
-        die->kids = kid;
-      }
-      if (die->last_kid) {
-        die->last_kid->next = kid;
-      }
-      die->last_kid = kid;
+      STAILQ_INSERT_TAIL(&die->kids, kid, siblings);
       kid->parent = die;
     }
   }
-
-#if 0 /* we could collect type info here */
-  if (die->tag == DW_TAG_structure_type) {
-    struct gimli_dwarf_attr *name = gimli_dwarf_die_get_attr(die, DW_AT_name);
-    if (name) {
-      printf("struct %s\n", (char*)name->ptr);
-    }
-  }
-#endif
 
   *datap = data;
   return die;
 }
 
-struct gimli_dwarf_die *gimli_dwarf_get_die(
-  gimli_mapped_object_t f,
-  uint64_t offset)
+static int init_debug_info(gimli_mapped_object_t f)
 {
-  const uint8_t *data, *datastart, *end, *next;
+  if (f->debug_info.start) return 1;
+
+  if (!get_sect_data(f, ".debug_info", &f->debug_info.start,
+        &f->debug_info.end, &f->debug_info.elf)) {
+    printf("no debug info for %s\n", f->objname);
+    return 0;
+  }
+
+  if (!gimli_object_is_executable(f->elf)) {
+    int i;
+    struct gimli_object_mapping *m;
+
+    for (i = 0; i < the_proc->nmaps; i++) {
+      m = the_proc->mappings[i];
+
+      if (m->objfile == f) {
+        f->debug_info.reloc = m->base;
+      }
+    }
+    //    printf("Using reloc adjustment for %s: 0x%llx\n", m->objfile->objname, reloc);
+  }
+
+  return 1;
+}
+
+/* insert CU into the appropriate portion of the binary search tree
+ * pointed to by root */
+static void insert_cu(struct gimli_dwarf_cu **rootp, struct gimli_dwarf_cu *cu)
+{
+  struct gimli_dwarf_cu *root = *rootp;
+
+  if (!root) {
+    *rootp = cu;
+    return;
+  }
+  while (root) {
+    if (cu->offset >= root->offset && cu->offset < root->end) {
+      printf("CU list already contains %" PRIx64 "\n", cu->offset);
+      abort();
+    }
+    if (cu->offset < root->offset) {
+      if (root->left) {
+        root = root->left;
+        continue;
+      }
+      root->left = cu;
+      return;
+    }
+    /* must be on the right */
+    if (root->right) {
+      root = root->right;
+      continue;
+    }
+    root->right = cu;
+    return;
+  }
+}
+
+static struct gimli_dwarf_cu *load_cu(gimli_mapped_object_t f, uint64_t offset)
+{
+  const uint8_t *data, *next;
   const uint8_t *cuend, *custart;
   gimli_object_file_t elf = NULL;
   uint64_t initlen;
@@ -1064,119 +1107,148 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
   uint64_t da_offset;
   int is_64 = 0;
   uint8_t addr_size, seg_size;
-  uint64_t reloc = 0;
+  struct gimli_dwarf_cu *cu, *cuptr;
   struct gimli_dwarf_die *die = NULL;
-  struct gimli_dwarf_die *last_die = NULL;
 
-  if (!f->dies) {
+  if (!init_debug_info(f)) {
+    return 0;
+  }
+  data = f->debug_info.start + offset;
 
-    if (!get_sect_data(f, ".debug_info", &datastart, &end, &elf)) {
-      printf("no debug info for %s\n", f->objname);
+#if 0
+  printf("Loading CU @ offset %" PRIx64 " from data of size %" PRIu64 "\n",
+      offset,
+      f->debug_info.end - f->debug_info.start);
+#endif
 
-      /* negatively cache a dies hash */
-      f->dies = gimli_hash_new_size(NULL, GIMLI_HASH_U64_KEYS, 0);
-      return 0;
-    }
-    data = datastart;
-
-    /* I've observed an average of 10-12 bytes per DIE,
-     * so size the initial buckets based on a size of 10.
-     * This avoids excessive rebucketing when you have
-     * libc debug objects installed (~370k DIEs!) */
-    f->dies = gimli_hash_new_size(NULL, GIMLI_HASH_U64_KEYS,
-        (end - datastart) / 10);
-
-    if (!gimli_object_is_executable(f->elf)) {
-      int i;
-      struct gimli_object_mapping *m;
-
-      for (i = 0; i < the_proc->nmaps; i++) {
-        m = the_proc->mappings[i];
-
-        if (m->objfile == f) {
-          reloc = (uint64_t)(intptr_t)m->base; // FIXME: abstract this out
-        }
-      }
-      //    printf("Using reloc adjustment for %s: 0x%llx\n", m->objfile->objname, reloc);
-    }
-
-    printf("Loading DIEs from data of size %" PRIu64 "\n", end - data);
-
-    while (data < end) {
-      custart = data;
-      memcpy(&len32, data, sizeof(len32));
-      data += sizeof(len32);
-      if (len32 == 0xffffffff) {
-        is_64 = 1;
-        memcpy(&initlen, data, sizeof(initlen));
-        data += sizeof(initlen);
-      } else {
-        is_64 = 0;
-        initlen = len32;
-      }
-      cuend = data + initlen;
-
-      memcpy(&ver, data, sizeof(ver));
-      data += sizeof(ver);
-      if (ver < 2 || ver > 3) {
-        printf("Encountered a compilation unit with dwarf version %d; ending processing\n", ver);
-
-        break;
-      }
-
-      if (is_64) {
-        memcpy(&da_offset, data, sizeof(da_offset));
-        data += sizeof(da_offset);
-      } else {
-        memcpy(&len32, data, sizeof(len32));
-        data += sizeof(len32);
-        da_offset = len32;
-      }
-
-      memcpy(&addr_size, data, sizeof(addr_size));
-      data += sizeof(addr_size);
-
-      /* now we have a series of Debugging Information Entries (DIE) */
-      while (data < cuend) {
-        die = process_die(reloc, datastart, custart, &data, cuend,
-                da_offset, is_64, addr_size, elf, f->dies);
-        if (!die) {
-          continue;
-        }
-        if (last_die) {
-          last_die->next = die;
-        }
-        if (!f->first_die) {
-          f->first_die = die;
-        }
-        last_die = die;
-      }
-      data = cuend;
-    }
-    printf("DIE hash is %d in size, data size was %" PRIu64 " approx %" PRIu64 " per entry\n",
-        gimli_hash_size(f->dies), end - datastart,
-        (end - datastart) / gimli_hash_size(f->dies));
-    gimli_hash_diagnose(f->dies);
-    printf("abbr.map is %d in size, data size %" PRIu64 " approx %" PRIu64 " per entry\n",
-        gimli_hash_size(f->abbr.map), f->abbr.end - f->abbr.start,
-        (f->abbr.end - f->abbr.start) / gimli_hash_size(f->abbr.map));
-    gimli_hash_diagnose(f->abbr.map);
+  if (data >= f->debug_info.end) {
+    printf("CU offset %" PRIx64 " it out of bounds\n", offset);
+    return 0;
   }
 
-  if (gimli_hash_find_u64(f->dies, offset, (void**)&die)) {
-    return die;
+  custart = data;
+  memcpy(&len32, data, sizeof(len32));
+  data += sizeof(len32);
+  if (len32 == 0xffffffff) {
+    is_64 = 1;
+    memcpy(&initlen, data, sizeof(initlen));
+    data += sizeof(initlen);
+  } else {
+    is_64 = 0;
+    initlen = len32;
+  }
+  cuend = data + initlen;
+
+  memcpy(&ver, data, sizeof(ver));
+  data += sizeof(ver);
+  if (ver < 2 || ver > 3) {
+    printf("%s: CU @ offset 0x%" PRIx64 " with dwarf version %d; ending processing\n",
+        f->objname, offset, ver);
+    abort();
+    return 0;
   }
 
-  for (die = f->first_die; die; die = die->next) {
-    if (die->offset >= offset) {
-      return die;
+  if (is_64) {
+    memcpy(&da_offset, data, sizeof(da_offset));
+    data += sizeof(da_offset);
+  } else {
+    memcpy(&len32, data, sizeof(len32));
+    data += sizeof(len32);
+    da_offset = len32;
+  }
+
+  memcpy(&addr_size, data, sizeof(addr_size));
+  data += sizeof(addr_size);
+
+  cu = calloc(1, sizeof(*cu));
+  cu->offset = offset;
+  cu->end = cuend - f->debug_info.start;
+  cu->da_offset = da_offset;
+  STAILQ_INIT(&cu->dies);
+
+  /* insert into the cu tree */
+  insert_cu(&f->debug_info.cus, cu);
+#if 0
+  printf("Recording CU %" PRIx64 " - %" PRIx64 " @ %p\n",
+      cu->offset, cu->end, cu);
+#endif
+
+  /* now we have a series of Debugging Information Entries (DIE) */
+  while (data < cuend) {
+    die = process_die(f, cu, custart, &data, cuend,
+        da_offset, is_64, addr_size);
+    if (!die) {
+      continue;
+    }
+    STAILQ_INSERT_TAIL(&cu->dies, die, siblings);
+  }
+
+#if 0
+  printf("DIE hash is %d in size, data size was %" PRIu64 " approx %" PRIu64 " per entry\n",
+      gimli_hash_size(f->dies), file->debug_info.end - file->debug_info.start,
+      (file->debug_info.end - file->debug_info.start) / gimli_hash_size(f->dies));
+  gimli_hash_diagnose(f->dies);
+  printf("abbr.map is %d in size, data size %" PRIu64 " approx %" PRIu64 " per entry\n",
+      gimli_hash_size(f->abbr.map), f->abbr.end - f->abbr.start,
+      (f->abbr.end - f->abbr.start) / gimli_hash_size(f->abbr.map));
+  gimli_hash_diagnose(f->abbr.map);
+#endif
+
+  return cu;
+}
+
+/* searches the CU binary search tree for the requested offset */
+static struct gimli_dwarf_cu *find_cu(
+  gimli_mapped_object_t f,
+  uint64_t offset)
+{
+  struct gimli_dwarf_die *die = NULL;
+  struct gimli_dwarf_cu *cu;
+
+  /* search binary tree */
+  cu = f->debug_info.cus;
+  while (cu) {
+    if (offset >= cu->offset && offset < cu->end) {
+      return cu;
+    }
+    if (offset < cu->offset) {
+      cu = cu->left;
+    } else {
+      cu = cu->right;
     }
   }
-
   return NULL;
 }
 
+struct gimli_dwarf_die *gimli_dwarf_get_die(
+  gimli_mapped_object_t f,
+  uint64_t offset)
+{
+  struct gimli_dwarf_die *die = NULL, *kid;
+  struct gimli_dwarf_cu *cu;
 
+  cu = find_cu(f, offset);
+  if (!cu) {
+    /* not found; will need to go out to disk to read it */
+    cu = load_cu(f, offset);
+  }
+
+  if (cu) {
+    STAILQ_FOREACH(die, &cu->dies, siblings) {
+      if (die->offset == offset) {
+        return die;
+      }
+      STAILQ_FOREACH(kid, &die->kids, siblings) {
+        if (kid->offset == offset) {
+          return kid;
+        }
+      }
+    }
+  }
+
+  printf("get_die: %" PRIx64 " MISSING\n", offset);
+  return NULL;
+}
 
 struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode)
@@ -1322,7 +1394,7 @@ static int load_arange(struct gimli_object_mapping *m)
   /* ensure ascending order */
   qsort(m->objfile->arange, m->objfile->num_arange, sizeof(struct dw_die_arange),
       sort_compare_arange);
-printf("sorting %d arange in %s\n", m->objfile->num_arange, m->objfile->objname);
+//printf("sorting %d arange in %s\n", m->objfile->num_arange, m->objfile->objname);
 
   return 1;
 }
@@ -1346,7 +1418,8 @@ static int search_compare_arange(const void *K, const void *R)
 struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr_t pc)
 {
   struct gimli_object_mapping *m;
-  struct gimli_dwarf_die *die;
+  struct gimli_dwarf_die *die, *kid;
+  struct gimli_dwarf_cu *cu;
   struct dw_die_arange *arange;
 
   m = gimli_mapping_for_addr(proc, pc);
@@ -1362,33 +1435,50 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr
     return NULL;
   }
 
-  arange = bsearch(&pc, m->objfile->arange, m->objfile->num_arange, sizeof(*arange),
-      search_compare_arange);
-  if (arange) {
-    die = gimli_dwarf_get_die(m->objfile, arange->di_offset);
-    if (die && die->tag == DW_TAG_compile_unit) {
-      /* this is the die for the compilation unit; we need to walk
-       * through it and find the subprogram that matches */
-      for (die = die->kids; die; die = die->next) {
-        uint64_t lopc, hipc;
+  arange = bsearch(&pc, m->objfile->arange, m->objfile->num_arange,
+      sizeof(*arange), search_compare_arange);
+  if (!arange) {
+    return NULL;
+  }
+  /* arange gives us a pointer to the CU */
+  cu = find_cu(m->objfile, arange->di_offset);
+  if (!cu) {
+    cu = load_cu(m->objfile, arange->di_offset);
+  }
+  if (!cu) {
+    return NULL;
+  }
 
-        if (die->tag != DW_TAG_subprogram) {
-          continue;
-        }
+  die = STAILQ_FIRST(&cu->dies);
+  if (!die) {
+    printf("no DIE for cu!?\n");
+    abort();
+  }
 
-        if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_low_pc, &lopc)) {
-          lopc = arange->addr;
-          continue;
-        }
-        if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_high_pc, &hipc)) {
-          hipc = arange->addr + arange->len;
-          continue;
-        }
+  if (die->tag != DW_TAG_compile_unit) {
+    printf("DIE is not a compile unit!?\n");
+  }
 
-        if (pc >= lopc && pc <= hipc) {
-          return die;
-        }
-      }
+  /* this is the die for the compilation unit; we need to walk
+   * through it and find the subprogram that matches */
+  STAILQ_FOREACH(kid, &die->kids, siblings) {
+    uint64_t lopc, hipc;
+
+    if (kid->tag != DW_TAG_subprogram) {
+      continue;
+    }
+
+    if (!gimli_dwarf_die_get_uint64_t_attr(kid, DW_AT_low_pc, &lopc)) {
+      lopc = arange->addr;
+      continue;
+    }
+    if (!gimli_dwarf_die_get_uint64_t_attr(kid, DW_AT_high_pc, &hipc)) {
+      hipc = arange->addr + arange->len;
+      continue;
+    }
+
+    if (pc >= lopc && pc <= hipc) {
+      return kid;
     }
   }
 
@@ -1513,7 +1603,7 @@ static void populate_struct_or_union(
 
   memset(&cur, 0, sizeof(cur));
 
-  for (die = die->kids; die; die = die->next) {
+  STAILQ_FOREACH(die, &die->kids, siblings) {
     if (die->tag != DW_TAG_member) continue;
 
     loc = gimli_dwarf_die_get_attr(die, DW_AT_data_member_location);
@@ -1571,8 +1661,8 @@ static gimli_type_t array_dim(gimli_mapped_object_t file,
 
   memset(&info, 0, sizeof(info));
 
-  if (die->next) {
-    info.contents = array_dim(file, die->next, eletype);
+  if (STAILQ_NEXT(die, siblings)) {
+    info.contents = array_dim(file, STAILQ_NEXT(die, siblings), eletype);
   } else {
     info.contents = eletype;
   }
@@ -1593,13 +1683,13 @@ static gimli_type_t populate_array(gimli_mapped_object_t file,
   gimli_type_t t;
   struct gimli_dwarf_attr *type;
 
-  if (!die->kids || die->kids->tag != DW_TAG_subrange_type) {
+  if (!STAILQ_FIRST(&die->kids) || STAILQ_FIRST(&die->kids)->tag != DW_TAG_subrange_type) {
     printf("cannot determine array bounds!\n");
     return NULL;
   }
 
   type = gimli_dwarf_die_get_attr(die, DW_AT_type);
-  t = array_dim(file, die->kids, load_type(file, type));
+  t = array_dim(file, STAILQ_FIRST(&die->kids), load_type(file, type));
   return t;
 }
 
@@ -1629,7 +1719,7 @@ static gimli_type_t populate_func(gimli_mapped_object_t file,
   }
 
   /* are we variadic? */
-  for (kid = die->kids; kid; kid = kid->next) {
+  STAILQ_FOREACH(kid, &die->kids, siblings) {
     if (kid->tag == DW_TAG_unspecified_parameters) {
       flags = GIMLI_FUNC_VARARG;
       break;
@@ -1638,7 +1728,7 @@ static gimli_type_t populate_func(gimli_mapped_object_t file,
 
   t = gimli_type_new_function(file->types, name, flags, rettype);
 
-  for (kid = die->kids; kid; kid = kid->next) {
+  STAILQ_FOREACH(kid, &die->kids, siblings) {
     if (kid->tag == DW_TAG_unspecified_parameters) {
       continue;
     }
@@ -1656,6 +1746,37 @@ static gimli_type_t populate_func(gimli_mapped_object_t file,
   }
 
   return t;
+}
+
+static int populate_enum(gimli_type_t t,
+    gimli_mapped_object_t file,
+    struct gimli_dwarf_die *parent)
+{
+  struct gimli_dwarf_die *die;
+  struct gimli_dwarf_attr *name = NULL;
+
+  STAILQ_FOREACH(die, &parent->kids, siblings) {
+    struct gimli_dwarf_attr *cv;
+
+    if (die->tag != DW_TAG_enumerator) {
+      printf("unexpected tag 0x%" PRIx64 " in enumeration_type\n",
+          die->tag);
+      return 0;
+    }
+    name = gimli_dwarf_die_get_attr(die, DW_AT_name);
+    if (!name) {
+      printf("expected name for enumerator!\n");
+      return 0;
+    }
+
+    cv = gimli_dwarf_die_get_attr(die, DW_AT_const_value);
+    if (!cv) {
+      printf("missing const_value for enumerator\n");
+      return 0;
+    }
+    gimli_type_enum_add(t, (char*)name->ptr, (int)cv->code);
+  }
+  return 1;
 }
 
 static gimli_type_t load_type(
@@ -1819,26 +1940,8 @@ static gimli_type_t load_type(
       enc.bits = size * 8;
 
       t = gimli_type_new_enum(file->types, type_name, &enc);
-      for (die = die->kids; die; die = die->next) {
-        struct gimli_dwarf_attr *cv;
-
-        if (die->tag != DW_TAG_enumerator) {
-          printf("unexpected tag 0x%" PRIx64 " in enumeration_type\n",
-              die->tag);
-          return NULL;
-        }
-        name = gimli_dwarf_die_get_attr(die, DW_AT_name);
-        if (!name) {
-          printf("expected name for enumerator!\n");
-          return NULL;
-        }
-
-        cv = gimli_dwarf_die_get_attr(die, DW_AT_const_value);
-        if (!cv) {
-          printf("missing const_value for enumerator\n");
-          return NULL;
-        }
-        gimli_type_enum_add(t, (char*)name->ptr, (int)cv->code);
+      if (!populate_enum(t, file, die)) {
+        return NULL;
       }
       break;
 
@@ -1917,7 +2020,7 @@ static void load_var(
 /* load DWARF DIEs to collect information about variables */
 int gimli_dwarf_load_frame_var_info(gimli_stack_frame_t frame)
 {
-  struct gimli_dwarf_die *die;
+  struct gimli_dwarf_die *die, *kid;
   uint64_t frame_base = 0;
   uint64_t comp_unit_base = 0;
   struct gimli_dwarf_attr *frame_base_attr;
@@ -1959,9 +2062,9 @@ int gimli_dwarf_load_frame_var_info(gimli_stack_frame_t frame)
     }
   }
 
-  for (die = die->kids; die; die = die->next) {
-    if (die->tag == DW_TAG_formal_parameter || die->tag == DW_TAG_variable) {
-      load_var(frame, die, frame_base, comp_unit_base, m);
+  STAILQ_FOREACH(kid, &die->kids, siblings) {
+    if (kid->tag == DW_TAG_formal_parameter || kid->tag == DW_TAG_variable) {
+      load_var(frame, kid, frame_base, comp_unit_base, m);
     }
   }
 
