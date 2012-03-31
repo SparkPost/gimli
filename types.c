@@ -687,6 +687,55 @@ gimli_type_t gimli_type_follow_pointer(gimli_type_t t)
   return t->target;
 }
 
+gimli_type_t gimli_type_new_function(gimli_type_collection_t col,
+    const char *name,
+    uint32_t flags,
+    gimli_type_t rettype)
+{
+  gimli_type_t t;
+  struct gimli_type_encoding enc;
+
+  memset(&enc, 0, sizeof(enc));
+  enc.bits = sizeof(void*);
+  enc.format = flags;
+
+  t = new_type(col, GIMLI_K_FUNCTION, name, &enc);
+
+  /* for functions, the return type is stored in target */
+  t->target = rettype;
+
+  return t;
+}
+
+int gimli_type_funcinfo(gimli_type_t t,
+    struct gimli_type_funcinfo *info)
+{
+  if (t->kind != GIMLI_K_FUNCTION) return 0;
+
+  info->rettype = t->target;
+  info->nargs = t->num_members;
+  info->flags = t->enc.format;
+
+  return 1;
+}
+
+int gimli_type_function_add_parameter(gimli_type_t t,
+    const char *name, gimli_type_t arg)
+{
+  int n;
+
+  if (t->kind != GIMLI_K_FUNCTION) {
+    return -1;
+  }
+
+  t->members = realloc(t->members, (t->num_members + 1) * sizeof(*t->members));
+  n = t->num_members++;
+  t->members[n].name = name ? strdup(name) : NULL;
+  t->members[n].u.info.type = arg;
+
+  return n;
+}
+
 gimli_type_t gimli_type_new_enum(gimli_type_collection_t col,
     const char *name, const struct gimli_type_encoding *enc)
 {

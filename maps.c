@@ -107,7 +107,7 @@ const char *gimli_pc_sym_name(gimli_proc_t proc, gimli_addr_t addr, char *buf, i
             m->objfile->objname, s->name, (uintmax_t)(addr - s->addr));
       }
     } else {
-      snprintf(buf, buflen-1, "%s`%p", m->objfile->objname, addr);
+      snprintf(buf, buflen-1, "%s`" PTRFMT, m->objfile->objname, addr);
     }
     return buf;
   }
@@ -186,7 +186,7 @@ gimli_mapped_object_t gimli_add_object(
     /* need to determine the base address offset for this object */
     f->base_addr = (intptr_t)base - f->elf->vaddr;
     if (debug) {
-      printf("ELF: %s %d base=%p vaddr=" PTRFMT " base_addr=" PTRFMT "\n",
+      printf("ELF: %s %d base=" PTRFMT " vaddr=" PTRFMT " base_addr=" PTRFMT "\n",
         f->objname, f->elf->e_type, base, f->elf->vaddr, f->base_addr);
     }
 

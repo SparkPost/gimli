@@ -576,6 +576,15 @@ struct gimli_type_funcinfo {
 int gimli_type_funcinfo(gimli_type_t t,
     struct gimli_type_funcinfo *info);
 
+gimli_type_t gimli_type_new_function(gimli_type_collection_t col,
+    const char *name,
+    uint32_t flags,
+    gimli_type_t rettype);
+
+int gimli_type_function_add_parameter(gimli_type_t func,
+    const char *name, gimli_type_t arg);
+
+
 /** callback function for recursively visiting a
  * type */
 typedef gimli_iter_status_t gimli_type_visit_f(

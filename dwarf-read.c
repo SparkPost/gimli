@@ -2176,6 +2176,7 @@ static void populate_struct_or_union(
     memt = load_type(file, type);
     if (!memt) {
       printf("failed to load type info for member %s\n", mname->ptr);
+      continue;
     }
     offset = 0;
     if (gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_bit_size, &size)) {
@@ -2239,6 +2240,61 @@ static gimli_type_t populate_array(gimli_mapped_object_t file,
 
   type = gimli_dwarf_die_get_attr(die, DW_AT_type);
   t = array_dim(file, die->kids, load_type(file, type));
+  return t;
+}
+
+static gimli_type_t load_void(gimli_mapped_object_t file)
+{
+  struct gimli_type_encoding enc;
+
+  memset(&enc, 0, sizeof(enc));
+  enc.bits = 8;
+  return gimli_type_new_integer(file->types, "void", &enc);
+}
+
+static gimli_type_t populate_func(gimli_mapped_object_t file,
+    const char *name,
+    struct gimli_dwarf_die *die)
+{
+  struct gimli_dwarf_die *kid;
+  struct gimli_dwarf_attr *type, *pname;
+  gimli_type_t rettype = NULL, t;
+  uint32_t flags = 0;
+
+  type = gimli_dwarf_die_get_attr(die, DW_AT_type);
+  if (type) {
+    rettype = load_type(file, type);
+  } else {
+    rettype = load_void(file);
+  }
+
+  /* are we variadic? */
+  for (kid = die->kids; kid; kid = kid->next) {
+    if (kid->tag == DW_TAG_unspecified_parameters) {
+      flags = GIMLI_FUNC_VARARG;
+      break;
+    }
+  }
+
+  t = gimli_type_new_function(file->types, name, flags, rettype);
+
+  for (kid = die->kids; kid; kid = kid->next) {
+    if (kid->tag == DW_TAG_unspecified_parameters) {
+      continue;
+    }
+    if (kid->tag == DW_TAG_formal_parameter) {
+      gimli_type_t ptype;
+      pname = gimli_dwarf_die_get_attr(kid, DW_AT_name);
+
+      type = gimli_dwarf_die_get_attr(kid, DW_AT_type);
+      if (type) {
+        ptype = load_type(file, type);
+        gimli_type_function_add_parameter(t, pname ? pname->ptr : NULL, ptype);
+      }
+      continue;
+    }
+  }
+
   return t;
 }
 
@@ -2340,8 +2396,7 @@ static gimli_type_t load_type(
       if (type) {
         target = load_type(file, type);
       } else {
-        memset(&enc, 0, sizeof(enc));
-        target = gimli_type_new_integer(file->types, "void", &enc);
+        target = load_void(file);
       }
       if (target) {
         t = gimli_type_new_pointer(file->types, target);
@@ -2431,8 +2486,12 @@ static gimli_type_t load_type(
       }
       break;
 
+    case DW_TAG_subroutine_type:
+      t = populate_func(file, type_name, die);
+      break;
+
     default:
-      printf("unhandled tag 0x%" PRIx64 " in load_type\n", die->tag);
+      printf("unhandled tag 0x%" PRIx64 " in load_type (%s)\n", die->tag, type_name);
       return NULL;
   }
 

@@ -36,7 +36,7 @@ static const cpu_type_t whatami =
 #elif defined(__ppc__)
       CPU_TYPE_POWERPC
 #else
-# error don't know my own arch
+# error dont know my own arch
 #endif
       ;
 

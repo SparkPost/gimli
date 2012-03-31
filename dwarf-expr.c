@@ -70,7 +70,7 @@ static int deref(gimli_proc_t proc, uint64_t ptr, uint64_t *resp, uint8_t opsize
       break;
   }
   if (res != opsize) {
-    fprintf(stderr, "DWARF: expr: unable to deref %d bytes from %p\n",
+    fprintf(stderr, "DWARF: expr: unable to deref %d bytes from " PTRFMT "\n",
       opsize, ptr);
     return 0;
   }

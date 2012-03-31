@@ -72,10 +72,10 @@ static void print_float(gimli_proc_t proc,
       printf("%f", u.d);
       break;
     case GIMLI_FP_LONG_DOUBLE:
-      printf("%lf", u.ld);
+      printf("%Lf", u.ld);
       break;
     default:
-      printf("??? <unsupported FP format %" PRIu64 " %" PRIu64 " bits>",
+      printf("??? <unsupported FP format %" PRIu32 " %" PRIu64 " bits>",
           enc.format, bits);
   }
 }
@@ -309,7 +309,7 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
 
   if (gimli_read_mem(data->proc, addr, &tptr,
         sizeof(tptr)) != sizeof(tptr)) {
-    printf("<unable to read %d bytes at " PTRFMT ">",
+    printf("<unable to read %lu bytes at " PTRFMT ">",
         sizeof(ptr), data->addr);
     return;
   }
@@ -339,6 +339,12 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
     } else {
       printf(" <unable to read string>");
     }
+    return;
+  }
+
+  /* don't deref function pointers */
+  if (gimli_type_kind(target) == GIMLI_K_FUNCTION) {
+    printf(PTRFMT, ptr);
     return;
   }
 

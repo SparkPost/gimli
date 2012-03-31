@@ -31,7 +31,7 @@ struct gimli_symbol *gimli_add_symbol(gimli_mapped_object_t f,
   s->size = size;
 
   if (debug && 0) {
-    printf("add symbol: %s`%s = %p (%d) %s\n",
+    printf("add symbol: %s`%s = " PTRFMT " (%d) %s\n",
       f->objname, s->name, s->addr, s->size,
       s->rawname != s->name ? s->rawname : "");
   }
@@ -281,7 +281,7 @@ struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const 
   if (obj == NULL) {
     gimli_hash_iter(proc->files, search_for_sym, &find);
     if (debug) {
-      printf("sym_lookup: %s => %p\n", name, sym ? sym->addr : 0);
+      printf("sym_lookup: %s => " PTRFMT "\n", name, sym ? sym->addr : 0);
     }
     return find.sym;
   }
@@ -309,7 +309,7 @@ struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const 
 
   sym = sym_lookup(f, name);
   if (debug) {
-    printf("sym_lookup: %s`%s => %p\n", obj, name, sym ? sym->addr : 0);
+    printf("sym_lookup: %s`%s => " PTRFMT "\n", obj, name, sym ? sym->addr : 0);
   }
 
   return sym;

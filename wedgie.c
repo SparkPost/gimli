@@ -27,6 +27,7 @@ struct wedgie_data {
   unsigned bit2:1;
   signed moo:5;
   double aftermoo;
+  int (*func)(int, ...);
 };
 
 char global_string[] = "global!";
@@ -42,6 +43,12 @@ union wedgie_union {
 };
 
 int global_int = 360;
+
+static int myfunc(int arg)
+{
+  printf("myfunc(%d)\n", arg);
+  return 42;
+}
 
 static void handler(int signo, siginfo_t *si, void *v)
 {
@@ -95,6 +102,7 @@ static void func_two(void)
   struct wedgie_data d = { 42, "forty-two" };
   char multidim[4][8][16] = {0};
   short otherdim[3][6];
+  int (*func)(int) = myfunc;
 
   printf("initialize some data\n"); fflush(stdout);
   u.one = 1;
@@ -103,6 +111,8 @@ static void func_two(void)
   d.bit2 = 0;
   d.moo = 13;
   d.aftermoo = 4.5;
+
+  func(3);
 
   printf("call func_one\n"); fflush(stdout);
   func_one(&d, 32, "hello", wee_two, d
