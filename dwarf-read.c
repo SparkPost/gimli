@@ -916,23 +916,6 @@ static uint64_t get_value(uint64_t form, uint64_t addr_size, int is_64,
   return form;
 }
 
-#if 0
-static void destroy_die(void *ptr)
-{
-  struct gimli_dwarf_die *die = ptr;
-  struct gimli_dwarf_attr *attr;
-
-  while (die->attrs) {
-    attr = die->attrs;
-    die->attrs = attr->next;
-
-  //  free(attr);
-  }
-
-//  free(die);
-}
-#endif
-
 static struct gimli_dwarf_die *process_die(
   gimli_mapped_object_t file,
   struct gimli_dwarf_cu *cu,
@@ -1184,10 +1167,6 @@ static struct gimli_dwarf_cu *load_cu(gimli_mapped_object_t f, uint64_t offset)
   }
 
 #if 0
-  printf("DIE hash is %d in size, data size was %" PRIu64 " approx %" PRIu64 " per entry\n",
-      gimli_hash_size(f->dies), file->debug_info.end - file->debug_info.start,
-      (file->debug_info.end - file->debug_info.start) / gimli_hash_size(f->dies));
-  gimli_hash_diagnose(f->dies);
   printf("abbr.map is %d in size, data size %" PRIu64 " approx %" PRIu64 " per entry\n",
       gimli_hash_size(f->abbr.map), f->abbr.end - f->abbr.start,
       (f->abbr.end - f->abbr.start) / gimli_hash_size(f->abbr.map));

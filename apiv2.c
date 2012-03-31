@@ -7,7 +7,7 @@
 
 /* Implements GIMLI_ANA_API_VERSION <= 2 */
 
-static const struct gimli_proc_stat *gimli_get_proc_stat(void)
+static const struct gimli_proc_stat *v2_get_proc_stat(void)
 {
   return &the_proc->proc_stat;
 }
@@ -23,7 +23,7 @@ static int v2_get_source_info(void *addr, char *buf,
   return ret;
 }
 
-static char *gimli_get_string_symbol(const char *obj, const char *name)
+static char *v2_get_string_symbol(const char *obj, const char *name)
 {
   struct gimli_symbol *sym;
 
@@ -39,7 +39,7 @@ static char *gimli_get_string_symbol(const char *obj, const char *name)
   return NULL;
 }
 
-static int gimli_copy_from_symbol(const char *obj, const char *name,
+static int v2_copy_from_symbol(const char *obj, const char *name,
   int deref, void *buf, uint32_t size)
 {
   struct gimli_symbol *sym;
@@ -110,9 +110,9 @@ struct gimli_ana_api ana_api = {
   v1_read_string,
   v2_get_source_info,
   v2_get_parameter,
-  gimli_get_string_symbol,
-  gimli_copy_from_symbol,
-  gimli_get_proc_stat,
+  v2_get_string_symbol,
+  v2_copy_from_symbol,
+  v2_get_proc_stat,
 };
 
 /* vim:ts=2:sw=2:et:

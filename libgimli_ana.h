@@ -152,8 +152,8 @@ struct gimli_ana_module {
    * to suppress the parameter or not; return either GIMLI_ANA_SUPPRESS or
    * GIMLI_ANA_CONTINUE.
    * FRAMENO gives the ordinal number of the frame (0 being top of stack),
-   * PCADDR is the instruction address of that frame, and CONTEXT is the
-   * gimli internal context that can be used to interrogate that frame.
+   * PCADDR is the instruction address of that frame, and CONTEXT is a
+   * gimli_stack_frame_t that can be used to interrogate that frame.
    * DATATYPE is the textual, C-style, rendition of the data type name.
    * VARNAME is the identifier for the parameter.
    * VARADDR is the address of the parameter in memory. */
