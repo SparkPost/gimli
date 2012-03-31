@@ -337,6 +337,19 @@ void gimli_type_collection_addref(gimli_type_collection_t col)
 
 static void delete_type(gimli_type_t t)
 {
+  int i;
+
+  for (i = 0; i < t->num_members; i++) {
+    switch (t->kind) {
+      case GIMLI_K_STRUCT:
+      case GIMLI_K_UNION:
+      case GIMLI_K_ENUM:
+      case GIMLI_K_FUNCTION:
+        free(t->members[i].name);
+    }
+  }
+
+  free(t->members);
   free(t->name);
   free(t->declname);
   free(t);
@@ -412,6 +425,8 @@ void gimli_type_collection_delete(gimli_type_collection_t col)
 
     delete_type(t);
   }
+
+  free(col);
 }
 
 gimli_iter_status_t gimli_type_collection_visit(gimli_type_collection_t col,

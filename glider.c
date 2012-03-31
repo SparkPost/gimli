@@ -44,6 +44,7 @@ static gimli_iter_status_t load_modules_for_file(const char *k, int klen,
     printf("NOTE: module %s declared that its tracing should be performed by %s, but that module was not found (%s)\n",
         file->objname, buf2, strerror(errno));
   }
+  free(name);
 
   return GIMLI_ITER_CONT;
 }
@@ -244,6 +245,9 @@ void trace_process(int pid)
   printf("\n");
 
   gimli_hash_iter(the_proc->files, run_trace_module, NULL);
+
+  free(args.frames);
+  free(args.pcaddrs);
 }
 
 int main(int argc, char *argv[])

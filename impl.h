@@ -221,6 +221,7 @@ struct gimli_object_mapping {
 
 struct gimli_mapped_object {
   char *objname;
+  int refcnt;
 
   /* primary object for the mapped module */
   gimli_object_file_t elf;
@@ -425,6 +426,10 @@ void gimli_user_regs_to_thread(prgregset_t *ur,
 struct gimli_thread_state *gimli_proc_thread_by_lwpid(gimli_proc_t proc, int lwpid, int create);
 int gimli_stack_trace(gimli_proc_t proc, struct gimli_thread_state *thr, struct gimli_unwind_cursor *frames, int nframes);
 int gimli_dwarf_load_frame_var_info(gimli_stack_frame_t frame);
+
+void gimli_destroy_mapped_object_hash(void *item);
+void gimli_mapped_object_addref(gimli_mapped_object_t file);
+void gimli_mapped_object_delete(gimli_mapped_object_t file);
 
 #ifdef __cplusplus
 }

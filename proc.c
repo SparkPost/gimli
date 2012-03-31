@@ -12,9 +12,24 @@
  */
 void gimli_proc_delete(gimli_proc_t proc)
 {
+  struct gimli_thread_state *thr;
+  int i;
+
   if (--proc->refcnt) return;
 
   gimli_detach(proc);
+  while (STAILQ_FIRST(&proc->threads)) {
+    thr = STAILQ_FIRST(&proc->threads);
+    STAILQ_REMOVE_HEAD(&proc->threads, threadlist);
+
+    free(thr);
+  }
+  gimli_hash_destroy(proc->files);
+
+  for (i = 0; i < proc->nmaps; i++) {
+    free(proc->mappings[i]);
+  }
+  free(proc->mappings);
 
   free(proc);
 }
@@ -85,7 +100,7 @@ gimli_err_t gimli_proc_attach(int pid, gimli_proc_t *proc)
   p->proc_mem = -1;
   p->pid = pid;
   STAILQ_INIT(&p->threads);
-  p->files = gimli_hash_new(NULL);
+  p->files = gimli_hash_new(gimli_destroy_mapped_object_hash);
 
   err = gimli_attach(p);
 

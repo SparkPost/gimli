@@ -159,6 +159,64 @@ gimli_mapped_object_t gimli_find_object(
   return NULL;
 }
 
+void gimli_mapped_object_addref(gimli_mapped_object_t file)
+{
+  file->refcnt++;
+}
+
+void gimli_mapped_object_delete(gimli_mapped_object_t file)
+{
+  if (--file->refcnt) return;
+
+  if (file->symhash) {
+    gimli_hash_destroy(file->symhash);
+  }
+  if (file->symtab) {
+    free(file->symtab);
+  }
+  if (file->sections) {
+    gimli_hash_destroy(file->sections);
+  }
+  if (file->elf) {
+    gimli_object_file_destroy(file->elf);
+  }
+  if (file->aux_elf) {
+    gimli_object_file_destroy(file->aux_elf);
+  }
+  if (file->dies) {
+    gimli_hash_destroy(file->dies);
+  }
+  if (file->lines) {
+    free(file->lines);
+  }
+  if (file->types) {
+    gimli_type_collection_delete(file->types);
+  }
+  if (file->die_to_type) {
+    gimli_hash_destroy(file->die_to_type);
+  }
+  free(file->arange);
+  gimli_dw_fde_destroy(file);
+
+  free(file->objname);
+  free(file);
+}
+
+void gimli_destroy_mapped_object_hash(void *item)
+{
+  gimli_mapped_object_t file = item;
+
+  gimli_mapped_object_delete(file);
+}
+
+static void destroy_section(void *ptr)
+{
+  struct gimli_section_data *data = ptr;
+
+  free(data->name);
+  free(data);
+}
+
 gimli_mapped_object_t gimli_add_object(
   gimli_proc_t proc,
   const char *objname, gimli_addr_t base)
@@ -170,8 +228,9 @@ gimli_mapped_object_t gimli_add_object(
   if (f) return f;
 
   f = calloc(1, sizeof(*f));
+  f->refcnt = 1;
   f->objname = strdup(objname);
-  f->sections = gimli_hash_new(NULL);
+  f->sections = gimli_hash_new(destroy_section);
 
   gimli_hash_insert(proc->files, f->objname, f);
 

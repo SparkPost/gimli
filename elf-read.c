@@ -197,6 +197,24 @@ const char *gimli_elf_get_string(struct gimli_elf_ehdr *elf,
   return NULL;
 }
 
+void gimli_object_file_destroy(struct gimli_elf_ehdr *elf)
+{
+  struct gimli_elf_shdr *s;
+
+  while (STAILQ_FIRST(&elf->sections)) {
+    s = STAILQ_FIRST(&elf->sections);
+    STAILQ_REMOVE_HEAD(&elf->sections, shdrs);
+
+    free(s->data);
+    free(s);
+  }
+
+  if (elf->fd >= 0) {
+    close(elf->fd);
+  }
+  free(elf->objname);
+  free(elf);
+}
 
 struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
 {
@@ -207,6 +225,7 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
 
   elf->fd = open(filename, O_RDONLY);
   if (elf->fd == -1) {
+    free(elf);
     return 0;
   }
 
@@ -215,6 +234,9 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
   read(elf->fd, ident, sizeof(ident));
 
   if (memcmp(ident, GIMLI_EI_ELF_MAGIC, 4)) {
+closeout:
+    close(elf->fd);
+    free(elf);
     return 0;
   }
 
@@ -223,12 +245,12 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
   if (ident[GIMLI_EI_VERSION] != GIMLI_EV_CURRENT) {
     fprintf(stderr, "ELF: %s: unsupported ELF version %d\n", filename,
       ident[GIMLI_EI_VERSION]);
-    return 0;
+    goto closeout;
   }
   if (ident[GIMLI_EI_OSABI] && ident[GIMLI_EI_OSABI] != native_elf_abi) {
     fprintf(stderr, "ELF: %s: unsupported OS ABI %d (expected %d)\n",
       filename, ident[GIMLI_EI_OSABI], native_elf_abi);
-    return 0;
+    goto closeout;
   }
 
   /* we only support reading natively encoded ELF objects */
@@ -236,13 +258,13 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
   if (ident[GIMLI_EI_DATA] != GIMLI_ELFDATA2MSB) {
     fprintf(stderr, "ELF: %s: expected MSB format on this system\n",
       filename);
-    return 0;
+    goto closeout;
   }
 #else
   if (ident[GIMLI_EI_DATA] != GIMLI_ELFDATA2LSB) {
     fprintf(stderr, "ELF: %s: expected LSB format on this system\n",
       filename);
-    return 0;
+    goto closeout;
   }
 #endif
 
@@ -254,7 +276,7 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
     if (read(elf->fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
       fprintf(stderr, "ELF: %s: error reading EHDR: %s\n",
         filename, strerror(errno));
-      return 0;
+      goto closeout;
     }
     elf->e_type = hdr.e_type;
     elf->e_machine = hdr.e_machine;
@@ -275,7 +297,7 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
     if (read(elf->fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
       fprintf(stderr, "ELF: %s: error reading EHDR: %s\n",
           filename, strerror(errno));
-      return 0;
+      goto closeout;
     }
     elf->e_type = hdr.e_type;
     elf->e_machine = hdr.e_machine;
@@ -299,13 +321,13 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
     ) {
     fprintf(stderr, "ELF: %s: expected e_machine=%d, found %d\n",
       filename, native_machine, elf->e_machine);
-    return 0;
+    goto closeout;
   }
 
   if (elf->e_version != GIMLI_EV_CURRENT) {
     fprintf(stderr, "ELF: %s: unsupported ELF version %" PRId64 "\n", filename,
       elf->e_version);
-    return 0;
+    goto closeout;
   }
 
   /* run through the section headers, pulling them in */

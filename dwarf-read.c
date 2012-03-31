@@ -531,6 +531,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
   }
 
   qsort(f->lines, f->linecount, sizeof(struct gimli_line_info), sort_by_addr);
+  free(opcode_lengths);
 
   /* make a pass to fill in the end member to make it easier to find
    * an approx match */
@@ -852,6 +853,20 @@ static uint64_t get_value(uint64_t form, uint64_t addr_size, int is_64,
   return form;
 }
 
+static void destroy_die(void *ptr)
+{
+  struct gimli_dwarf_die *die = ptr;
+  struct gimli_dwarf_attr *attr;
+
+  while (die->attrs) {
+    attr = die->attrs;
+    die->attrs = attr->next;
+
+    free(attr);
+  }
+
+  free(die);
+}
 
 static struct gimli_dwarf_die *process_die(
   uint64_t reloc, const uint8_t *datastart,
@@ -898,7 +913,9 @@ static struct gimli_dwarf_die *process_die(
   die->offset = offset;
   die->tag = tag;
   snprintf(diename, sizeof(diename)-1, "%" PRIx64, offset);
-  gimli_hash_insert(diehash, diename, die);
+  if (!gimli_hash_insert(diehash, diename, die)) {
+    printf("FAILED to insert %s into diehash\n", diename);
+  }
 //  printf("die @ %s tag=%llx\n", diename, die->tag);
 
   while (data < end && abbr < abbrend) {
@@ -989,7 +1006,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
   char diename[64];
 
   if (!f->dies) {
-    f->dies = gimli_hash_new(NULL);
+    f->dies = gimli_hash_new(destroy_die);
 
     if (!get_sect_data(f, ".debug_info", &datastart, &end, &elf)) {
       printf("no debug info for %s\n", f->objname);

@@ -507,6 +507,14 @@ static gimli_iter_status_t show_var(
   return GIMLI_ITER_CONT;
 }
 
+static void tidy_deref(void)
+{
+  if (derefd) {
+    gimli_hash_destroy(derefd);
+    derefd = NULL;
+  }
+}
+
 void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
 {
   const char *name;
@@ -541,6 +549,7 @@ void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
 
     if (!derefd) {
       derefd = gimli_hash_new(NULL);
+      atexit(tidy_deref);
     }
 
     gimli_stack_frame_visit_vars(frame, GIMLI_WANT_ALL, show_var, &data);

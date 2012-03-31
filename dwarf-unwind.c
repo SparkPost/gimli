@@ -13,6 +13,7 @@ struct dw_rule_stack {
 
 struct dw_cie {
   char key[32];
+  int refcnt;
   uint64_t ptr;
   const uint8_t *aug, *init_insns, *insn_end;
   uint64_t code_align, ret_addr;
@@ -583,6 +584,24 @@ static int sort_compare_fde(const void *A, const void *B)
   return a->initial_loc - b->initial_loc;
 }
 
+static void cie_delref(void *ptr)
+{
+  struct dw_cie *cie = ptr;
+  if (--cie->refcnt) return;
+  free(cie);
+}
+
+void gimli_dw_fde_destroy(gimli_mapped_object_t file)
+{
+  int i;
+  struct dw_fde *fde;
+
+  for (i = 0; i < file->num_fdes; i++) {
+    cie_delref(file->fdes[i].cie);
+  }
+  free(file->fdes);
+}
+
 /* read the FDE data from an object file */
 static int load_fde(struct gimli_object_mapping *m)
 {
@@ -606,7 +625,7 @@ static int load_fde(struct gimli_object_mapping *m)
     return 0;
   }
 
-  cie_tbl = gimli_hash_new(NULL);
+  cie_tbl = gimli_hash_new(cie_delref);
 
   for (section_number = 0; sections_to_try[section_number].name;
       section_number++) {
@@ -694,6 +713,7 @@ static int load_fde(struct gimli_object_mapping *m)
 
         /* this is a cie */
         cie = calloc(1, sizeof(*cie));
+        cie->refcnt = 1;
         cie->ptr = (uint64_t)(recstart - eh_start);
 
         if (sizeof(void*) == 8) {
@@ -814,6 +834,7 @@ static int load_fde(struct gimli_object_mapping *m)
           fprintf(stderr, "could not resolve CIE %s!\n", cie_key);
           return 0;
         }
+        fde->cie->refcnt++;
 
         if (!dw_read_encptr(m->proc, fde->cie->code_enc, &eh_frame, end,
               s->addr + eh_frame - eh_start, &fde->initial_loc)) {

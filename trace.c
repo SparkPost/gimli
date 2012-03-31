@@ -61,8 +61,18 @@ void gimli_stack_trace_delete(gimli_stack_trace_t trace)
   if (--trace->refcnt) return;
 
   while (STAILQ_FIRST(&trace->frames)) {
+    gimli_var_t var;
+
     frame = STAILQ_FIRST(&trace->frames);
     STAILQ_REMOVE_HEAD(&trace->frames, frames);
+
+    while (STAILQ_FIRST(&frame->vars)) {
+      var = STAILQ_FIRST(&frame->vars);
+      STAILQ_REMOVE_HEAD(&frame->vars, vars);
+
+      // FIXME: release type?
+      free(var);
+    }
     free(frame);
   }
 

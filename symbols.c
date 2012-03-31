@@ -20,7 +20,7 @@ struct gimli_symbol *gimli_add_symbol(gimli_mapped_object_t f,
   s = &f->symtab[f->symcount++];
   memset(s, 0, sizeof(*s));
 
-  s->rawname = strdup(name);
+  s->rawname = name;//strdup(name);
   s->name = s->rawname;
 
   if (gimli_demangle(s->rawname, buf, sizeof(buf))) {
@@ -304,6 +304,7 @@ struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const 
     }
     /* save the mapping */
     gimli_hash_insert(proc->files, obj, find.file);
+    gimli_mapped_object_addref(find.file);
     f = find.file;
   }
 
