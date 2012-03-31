@@ -48,6 +48,7 @@ struct gimli_type {
   int kind;
   char *name;
   char *declname;
+  char declbuf[24];
   struct gimli_type_encoding enc;
   gimli_type_t target;
 
@@ -346,13 +347,16 @@ static void delete_type(gimli_type_t t)
       case GIMLI_K_UNION:
       case GIMLI_K_ENUM:
       case GIMLI_K_FUNCTION:
-        free(t->members[i].name);
+        ;
+        //free(t->members[i].name);
     }
   }
 
   free(t->members);
-  free(t->name);
-  free(t->declname);
+//  free(t->name);
+  if (t->declname != t->declbuf) {
+    free(t->declname);
+  }
   free(t);
 }
 
@@ -478,16 +482,15 @@ const char *gimli_type_name(gimli_type_t t)
 
 const char *gimli_type_declname(gimli_type_t t)
 {
-  char buf[256];
   ssize_t size;
 
   if (t->declname) return t->declname;
-  size = decl_lname(t, buf, sizeof(buf));
-  if (size > sizeof(buf) - 1) {
+  size = decl_lname(t, t->declbuf, sizeof(t->declbuf));
+  if (size > sizeof(t->declbuf) - 1) {
     t->declname = malloc(size + 1);
     decl_lname(t, t->declname, size + 1);
   } else {
-    t->declname = strdup(buf);
+    t->declname = t->declbuf;
   }
 
   return t->declname;
@@ -553,7 +556,7 @@ static gimli_type_t new_type(gimli_type_collection_t col,
   }
 
   if (name) {
-    t->name = strdup(name);
+    t->name = name;//strdup(name);
     if (!t->name) {
       return NULL;
     }
@@ -566,7 +569,7 @@ static gimli_type_t new_type(gimli_type_collection_t col,
         break;
     }
   } else {
-    t->name = strdup("<anon>");
+    t->name = "<anon>";//strdup("<anon>");
   }
 
 #if 0
@@ -755,7 +758,7 @@ int gimli_type_function_add_parameter(gimli_type_t t,
 
   grow_members(t);
   n = t->num_members++;
-  t->members[n].name = name ? strdup(name) : NULL;
+  t->members[n].name = name;// ? strdup(name) : NULL;
   t->members[n].u.info.type = arg;
 
   return n;
@@ -777,7 +780,7 @@ int gimli_type_enum_add(gimli_type_t t, const char *name, int value)
 
   grow_members(t);
   n = t->num_members++;
-  t->members[n].name = strdup(name);
+  t->members[n].name = name;//strdup(name);
   t->members[n].u.value = value;
 
   return n;
@@ -850,7 +853,7 @@ int gimli_type_add_member(gimli_type_t t,
     t->members[n].u.info.size = gimli_type_size(membertype);
   }
 
-  t->members[n].name = strdup(name);
+  t->members[n].name = name;//strdup(name);
   t->members[n].u.info.type = membertype;
 
   /* re-compute overall size */
