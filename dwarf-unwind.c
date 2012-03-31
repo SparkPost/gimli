@@ -12,7 +12,6 @@ struct dw_rule_stack {
 };
 
 struct dw_cie {
-  char key[32];
   int refcnt;
   uint64_t ptr;
   const uint8_t *aug, *init_insns, *insn_end;
@@ -625,7 +624,7 @@ static int load_fde(struct gimli_object_mapping *m)
     return 0;
   }
 
-  cie_tbl = gimli_hash_new(cie_delref);
+  cie_tbl = gimli_hash_new_size(cie_delref, GIMLI_HASH_U64_KEYS, 0);
 
   for (section_number = 0; sections_to_try[section_number].name;
       section_number++) {
@@ -811,13 +810,11 @@ static int load_fde(struct gimli_object_mapping *m)
 
         }
 
-        snprintf(cie->key, sizeof(cie->key), "%jd", cie->ptr);
-        gimli_hash_insert(cie_tbl, cie->key, cie);
+        gimli_hash_insert_u64(cie_tbl, cie->ptr, cie);
 
       } else {
         /* this is an fde */
         struct dw_fde *fde;
-        char cie_key[32];
 
         /* add to the fdes table */
         m->objfile->fdes = realloc(m->objfile->fdes, (m->objfile->num_fdes + 1) * sizeof(*fde));
@@ -829,9 +826,8 @@ static int load_fde(struct gimli_object_mapping *m)
           cie_id = (uint64_t)(eh_frame - eh_start) - cie_id;
           cie_id -= is_64 ? 8 : 4;
         }
-        snprintf(cie_key, sizeof(cie_key), "%jd", cie_id);
-        if (!gimli_hash_find(cie_tbl, cie_key, (void**)&fde->cie)) {
-          fprintf(stderr, "could not resolve CIE %s!\n", cie_key);
+        if (!gimli_hash_find_u64(cie_tbl, cie_id, (void**)&fde->cie)) {
+          fprintf(stderr, "could not resolve CIE %" PRIu64 "!\n", cie_id);
           return 0;
         }
         fde->cie->refcnt++;

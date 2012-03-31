@@ -5,11 +5,19 @@
  */
 #include "impl.h"
 
+typedef struct {
+	union {
+		char *str;
+		void *ptr;
+		uint64_t u64;
+	} u;
+	uint32_t len;
+} hash_key_t;
+
 typedef struct gimli_hash_bucket {
-	char *k;
+	hash_key_t k;
 	void *item;
 	struct gimli_hash_bucket *next;
-	int klen;
 } gimli_hash_bucket;
 
 struct libgimli_hash_table {
@@ -17,13 +25,17 @@ struct libgimli_hash_table {
 	uint32_t table_size;
 	uint32_t initval;
 	uint32_t size;
+	uint32_t flags;
 	gimli_hash_free_func_t dtor;
 	unsigned vers;
 	int no_rebucket;
+	void (*compile_key)(hash_key_t *key);
+	int (*copy_key)(gimli_hash_bucket *b, hash_key_t key);
+	uint32_t (*hash)(hash_key_t key, uint32_t initval);
+	int (*same_key)(gimli_hash_bucket *b, hash_key_t key);
 };
 
 /* This is from http://burtleburtle.net/bob/hash/doobs.html */
-#define HASH_INITIAL_SIZE (1<<7)
 
 #define mix(a,b,c) \
 { \
@@ -36,14 +48,78 @@ struct libgimli_hash_table {
   a -= b; a -= c; a ^= (c>>3);  \
   b -= c; b -= a; b ^= (a<<10); \
   c -= a; c -= b; c ^= (b>>15); \
-}                              
+}
 
-static uint32_t hashfunc(const char *k, uint32_t length, uint32_t initval)
+static void u64_key_compile(hash_key_t *key)
+{
+	key->len = sizeof(uint64_t);
+}
+
+static int u64_key_copy(gimli_hash_bucket *b, hash_key_t key)
+{
+	b->k = key;
+	return 1;
+}
+
+static uint32_t u64_key_hash(hash_key_t key, uint32_t initval)
+{
+	return (uint32_t)key.u.u64;
+}
+
+static int u64_key_same(gimli_hash_bucket *b, hash_key_t key)
+{
+	return b->k.u.u64 == key.u.u64;
+}
+
+static void ptr_key_compile(hash_key_t *key)
+{
+	key->len = sizeof(void*);
+}
+
+static int ptr_key_copy(gimli_hash_bucket *b, hash_key_t key)
+{
+	b->k = key;
+	return 1;
+}
+
+static uint32_t ptr_key_hash(hash_key_t key, uint32_t initval)
+{
+	return (uint32_t)(intptr_t)key.u.ptr;
+}
+
+static int ptr_key_same(gimli_hash_bucket *b, hash_key_t key)
+{
+	return b->k.u.ptr == key.u.ptr;
+}
+
+static int string_key_dup(gimli_hash_bucket *b, hash_key_t key)
+{
+	b->k = key;
+	b->k.u.str = malloc(key.len + 1);
+	if (!b->k.u.str) return 0;
+	memcpy(b->k.u.str, key.u.str, key.len);
+	b->k.u.str[key.len] = '\0';
+	return 1;
+}
+
+
+static void string_key_compile(hash_key_t *key)
+{
+	key->len = strlen(key->u.str);
+}
+
+static int string_key_same(gimli_hash_bucket *b, hash_key_t k)
+{
+	return b->k.len == k.len && !memcmp(b->k.u.str, k.u.str, k.len);
+}
+
+static uint32_t string_key_hash(hash_key_t key, uint32_t initval)
 {
    register uint32_t a,b,c,len;
+	 const char *k = key.u.ptr;
 
-   /* Set up the internal state */ 
-   len = length;
+   /* Set up the internal state */
+   len = key.len;
    a = b = 0x9e3779b9;  /* the golden ratio; an arbitrary value */
    c = initval;         /* the previous hash value */
 
@@ -58,7 +134,7 @@ static uint32_t hashfunc(const char *k, uint32_t length, uint32_t initval)
    }
 
    /*------------------------------------- handle the last 11 bytes */
-   c += length;
+   c += key.len;
    switch(len)              /* all the case statements fall through */
    {
    case 11: c+=((uint32_t)k[10]<<24);
@@ -95,27 +171,62 @@ static uint32_t power_2(uint32_t x)
 	return x;
 }
 
-gimli_hash_t gimli_hash_new_size(gimli_hash_free_func_t dtor, size_t size)
+gimli_hash_t gimli_hash_new_size(gimli_hash_free_func_t dtor, uint32_t flags, size_t size)
 {
 	gimli_hash_t h = calloc(1, sizeof(*h));
 	h->initval = lrand48();
-	h->table_size = power_2(size);
+	h->flags = flags;
+	h->table_size = size ? power_2(size) : GIMLI_HASH_INITIAL_SIZE;
 	h->buckets = calloc(h->table_size, sizeof(gimli_hash_bucket*));
 	h->dtor = dtor;
+
+	if (flags & GIMLI_HASH_PTR_KEYS) {
+		h->compile_key = ptr_key_compile;
+		h->copy_key = ptr_key_copy;
+		h->hash = ptr_key_hash;
+		h->same_key = ptr_key_same;
+	} else if (flags & GIMLI_HASH_U64_KEYS) {
+		h->compile_key = u64_key_compile;
+		h->copy_key = u64_key_copy;
+		h->hash = u64_key_hash;
+		h->same_key = u64_key_same;
+	} else {
+		h->compile_key = string_key_compile;
+		h->copy_key = (flags & GIMLI_HASH_DUP_KEYS) ? string_key_dup : ptr_key_copy;
+		h->hash = string_key_hash;
+		h->same_key = string_key_same;
+	}
+
 	return h;
 }
 
 gimli_hash_t gimli_hash_new(gimli_hash_free_func_t dtor)
 {
-	return gimli_hash_new_size(dtor, HASH_INITIAL_SIZE);
+	return gimli_hash_new_size(dtor, GIMLI_HASH_DUP_KEYS, GIMLI_HASH_INITIAL_SIZE);
 }
 
-static gimli_hash_bucket *new_bucket(const char *k, int klen, void *item)
+static void free_bucket(gimli_hash_t h, gimli_hash_bucket *b)
+{
+	if (h->flags & GIMLI_HASH_DUP_KEYS) {
+		free(b->k.u.str);
+	}
+	if (h->dtor) {
+		h->dtor(b->item);
+	}
+	free(b);
+}
+
+static gimli_hash_bucket *new_bucket(gimli_hash_t h, hash_key_t key, void *item)
 {
 	gimli_hash_bucket *b = calloc(1, sizeof(*b));
-	b->k = malloc(klen);
-	memcpy(b->k, k, klen);
-	b->klen = klen;
+
+	if (!b) return NULL;
+
+	if (!h->copy_key(b, key)) {
+		free(b);
+		return NULL;
+	}
+
 	b->item = item;
 	return b;
 }
@@ -140,7 +251,7 @@ static void rebucket(gimli_hash_t h, int newsize)
 		b = h->buckets[i];
 		while (b) {
 			n = b->next;
-			newoff = hashfunc(b->k, b->klen, h->initval) & (newsize-1);
+			newoff = h->hash(b->k, h->initval) & (newsize-1);
 			b->next = newbuckets[newoff];
 			newbuckets[newoff] = b;
 			b = n;
@@ -151,21 +262,22 @@ static void rebucket(gimli_hash_t h, int newsize)
 	h->buckets = newbuckets;
 }
 
-int gimli_hash_insert(gimli_hash_t h, const char *k, void *item)
+static int do_hash_insert(gimli_hash_t h, hash_key_t key, void *item)
 {
 	int off;
 	gimli_hash_bucket *b;
-	int klen = strlen(k);
 
-	off = hashfunc(k, klen, h->initval) & (h->table_size - 1);
+	h->compile_key(&key);
+
+	off = h->hash(key, h->initval) & (h->table_size - 1);
 	b = h->buckets[off];
 	while (b) {
-		if (b->klen == klen && !memcmp(b->k, k, klen)) {
+		if (h->same_key(b, key)) {
 			return 0;
 		}
 		b = b->next;
 	}
-	b = new_bucket(k, klen, item);
+	b = new_bucket(h, key, item);
 	b->next = h->buckets[off];
 	h->buckets[off] = b;
 	h->size++;
@@ -177,16 +289,17 @@ int gimli_hash_insert(gimli_hash_t h, const char *k, void *item)
 	return 1;
 }
 
-int gimli_hash_find(gimli_hash_t h, const char *k, void **item_p)
+static int do_hash_find(gimli_hash_t h, hash_key_t key, void **item_p)
 {
 	int off;
 	gimli_hash_bucket *b;
-	int klen = strlen(k);
 
-	off = hashfunc(k, klen, h->initval) & (h->table_size - 1);
+	h->compile_key(&key);
+
+	off = h->hash(key, h->initval) & (h->table_size - 1);
 	b = h->buckets[off];
 	while (b) {
-		if (b->klen == klen && !memcmp(b->k, k, klen)) {
+		if (h->same_key(b, key)) {
 			if (item_p) {
 				*item_p = b->item;
 			}
@@ -197,16 +310,17 @@ int gimli_hash_find(gimli_hash_t h, const char *k, void **item_p)
 	return 0;
 }
 
-int gimli_hash_delete(gimli_hash_t h, const char *k)
+static int do_hash_delete(gimli_hash_t h, hash_key_t key)
 {
 	int off;
 	gimli_hash_bucket *b, *prev = NULL;
-	int klen;
 
-	off = hashfunc(k, klen, h->initval) & (h->table_size - 1);
+	h->compile_key(&key);
+
+	off = h->hash(key, h->initval) & (h->table_size - 1);
 	b = h->buckets[off];
 	while (b) {
-		if (b->klen == klen && !memcmp(b->k, k, klen)) {
+		if (h->same_key(b, key)) {
 			break;
 		}
 		prev = b;
@@ -218,18 +332,95 @@ int gimli_hash_delete(gimli_hash_t h, const char *k)
 	} else {
 		prev->next = b->next;
 	}
-	free(b->k);
-	if (h->dtor) {
-		h->dtor(b->item);
-	}
-	free(b);
+	free_bucket(h, b);
 	h->size--;
 	h->vers++;
-	if (h->table_size > HASH_INITIAL_SIZE &&
+	if (h->table_size > GIMLI_HASH_INITIAL_SIZE &&
 			h->size < h->table_size >> 2) {
 		rebucket(h, h->table_size >> 1);
 	}
 	return 1;
+}
+
+int gimli_hash_insert(gimli_hash_t h, const char *k, void *item)
+{
+	hash_key_t key;
+
+	key.u.str = (char*)k;
+
+	return do_hash_insert(h, key, item);
+}
+
+int gimli_hash_find(gimli_hash_t h, const char *k, void **item_p)
+{
+	hash_key_t key;
+
+	key.u.str = (char*)k;
+
+	return do_hash_find(h, key, item_p);
+}
+
+int gimli_hash_delete(gimli_hash_t h, const char *k)
+{
+	hash_key_t key;
+
+	key.u.str = (char*)k;
+
+	return do_hash_delete(h, key);
+}
+
+int gimli_hash_delete_u64(gimli_hash_t h, uint64_t k)
+{
+	hash_key_t key;
+
+	key.u.u64 = k;
+
+	return do_hash_delete(h, key);
+}
+
+int gimli_hash_find_u64(gimli_hash_t h, uint64_t k, void **item_p)
+{
+	hash_key_t key;
+
+	key.u.u64 = k;
+
+	return do_hash_find(h, key, item_p);
+}
+
+int gimli_hash_insert_u64(gimli_hash_t h, uint64_t k, void *item)
+{
+	hash_key_t key;
+
+	key.u.u64 = k;
+
+	return do_hash_insert(h, key, item);
+}
+
+int gimli_hash_delete_ptr(gimli_hash_t h, void * k)
+{
+	hash_key_t key;
+
+	key.u.ptr = k;
+
+	return do_hash_delete(h, key);
+}
+
+int gimli_hash_find_ptr(gimli_hash_t h, void * k, void **item_p)
+{
+	hash_key_t key;
+
+	key.u.ptr = k;
+
+	return do_hash_find(h, key, item_p);
+}
+
+int gimli_hash_insert_ptr(gimli_hash_t h, void * k, void *item)
+{
+	hash_key_t key;
+
+	key.u.ptr = k;
+
+	return do_hash_insert(h, key, item);
 }
 
 void gimli_hash_delete_all(gimli_hash_t h, int downsize)
@@ -243,18 +434,14 @@ void gimli_hash_delete_all(gimli_hash_t h, int downsize)
 		while (b) {
 			tofree = b;
 			b = b->next;
-			free(tofree->k);
-			if (h->dtor) {
-				h->dtor(tofree->item);
-			}
-			free(tofree);
+			free_bucket(h, tofree);
 		}
 		h->buckets[i] = NULL;
 	}
 	h->size = 0;
 	h->no_rebucket--;
 	if (downsize) {
-		rebucket(h, HASH_INITIAL_SIZE);
+		rebucket(h, GIMLI_HASH_INITIAL_SIZE);
 	}
 }
 
@@ -280,7 +467,7 @@ int gimli_hash_iter(gimli_hash_t h, gimli_hash_iter_func_t func, void *arg)
 		b = h->buckets[i];
 		while (b) {
 			++visited;
-			ret = func(b->k, b->klen, b->item, arg);
+			ret = func(b->k.u.str, b->k.len, b->item, arg);
 			if (ret != GIMLI_ITER_CONT) {
 				return visited;
 			}

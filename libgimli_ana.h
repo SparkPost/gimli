@@ -215,7 +215,17 @@ typedef gimli_iter_status_t (*gimli_hash_iter_func_t)(
 );
 typedef void (*gimli_hash_free_func_t)(void *item);
 
-gimli_hash_t gimli_hash_new_size(gimli_hash_free_func_t dtor, size_t size);
+#define GIMLI_HASH_INITIAL_SIZE (1<<7)
+/** duplicate keys when added.  If not set, caller is responsible
+ * for ensuring that the key pointer used remains valid for the
+ * lifetime of the item in hash */
+#define GIMLI_HASH_DUP_KEYS   1
+/** keys are treated as pointer values instead of strings */
+#define GIMLI_HASH_PTR_KEYS   2
+/** keys are treated as uint64_t values instead of strings */
+#define GIMLI_HASH_U64_KEYS   4
+
+gimli_hash_t gimli_hash_new_size(gimli_hash_free_func_t dtor, uint32_t flags, size_t size);
 gimli_hash_t gimli_hash_new(gimli_hash_free_func_t dtor);
 int gimli_hash_size(gimli_hash_t h);
 int gimli_hash_iter(gimli_hash_t h, gimli_hash_iter_func_t func, void *arg);
@@ -224,6 +234,14 @@ void gimli_hash_delete_all(gimli_hash_t h, int downsize);
 int gimli_hash_delete(gimli_hash_t h, const char *k);
 int gimli_hash_find(gimli_hash_t h, const char *k, void **item_p);
 int gimli_hash_insert(gimli_hash_t h, const char *k, void *item);
+
+int gimli_hash_delete_u64(gimli_hash_t h, uint64_t k);
+int gimli_hash_find_u64(gimli_hash_t h, uint64_t k, void **item_p);
+int gimli_hash_insert_u64(gimli_hash_t h, uint64_t k, void *item);
+
+int gimli_hash_delete_ptr(gimli_hash_t h, void * k);
+int gimli_hash_find_ptr(gimli_hash_t h, void * k, void **item_p);
+int gimli_hash_insert_ptr(gimli_hash_t h, void * k, void *item);
 
 
 /** represents various error states */

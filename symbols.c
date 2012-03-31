@@ -75,7 +75,7 @@ static void bake_symtab(gimli_mapped_object_t f)
   if (f->symhash) {
     gimli_hash_delete_all(f->symhash, 0);
   } else {
-    f->symhash = gimli_hash_new_size(NULL, f->symcount);
+    f->symhash = gimli_hash_new_size(NULL, 0, f->symcount);
   }
 
   /* sort for bsearch */

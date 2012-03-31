@@ -887,7 +887,6 @@ static struct gimli_dwarf_die *process_die(
   struct gimli_dwarf_die *die = NULL, *kid = NULL;
   struct gimli_dwarf_attr *attr = NULL;
   uint64_t offset;
-  char diename[64];
 
   offset = data - datastart;
   abbr_code = dw_read_uleb128(&data, end);
@@ -912,11 +911,9 @@ static struct gimli_dwarf_die *process_die(
   die = calloc(1, sizeof(*die));
   die->offset = offset;
   die->tag = tag;
-  snprintf(diename, sizeof(diename)-1, "%" PRIx64, offset);
-  if (!gimli_hash_insert(diehash, diename, die)) {
-    printf("FAILED to insert %s into diehash\n", diename);
+  if (!gimli_hash_insert_u64(diehash, offset, die)) {
+    printf("FAILED to insert %" PRIx64 " into diehash\n", offset);
   }
-//  printf("die @ %s tag=%llx\n", diename, die->tag);
 
   while (data < end && abbr < abbrend) {
     atype = dw_read_uleb128(&abbr, abbrend);
@@ -1003,10 +1000,9 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
   uint64_t reloc = 0;
   struct gimli_dwarf_die *die = NULL;
   struct gimli_dwarf_die *last_die = NULL;
-  char diename[64];
 
   if (!f->dies) {
-    f->dies = gimli_hash_new(destroy_die);
+    f->dies = gimli_hash_new_size(destroy_die, GIMLI_HASH_U64_KEYS, 0);
 
     if (!get_sect_data(f, ".debug_info", &datastart, &end, &elf)) {
       printf("no debug info for %s\n", f->objname);
@@ -1088,8 +1084,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
     }
   }
 
-  snprintf(diename, sizeof(diename)-1, "%" PRIx64, offset);
-  if (gimli_hash_find(f->dies, diename, (void**)&die)) {
+  if (gimli_hash_find_u64(f->dies, offset, (void**)&die)) {
     return die;
   }
 
@@ -1099,7 +1094,6 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
     }
   }
 
-//  printf("Didn't find die at offset %s\n", diename);
   return NULL;
 }
 
@@ -1587,7 +1581,6 @@ static gimli_type_t load_type(
 {
   gimli_type_t t = NULL, target = NULL;
   struct gimli_dwarf_die *die;
-  char diekey[64];
   uint64_t ate, size = 0;
   struct gimli_type_encoding enc;
   const char *type_name = NULL;
@@ -1598,10 +1591,8 @@ static gimli_type_t load_type(
     return NULL;
   }
 
-  snprintf(diekey, sizeof(diekey), "%p", die);
-
   if (file->die_to_type) {
-    if (gimli_hash_find(file->die_to_type, diekey, (void**)&t)) {
+    if (gimli_hash_find_ptr(file->die_to_type, die, (void**)&t)) {
       return t;
     }
   }
@@ -1610,7 +1601,7 @@ static gimli_type_t load_type(
     file->types = gimli_type_collection_new();
   }
   if (!file->die_to_type) {
-    file->die_to_type = gimli_hash_new(NULL);
+    file->die_to_type = gimli_hash_new_size(NULL, GIMLI_HASH_PTR_KEYS, 0);
   }
 
   name = gimli_dwarf_die_get_attr(die, DW_AT_name);
@@ -1724,13 +1715,13 @@ static gimli_type_t load_type(
 
     case DW_TAG_structure_type:
       t = gimli_type_new_struct(file->types, type_name);
-      gimli_hash_insert(file->die_to_type, diekey, t);
+      gimli_hash_insert_ptr(file->die_to_type, die, t);
       populate_struct_or_union(t, file, die);
       return t;
 
     case DW_TAG_union_type:
       t = gimli_type_new_union(file->types, type_name);
-      gimli_hash_insert(file->die_to_type, diekey, t);
+      gimli_hash_insert_ptr(file->die_to_type, die, t);
       populate_struct_or_union(t, file, die);
       return t;
 
@@ -1779,7 +1770,7 @@ static gimli_type_t load_type(
 
 
   if (t) {
-    gimli_hash_insert(file->die_to_type, diekey, t);
+    gimli_hash_insert_ptr(file->die_to_type, die, t);
   }
 
   return t;
