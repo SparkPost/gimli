@@ -361,7 +361,7 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
   data->offset = 0;
   data->size = gimli_type_size(target);
 
-  print_var(data, target, "[deref]");
+  print_var(data, target, NULL);
 
   *data = savdata;
 }
@@ -374,10 +374,12 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
   int dummy;
 
   if (data->show_decl) {
-    printf("%.*s%s %s",
+    printf("%.*s%s",
       indent, indentstr,
-      gimli_type_declname(t),
-      varname);
+      gimli_type_declname(t));
+    if (varname) {
+      printf(" %s", varname);
+    }
   }
 
   t = gimli_type_resolve(t);
