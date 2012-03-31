@@ -393,7 +393,7 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
         return;
       }
       if (!gimli_hash_insert(derefd, addrkey, NULL)) {
-        printf(" " PTRFMT " [insert failed]\n", data->addr);
+        printf(" " PTRFMT " <hash insert failed>\n", data->addr);
         return;
       }
 
