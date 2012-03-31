@@ -817,7 +817,10 @@ static int load_fde(struct gimli_object_mapping *m)
         struct dw_fde *fde;
 
         /* add to the fdes table */
-        m->objfile->fdes = realloc(m->objfile->fdes, (m->objfile->num_fdes + 1) * sizeof(*fde));
+        if (m->objfile->num_fdes + 1 >= m->objfile->alloc_fdes) {
+          m->objfile->alloc_fdes = m->objfile->alloc_fdes ? m->objfile->alloc_fdes * 2 : 1024;
+          m->objfile->fdes = realloc(m->objfile->fdes, m->objfile->alloc_fdes * sizeof(*fde));
+        }
         fde = &m->objfile->fdes[m->objfile->num_fdes++];
         memset(fde, 0, sizeof(*fde));
 
@@ -875,6 +878,7 @@ static int load_fde(struct gimli_object_mapping *m)
    * bsearch can be used correctly.  This should normally be the case,
    * but I don't trust the data to be that way in all situations */
   qsort(m->objfile->fdes, m->objfile->num_fdes, sizeof(struct dw_fde), sort_compare_fde);
+  printf("sorting %d fdes in %s\n", m->objfile->num_fdes, m->objfile->objname);
 
   gimli_hash_destroy(cie_tbl);
   return 1;

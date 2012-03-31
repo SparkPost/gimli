@@ -61,6 +61,7 @@ struct gimli_type {
     } u;
   } *members;
   int num_members;
+  int alloc_members;
 };
 
 /* Some definitions for canonicalizing type names */
@@ -734,6 +735,15 @@ int gimli_type_funcinfo(gimli_type_t t,
   return 1;
 }
 
+static int grow_members(gimli_type_t t)
+{
+  if (t->num_members + 1 >= t->alloc_members) {
+    t->alloc_members = t->alloc_members ? t->alloc_members * 2 : 8;
+    t->members = realloc(t->members, t->alloc_members * sizeof(*t->members));
+  }
+  return 1;
+}
+
 int gimli_type_function_add_parameter(gimli_type_t t,
     const char *name, gimli_type_t arg)
 {
@@ -743,7 +753,7 @@ int gimli_type_function_add_parameter(gimli_type_t t,
     return -1;
   }
 
-  t->members = realloc(t->members, (t->num_members + 1) * sizeof(*t->members));
+  grow_members(t);
   n = t->num_members++;
   t->members[n].name = name ? strdup(name) : NULL;
   t->members[n].u.info.type = arg;
@@ -765,7 +775,7 @@ int gimli_type_enum_add(gimli_type_t t, const char *name, int value)
     return -1;
   }
 
-  t->members = realloc(t->members, (t->num_members + 1) * sizeof(*t->members));
+  grow_members(t);
   n = t->num_members++;
   t->members[n].name = strdup(name);
   t->members[n].u.value = value;
@@ -823,7 +833,7 @@ int gimli_type_add_member(gimli_type_t t,
       return -1;
   }
 
-  t->members = realloc(t->members, (t->num_members + 1) * sizeof(*t->members));
+  grow_members(t);
   n = t->num_members++;
   if (size) {
     t->members[n].u.info.size = size;

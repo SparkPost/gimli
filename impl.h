@@ -237,13 +237,16 @@ struct gimli_mapped_object {
   uint64_t base_addr;
 
   struct gimli_line_info *lines;
-  uint64_t linecount;
+  uint32_t linecount;
+  uint32_t linealloc;
 
   struct dw_fde *fdes;
-  unsigned int num_fdes;
+  uint32_t num_fdes;
+  uint32_t alloc_fdes;
 
   struct dw_die_arange *arange;
-  unsigned int num_arange;
+  uint32_t num_arange;
+  uint32_t alloc_arange;
 
   gimli_hash_t dies; /* offset-string => gimli_dwarf_die */
   struct gimli_dwarf_die *first_die;

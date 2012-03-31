@@ -521,7 +521,10 @@ static int process_line_numbers(gimli_mapped_object_t f)
 
 
       if (regs.address && filenames[regs.file]) {
-        f->lines = realloc(f->lines, (f->linecount + 1) * sizeof(*linfo));
+        if (f->linecount + 1 >= f->linealloc) {
+          f->linealloc = f->linealloc ? f->linealloc * 2 : 1024;
+          f->lines = realloc(f->lines, f->linealloc * sizeof(*linfo));
+        }
         linfo = &f->lines[f->linecount++];
         linfo->filename = (char*)filenames[regs.file];
         linfo->lineno = regs.line;
@@ -1226,7 +1229,10 @@ static int load_arange(struct gimli_object_mapping *m)
 
       addr += reloc;
 
-      m->objfile->arange = realloc(m->objfile->arange, (m->objfile->num_arange + 1) * sizeof(*arange));
+      if (m->objfile->num_arange + 1 >= m->objfile->alloc_arange) {
+        m->objfile->alloc_arange = m->objfile->alloc_arange ? m->objfile->alloc_arange * 2 : 1024;
+        m->objfile->arange = realloc(m->objfile->arange, m->objfile->alloc_arange * sizeof(*arange));
+      }
       arange = &m->objfile->arange[m->objfile->num_arange++];
       arange->addr = (uint64_t)(intptr_t)addr;
       arange->len = l;
