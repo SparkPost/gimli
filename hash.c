@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2009-2012 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
@@ -26,14 +26,16 @@ struct libgimli_hash_table {
 	uint32_t initval;
 	uint32_t size;
 	uint32_t flags;
-	gimli_hash_free_func_t dtor;
 	unsigned vers;
 	int no_rebucket;
 	void (*compile_key)(hash_key_t *key);
 	int (*copy_key)(gimli_hash_bucket *b, hash_key_t key);
 	uint32_t (*hash)(hash_key_t key, uint32_t initval);
 	int (*same_key)(gimli_hash_bucket *b, hash_key_t key);
+	struct gimli_slab bucketslab;
+	gimli_hash_free_func_t dtor;
 };
+
 
 /* This is from http://burtleburtle.net/bob/hash/doobs.html */
 
@@ -61,9 +63,28 @@ static int u64_key_copy(gimli_hash_bucket *b, hash_key_t key)
 	return 1;
 }
 
-static uint32_t u64_key_hash(hash_key_t key, uint32_t initval)
+static uint32_t u64_key_hash(hash_key_t hkey, uint32_t initval)
 {
-	return (uint32_t)key.u.u64;
+#if 0
+	uint32_t a = 0, b = hkey.u.u64 >> 32;
+	uint32_t c = hkey.u.u64 & 0xffffffff;
+
+	mix(a, b, c);
+	return c;
+#elif 1
+	/* http://www.cris.com/~Ttwang/tech/inthash.htm -> hash6432shift */
+	uint64_t key = hkey.u.u64;
+
+  key = (~key) + (key << 18); // key = (key << 18) - key - 1;
+  key = key ^ (key >> 31);
+  key = key * 21; // key = (key + (key << 2)) + (key << 4);
+  key = key ^ (key >> 11);
+  key = key + (key << 6);
+  key = key ^ (key >> 22);
+  return (uint32_t) key;
+#else
+	return (uint32_t)hkey.u.u64;
+#endif
 }
 
 static int u64_key_same(gimli_hash_bucket *b, hash_key_t key)
@@ -156,21 +177,6 @@ static uint32_t string_key_hash(hash_key_t key, uint32_t initval)
    return c;
 }
 
-/* ensure that the table size is a power of 2 */
-static uint32_t power_2(uint32_t x)
-{
-	if (x & (x - 1)) {
-		x--;
-		x |= x >> 1;
-		x |= x >> 2;
-		x |= x >> 4;
-		x |= x >> 8;
-		x |= x >> 16;
-		x++;
-	}
-	return x;
-}
-
 gimli_hash_t gimli_hash_new_size(gimli_hash_free_func_t dtor, uint32_t flags, size_t size)
 {
 	gimli_hash_t h = calloc(1, sizeof(*h));
@@ -179,6 +185,7 @@ gimli_hash_t gimli_hash_new_size(gimli_hash_free_func_t dtor, uint32_t flags, si
 	h->table_size = size ? power_2(size) : GIMLI_HASH_INITIAL_SIZE;
 	h->buckets = calloc(h->table_size, sizeof(gimli_hash_bucket*));
 	h->dtor = dtor;
+	gimli_slab_init(&h->bucketslab, sizeof(gimli_hash_bucket));
 
 	if (flags & GIMLI_HASH_PTR_KEYS) {
 		h->compile_key = ptr_key_compile;
@@ -213,14 +220,17 @@ static void free_bucket(gimli_hash_t h, gimli_hash_bucket *b)
 	if (h->dtor) {
 		h->dtor(b->item);
 	}
-	free(b);
+//	free(b);
 }
 
 static gimli_hash_bucket *new_bucket(gimli_hash_t h, hash_key_t key, void *item)
 {
-	gimli_hash_bucket *b = calloc(1, sizeof(*b));
+	gimli_hash_bucket *b;
+
+	b = gimli_slab_alloc(&h->bucketslab);
 
 	if (!b) return NULL;
+	memset(b, 0, sizeof(*b));
 
 	if (!h->copy_key(b, key)) {
 		free(b);
@@ -238,6 +248,7 @@ static void rebucket(gimli_hash_t h, int newsize)
 
 	if (h->no_rebucket) return;
 
+printf("rebucket(%p, %d) %d\n", h, newsize, h->size);
 	i = newsize;
 	while (i) {
 		if (i & 1) break;
@@ -443,11 +454,14 @@ void gimli_hash_delete_all(gimli_hash_t h, int downsize)
 	if (downsize) {
 		rebucket(h, GIMLI_HASH_INITIAL_SIZE);
 	}
+	gimli_slab_destroy(&h->bucketslab);
+	gimli_slab_init(&h->bucketslab, sizeof(gimli_hash_bucket));
 }
 
 void gimli_hash_destroy(gimli_hash_t h)
 {
 	gimli_hash_delete_all(h, 0);
+	gimli_slab_destroy(&h->bucketslab);
 	if (h->buckets) {
 		free(h->buckets);
 		h->buckets = NULL;
@@ -480,6 +494,41 @@ int gimli_hash_iter(gimli_hash_t h, gimli_hash_iter_func_t func, void *arg)
 int gimli_hash_size(gimli_hash_t h)
 {
 	return h->size;
+}
+
+void gimli_hash_diagnose(gimli_hash_t h)
+{
+	int num_empty = 0;
+	int num_perfect = 0;
+	int num_collided = 0;
+	int largest_chain = 0;
+	int i;
+	gimli_hash_bucket *b;
+
+	for (i = 0; i < h->table_size; i++) {
+		int run = 0;
+		b = h->buckets[i];
+		if (!b) {
+			num_empty++;
+			continue;
+		}
+		if (!b->next) {
+			num_perfect++;
+			continue;
+		}
+		num_collided++;
+		while (b) {
+			run++;
+
+			b = b->next;
+		}
+		if (run > largest_chain) largest_chain = run;
+	}
+
+	printf("num_empty=%d num_perfect=%d num_collided=%d %.0f%% largest=%d\n",
+			num_empty, num_perfect, num_collided,
+			(float)num_collided / (float)h->size * 100.0,
+			largest_chain);
 }
 
 /* vim:ts=2:sw=2:noet:

@@ -38,6 +38,11 @@ int gimli_process_elf(gimli_mapped_object_t f)
    * so let's try those first */
   snprintf(altpath, sizeof(altpath)-1, "/usr/lib/debug%s.debug", f->objname);
   f->aux_elf = gimli_elf_open(altpath);
+  if (!f->aux_elf) {
+    /* ubuntu has it without the .debug suffix */
+    snprintf(altpath, sizeof(altpath)-1, "/usr/lib/debug%s", f->objname);
+    f->aux_elf = gimli_elf_open(altpath);
+  }
 #endif
 
   gimli_elf_enum_symbols(f->elf, for_each_symbol, f);

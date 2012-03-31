@@ -4,6 +4,7 @@
  * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
 #include "impl.h"
+#include "gimli_dwarf.h"
 
 static int sort_compare_mapping(const void *A, const void *B)
 {
@@ -195,8 +196,13 @@ void gimli_mapped_object_delete(gimli_mapped_object_t file)
   if (file->die_to_type) {
     gimli_hash_destroy(file->die_to_type);
   }
+  if (file->abbr.map) {
+    gimli_hash_destroy(file->abbr.map);
+  }
   free(file->arange);
   gimli_dw_fde_destroy(file);
+  gimli_slab_destroy(&file->dieslab);
+  gimli_slab_destroy(&file->attrslab);
 
   free(file->objname);
   free(file);
@@ -231,6 +237,8 @@ gimli_mapped_object_t gimli_add_object(
   f->refcnt = 1;
   f->objname = strdup(objname);
   f->sections = gimli_hash_new(destroy_section);
+  gimli_slab_init(&f->dieslab, sizeof(struct gimli_dwarf_die));
+  gimli_slab_init(&f->attrslab, sizeof(struct gimli_dwarf_attr));
 
   gimli_hash_insert(proc->files, f->objname, f);
 

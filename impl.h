@@ -219,6 +219,20 @@ struct gimli_object_mapping {
   gimli_mapped_object_t objfile;
 };
 
+struct gimli_slab_page {
+  LIST_ENTRY(gimli_slab_page) list;
+};
+
+struct gimli_slab {
+  LIST_HEAD(slab, gimli_slab_page) pages;
+  uint32_t item_size, per_page;
+  uint32_t next_avail;
+};
+
+int gimli_slab_init(struct gimli_slab *slab, uint32_t size);
+void *gimli_slab_alloc(struct gimli_slab *slab);
+void gimli_slab_destroy(struct gimli_slab *slab);
+
 struct gimli_mapped_object {
   char *objname;
   int refcnt;
@@ -248,9 +262,16 @@ struct gimli_mapped_object {
   uint32_t num_arange;
   uint32_t alloc_arange;
 
+  /* .debug_abbrev */
+  struct {
+    gimli_hash_t map; /* u64 code => offset to abbr section */
+    gimli_object_file_t elf;
+    const uint8_t *start, *end;
+  } abbr;
   gimli_hash_t dies; /* offset-string => gimli_dwarf_die */
   struct gimli_dwarf_die *first_die;
   struct gimli_ana_module *tracer_module;
+  struct gimli_slab dieslab, attrslab;
 
   gimli_hash_t sections; /* sectname => gimli_section_data */
 
@@ -433,6 +454,20 @@ int gimli_dwarf_load_frame_var_info(gimli_stack_frame_t frame);
 void gimli_destroy_mapped_object_hash(void *item);
 void gimli_mapped_object_addref(gimli_mapped_object_t file);
 void gimli_mapped_object_delete(gimli_mapped_object_t file);
+
+/* ensure that the table size is a power of 2 */
+static inline uint32_t power_2(uint32_t x)
+{
+	x--;
+	x |= x >> 1;
+	x |= x >> 2;
+	x |= x >> 4;
+	x |= x >> 8;
+	x |= x >> 16;
+	x++;
+	return x;
+}
+
 
 #ifdef __cplusplus
 }

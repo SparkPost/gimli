@@ -184,6 +184,8 @@ static int search_compare_line(const void *pc, const void *L)
   return 1;
 }
 
+static int process_line_numbers(gimli_mapped_object_t f);
+
 /* read dwarf info to determine the source/line information for a given
  * address */
 int dwarf_determine_source_line_number(gimli_proc_t proc,
@@ -201,6 +203,12 @@ int dwarf_determine_source_line_number(gimli_proc_t proc,
   if (!f->elf) {
     /* can happen if the original file has been removed from disk */
     return 0;
+  }
+  if (!f->lines) {
+    process_line_numbers(f);
+    if (!f->lines) {
+      return 0;
+    }
   }
 
   if (!gimli_object_is_executable(f->elf)) {
@@ -400,9 +408,9 @@ static int process_line_numbers(gimli_mapped_object_t f)
             }
 
           default:
-            fprintf(stderr,
-              "DWARF: line nos.: unhandled extended op=%02x, len=%" PRIu32 "\n",
-              op, initlen);
+//            fprintf(stderr,
+//              "DWARF: line nos.: unhandled extended op=%02x, len=%" PRIu32 "\n",
+//              op, initlen);
             ;
         }
         data = next;
@@ -534,6 +542,8 @@ static int process_line_numbers(gimli_mapped_object_t f)
   }
 
   qsort(f->lines, f->linecount, sizeof(struct gimli_line_info), sort_by_addr);
+printf("sorting %d lines in %s\n", f->linecount, f->objname);
+
   free(opcode_lengths);
 
   /* make a pass to fill in the end member to make it easier to find
@@ -554,7 +564,7 @@ int gimli_process_dwarf(gimli_mapped_object_t f)
    * function names into symbols for the back trace code */
 
   if (f->elf) {
-    process_line_numbers(f);
+    //process_line_numbers(f);
   }
 
   return 1;
@@ -652,25 +662,75 @@ int dw_calc_location(struct gimli_unwind_cursor *cur,
 }
 
 
-static const uint8_t *find_abbr(const uint8_t *abbr, const uint8_t *end,
-  uint64_t fcode)
+static const uint8_t *find_abbr(gimli_mapped_object_t file,
+    uint64_t da_offset,
+    uint64_t fcode)
 {
   uint64_t code;
   uint64_t tag;
+  uint64_t key;
+  const uint8_t *abbr;
+  int slow_mode = 0;
 
-  while (abbr < end) {
-    code = dw_read_uleb128(&abbr, end);
+  if (!file->abbr.map) {
+    if (!get_sect_data(file, ".debug_abbrev",
+          &file->abbr.start, &file->abbr.end, &file->abbr.elf)) {
+      printf("could not get abbrev data for %s\n", file->objname);
+      return 0;
+    }
+
+    /* observed approx 11-13 per abbrev, err on the side of avoiding
+     * rebuckets */
+    file->abbr.map = gimli_hash_new_size(NULL, GIMLI_HASH_U64_KEYS,
+        (file->abbr.end - file->abbr.start) / 10);
+  }
+
+  /* NOTE: even though DWARF allows for 64-bit offsets, we're making the assumption
+   * that they are not practical or possible for the next few years.
+   * Doing so allows us to cheaply record both the da_offset and code
+   * into a u64 key.
+   * I've observed approx 17% collisions with a max chain length of 7
+   * in a collided bucket.  It's not perfect but it is effective.
+   * */
+  if (da_offset > UINT32_MAX || fcode > UINT32_MAX) {
+    // Allow correct, albeit slow, operation when we overflow this assumption
+    slow_mode = 1;
+  }
+  if (!slow_mode) {
+    key = (da_offset << 32) | (fcode & 0xffffffff);
+    if (gimli_hash_find_u64(file->abbr.map, key, (void**)&abbr)) {
+      return abbr;
+    }
+  }
+
+  abbr = file->abbr.start + da_offset;
+
+  while (abbr < file->abbr.end) {
+    code = dw_read_uleb128(&abbr, file->abbr.end);
     if (code == 0) continue;
 //    printf("find_abbr: %lld (looking for %lld)\n", code, fcode);
-    if (fcode == code) return abbr;
+    if (fcode == code) {
 
-    tag = dw_read_uleb128(&abbr, end);
+//printf("find_abbr: %" PRIx64 " -> %p\n", fcode, abbr);
+      if (!slow_mode &&
+          !gimli_hash_insert_u64(file->abbr.map, key, (void*)abbr)) {
+        void *ptr = NULL;
+        gimli_hash_find_u64(file->abbr.map, key, &ptr);
+        if (ptr != abbr) {
+          printf("find_abbr: %" PRIx64 " (key=%" PRIx64 ") collided with %p and %p\n",
+              fcode, key, abbr, ptr);
+        }
+      }
+      return abbr;
+    }
+
+    tag = dw_read_uleb128(&abbr, file->abbr.end);
     abbr += sizeof(uint8_t);
 
 
-    while (abbr < end) {
-      dw_read_uleb128(&abbr, end);
-      code = dw_read_uleb128(&abbr, end);
+    while (abbr < file->abbr.end) {
+      dw_read_uleb128(&abbr, file->abbr.end);
+      code = dw_read_uleb128(&abbr, file->abbr.end);
       if (code == 0) {
         break;
       }
@@ -856,6 +916,7 @@ static uint64_t get_value(uint64_t form, uint64_t addr_size, int is_64,
   return form;
 }
 
+#if 0
 static void destroy_die(void *ptr)
 {
   struct gimli_dwarf_die *die = ptr;
@@ -865,17 +926,18 @@ static void destroy_die(void *ptr)
     attr = die->attrs;
     die->attrs = attr->next;
 
-    free(attr);
+  //  free(attr);
   }
 
-  free(die);
+//  free(die);
 }
+#endif
 
 static struct gimli_dwarf_die *process_die(
   uint64_t reloc, const uint8_t *datastart,
   const uint8_t *custart,
   const uint8_t **datap, const uint8_t *end,
-  const uint8_t *abbrstart, const uint8_t *abbrend,
+  uint64_t da_offset,
   int is_64, uint8_t addr_size,
   gimli_object_file_t elf,
   gimli_hash_t diehash
@@ -890,6 +952,7 @@ static struct gimli_dwarf_die *process_die(
   struct gimli_dwarf_die *die = NULL, *kid = NULL;
   struct gimli_dwarf_attr *attr = NULL;
   uint64_t offset;
+  gimli_mapped_object_t file = elf->gobject;
 
   offset = data - datastart;
   abbr_code = dw_read_uleb128(&data, end);
@@ -899,7 +962,7 @@ static struct gimli_dwarf_die *process_die(
     *datap = data;
     return NULL;
   }
-  abbr = find_abbr(abbrstart, abbrend, abbr_code);
+  abbr = find_abbr(file, da_offset, abbr_code);
   if (!abbr) {
     printf("Couldn't locate abbrev code %" PRId64 "\n", abbr_code);
     *datap = data;
@@ -907,26 +970,28 @@ static struct gimli_dwarf_die *process_die(
   }
 
   /* what kind of entry is this? */
-  tag = dw_read_uleb128(&abbr, abbrend);
+  tag = dw_read_uleb128(&abbr, file->abbr.end);
   memcpy(&has_children, abbr, sizeof(has_children));
   abbr += sizeof(has_children);
 
-  die = calloc(1, sizeof(*die));
+  die = gimli_slab_alloc(&file->dieslab);
+  memset(die, 0, sizeof(*die));
   die->offset = offset;
   die->tag = tag;
   if (!gimli_hash_insert_u64(diehash, offset, die)) {
     printf("FAILED to insert %" PRIx64 " into diehash\n", offset);
   }
 
-  while (data < end && abbr < abbrend) {
-    atype = dw_read_uleb128(&abbr, abbrend);
-    aform = dw_read_uleb128(&abbr, abbrend);
+  while (data < end && abbr < file->abbr.end) {
+    atype = dw_read_uleb128(&abbr, file->abbr.end);
+    aform = dw_read_uleb128(&abbr, file->abbr.end);
 
     if (atype == 0) {
       break;
     }
 
-    attr = calloc(1, sizeof(*attr));
+    attr = gimli_slab_alloc(&file->attrslab);
+    memset(attr, 0, sizeof(*attr));
     attr->attr = atype;
 
     attr->form = get_value(aform, addr_size, is_64, &data, end,
@@ -954,8 +1019,8 @@ static struct gimli_dwarf_die *process_die(
     /* go recursive and pull those in now.
      * The first child may be NULL and not indicate a terminator */
     while (1) {
-      kid = process_die(reloc, datastart, custart, &data, end, abbrstart,
-            abbrend, is_64, addr_size, elf, diehash);
+      kid = process_die(reloc, datastart, custart, &data, end, da_offset,
+            is_64, addr_size, elf, diehash);
       if (kid == NULL) {
         if (die->last_kid) {
           break;
@@ -991,7 +1056,6 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
   uint64_t offset)
 {
   const uint8_t *data, *datastart, *end, *next;
-  const uint8_t *abbr, *abbrstart, *abbrend;
   const uint8_t *cuend, *custart;
   gimli_object_file_t elf = NULL;
   uint64_t initlen;
@@ -1005,13 +1069,22 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
   struct gimli_dwarf_die *last_die = NULL;
 
   if (!f->dies) {
-    f->dies = gimli_hash_new_size(destroy_die, GIMLI_HASH_U64_KEYS, 0);
 
     if (!get_sect_data(f, ".debug_info", &datastart, &end, &elf)) {
       printf("no debug info for %s\n", f->objname);
+
+      /* negatively cache a dies hash */
+      f->dies = gimli_hash_new_size(NULL, GIMLI_HASH_U64_KEYS, 0);
       return 0;
     }
     data = datastart;
+
+    /* I've observed an average of 10-12 bytes per DIE,
+     * so size the initial buckets based on a size of 10.
+     * This avoids excessive rebucketing when you have
+     * libc debug objects installed (~370k DIEs!) */
+    f->dies = gimli_hash_new_size(NULL, GIMLI_HASH_U64_KEYS,
+        (end - datastart) / 10);
 
     if (!gimli_object_is_executable(f->elf)) {
       int i;
@@ -1026,6 +1099,8 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
       }
       //    printf("Using reloc adjustment for %s: 0x%llx\n", m->objfile->objname, reloc);
     }
+
+    printf("Loading DIEs from data of size %" PRIu64 "\n", end - data);
 
     while (data < end) {
       custart = data;
@@ -1061,17 +1136,10 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
       memcpy(&addr_size, data, sizeof(addr_size));
       data += sizeof(addr_size);
 
-      if (!get_sect_data(f, ".debug_abbrev",
-            &abbrstart, &abbrend, &elf)) {
-        printf("could not get abbrev data for %s\n", f->objname);
-        return 0;
-      }
-      abbrstart += da_offset;
-
       /* now we have a series of Debugging Information Entries (DIE) */
       while (data < cuend) {
         die = process_die(reloc, datastart, custart, &data, cuend,
-                abbrstart, abbrend, is_64, addr_size, elf, f->dies);
+                da_offset, is_64, addr_size, elf, f->dies);
         if (!die) {
           continue;
         }
@@ -1085,6 +1153,14 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
       }
       data = cuend;
     }
+    printf("DIE hash is %d in size, data size was %" PRIu64 " approx %" PRIu64 " per entry\n",
+        gimli_hash_size(f->dies), end - datastart,
+        (end - datastart) / gimli_hash_size(f->dies));
+    gimli_hash_diagnose(f->dies);
+    printf("abbr.map is %d in size, data size %" PRIu64 " approx %" PRIu64 " per entry\n",
+        gimli_hash_size(f->abbr.map), f->abbr.end - f->abbr.start,
+        (f->abbr.end - f->abbr.start) / gimli_hash_size(f->abbr.map));
+    gimli_hash_diagnose(f->abbr.map);
   }
 
   if (gimli_hash_find_u64(f->dies, offset, (void**)&die)) {
@@ -1246,6 +1322,7 @@ static int load_arange(struct gimli_object_mapping *m)
   /* ensure ascending order */
   qsort(m->objfile->arange, m->objfile->num_arange, sizeof(struct dw_die_arange),
       sort_compare_arange);
+printf("sorting %d arange in %s\n", m->objfile->num_arange, m->objfile->objname);
 
   return 1;
 }
