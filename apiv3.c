@@ -13,7 +13,7 @@ int gimli_read_pointer(gimli_proc_t proc, gimli_addr_t addr, gimli_addr_t *val)
   *val = 0;
   if (sizeof(void*) == 8) { // FIXME: data model aware
     if (gimli_read_mem(proc, addr, &p64, sizeof(p64)) == sizeof(p64)) {
-      *val = p32;
+      *val = p64;
       return 1;
     }
     return 0;

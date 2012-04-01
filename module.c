@@ -47,7 +47,7 @@ static int load_module(const char *exename, const char *filename)
     } else {
       mod->name = strdup(filename);
       mod->exename = strdup(exename);
-      mod->api_version = mod->ptr.v2->api_version;
+      mod->api_version = mod->ptr.v2->api_version == 1 ? 1 : 2;
       STAILQ_INSERT_TAIL(&modules, mod, modules);
     }
   }
@@ -69,17 +69,23 @@ static int load_module_for_file(gimli_mapped_object_t file)
   sym = gimli_sym_lookup(the_proc, file->objname, "gimli_tracer_module_name");
   if (sym) {
     name = gimli_read_string(the_proc, sym->addr);
+    if (debug) printf("[ %s requests tracing via %s ]\n", file->objname, name);
   }
   if (name == NULL) {
     strcpy(buf, file->objname);
     snprintf(buf2, sizeof(buf2)-1, "gimli_%s", basename(buf));
     name = strdup(buf2);
+    if (debug) printf("[ %s: computed %s for tracing ]\n", file->objname, name);
   }
   strcpy(buf, file->objname);
   snprintf(buf2, sizeof(buf2)-1, "%s/%s", dirname(buf), name);
+  if (debug) printf("[ %s: resolved module name to %s ]\n", file->objname, buf2);
 
   if (access(buf2, F_OK) == 0) {
-    res = load_module(file->objname, buf);
+    res = load_module(file->objname, buf2);
+    if (!res) {
+      printf("Failed to load modules from %s\n", buf2);
+    }
   } else if (sym) {
     printf("NOTE: module %s declared that its tracing "
         "should be performed by %s, but that module was not found (%s)\n",

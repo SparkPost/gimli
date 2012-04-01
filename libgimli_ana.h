@@ -58,7 +58,7 @@ struct gimli_symbol {
   uint32_t size;
 };
 
-#define GIMLI_ANA_API_VERSION 3
+#define GIMLI_ANA_API_VERSION 2
 
 /* {{{ Deprecated V1 and V2 Gimli APIs enclosed in this block */
 
