@@ -359,6 +359,9 @@ extern "C" {
 #define DW_OP_lo_user 0xe0   
 #define DW_OP_hi_user 0xff   
 
+// DWARF 4 (seen in the wild!)
+#define DW_OP_stack_value 0x9f // result is on the expr stack
+
 #define DW_ATE_address 0x01 
 #define DW_ATE_boolean 0x02 
 #define DW_ATE_complex_float 0x03 

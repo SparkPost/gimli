@@ -561,6 +561,11 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
       }
     }
 
+    if (data->addr == 0) {
+      printf(" <optimized out>%s", data->suffix);
+      goto after;
+    }
+
     t = gimli_type_resolve(t);
 
     switch (gimli_type_kind(t)) {
@@ -618,6 +623,7 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
     }
   }
 
+after:
   gimli_hash_iter(data->proc->files, after_print_var, data);
 
   return GIMLI_ITER_CONT;

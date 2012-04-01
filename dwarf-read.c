@@ -1977,7 +1977,6 @@ static gimli_type_t load_type(
       return NULL;
   }
 
-
   if (t) {
     gimli_hash_insert_ptr(file->die_to_type, die, t);
   }
@@ -2009,18 +2008,17 @@ static void load_var(
       case DW_FORM_block:
         if (!dw_eval_expr(&frame->cur, (uint8_t*)location->ptr, location->code,
               frame_base, &res, NULL, &is_stack)) {
-          return;
+          res = 0;
         }
         break;
       case DW_FORM_data8:
         if (!dw_calc_location(&frame->cur, comp_unit_base, m,
               location->code, &res, NULL, &is_stack)) {
-          return;
+          res = 0;
         }
         break;
       default:
         printf("Unhandled location form 0x%" PRIx64 "\n", location->form);
-        return;
     }
   } else if (name) {
     /* no location defined, so assume the compiler optimized it away */

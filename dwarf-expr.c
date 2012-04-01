@@ -286,7 +286,7 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
         if (debug) printf("OP_reg%" PRId64 "\n", u64);
         if (!push(&e, &val)) return 0;
         continue;
-       
+
       case DW_OP_dup:
         val = e.stack[e.top];
         if (debug) printf("OP_dup\n");
@@ -565,8 +565,24 @@ int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
       case DW_OP_nop:
         continue;
 
+      case DW_OP_stack_value:
+        /* The DW_OP_stack_value operation specifies that the object does not
+         * exist in memory but its value is nonetheless known and is at the top
+         * of the DWARF expression stack. In this form of location description,
+         * the DWARF expression represents the actual value of the object,
+         * rather than its location. The DW_OP_stack_value operation terminates
+         * the expression.
+         *
+         * Unfortunately, we're focused around expressions returning
+         * addresses rather than values, so while it is simple to
+         * break here to obtain the desired value, we have no way to convey
+         * that result back to the caller at this time.
+         */
+        return 0;
+
+      case DW_OP_piece: /* similar reasoning to DW_OP_stack_value above */
       default:
-        fprintf(stderr, "DWARF: expr: unhandled op %02x\n", op);
+        fprintf(stderr, "DWARF: expr: unhandled op 0x%02x\n", op);
         return 0;
     }
   }
