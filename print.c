@@ -394,6 +394,12 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
     return;
   }
 
+  /* don't deref void* */
+  if (!strcmp(gimli_type_name(target), "void")) {
+    printf(PTRFMT, ptr);
+    return;
+  }
+
   snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, target, data->addr);
   if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
     printf(" " PTRFMT " [deref'd above]\n", ptr);
@@ -401,6 +407,10 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
   }
 
   printf(PTRFMT " [deref'ing]\n", ptr);
+
+  data->show_decl = 1;
+  data->prefix = " = ";
+  data->suffix = "\n";
 
   data->depth++;
   data->addr = (gimli_addr_t)ptr;

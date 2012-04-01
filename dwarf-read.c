@@ -259,6 +259,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
   const char *filenames[1024];
   uint8_t op;
   struct gimli_line_info *linfo;
+  int debugline = debug && 0;
 
   if (f->aux_elf) {
     s = gimli_get_section_by_name(f->aux_elf, ".debug_line");
@@ -275,7 +276,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
   if (!s) {
     return 0;
   }
-  if (debug) fprintf(stderr, "\nGot debug_line info\n");
+  if (debugline) fprintf(stderr, "\nGot debug_line info\n");
 
   end = data + s->size;
 
@@ -306,7 +307,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
     memcpy(&ver, data, sizeof(ver));
     data += sizeof(ver);
 
-    if (debug) {
+    if (debugline) {
       fprintf(stderr, "initlen is 0x%" PRIx64 " (%d bit) ver=%u\n",
         len, is_64 ? 64 : 32, ver);
     }
@@ -323,7 +324,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
     data += sizeof(hdr_1);
     regs.is_stmt = hdr_1.def_is_stmt;
 
-    if (debug) {
+    if (debugline) {
       fprintf(stderr,
         "headerlen is %" PRIu64 ", min_insn_len=%u line_base=%d line_range=%u\n"
         "opcode_base=%u\n",
@@ -334,13 +335,13 @@ static int process_line_numbers(gimli_mapped_object_t f)
     opcode_lengths = calloc(hdr_1.opcode_base, sizeof(uint64_t));
     for (i = 1; i < hdr_1.opcode_base; i++) {
       opcode_lengths[i-1] = dw_read_uleb128(&data, cuend);
-      if (debug) {
+      if (debugline) {
         fprintf(stderr, "op len [%d] = %" PRIu64 "\n", i, opcode_lengths[i-1]);
       }
     }
     /* include_directories */
     while (*data && data < cuend) {
-      if (debug) fprintf(stderr, "inc_dir: %s\n", data);
+      if (debugline) fprintf(stderr, "inc_dir: %s\n", data);
       data += strlen((char*)data) + 1;
     }
     data++;
@@ -353,7 +354,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
         fprintf(stderr, "DWARF: too many files for line number info reader\n");
         return 0;
       }
-      if (debug) fprintf(stderr, "file[%d] = %s\n", i, data);
+      if (debugline) fprintf(stderr, "file[%d] = %s\n", i, data);
       filenames[i] = (char*)data;
       data += strlen((char*)data) + 1;
       /* ignore additional data about the file */
@@ -383,13 +384,13 @@ static int process_line_numbers(gimli_mapped_object_t f)
             {
               void *addr;
               memcpy(&addr, data, sizeof(addr));
-              if (debug) fprintf(stderr, "set_address %p\n", addr);
+              if (debugline) fprintf(stderr, "set_address %p\n", addr);
               regs.address = addr;
               break;
             }
           case DW_LNE_end_sequence:
             {
-              if (debug) fprintf(stderr, "end_sequence\n");
+              if (debugline) fprintf(stderr, "end_sequence\n");
               memset(&regs, 0, sizeof(regs));
               regs.file = 1;
               regs.line = 1;
@@ -403,7 +404,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
               data += strlen(fname)+1;
               fno = dw_read_uleb128(&data, cuend);
               filenames[fno] = fname;
-              if (debug) fprintf(stderr, "define_files[%" PRIu64 "] = %s\n", fno, fname);
+              if (debugline) fprintf(stderr, "define_files[%" PRIu64 "] = %s\n", fno, fname);
               break;
             }
 
@@ -418,7 +419,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
         /* standard opcode */
         switch (op) {
           case DW_LNS_copy:
-            if (debug) fprintf(stderr, "copy\n");
+            if (debugline) fprintf(stderr, "copy\n");
             regs.basic_block = 0;
             regs.prologue_end = 0;
             regs.epilogue_begin = 0;
@@ -426,7 +427,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
           case DW_LNS_advance_line:
             {
               int64_t d = dw_read_leb128(&data, cuend);
-              if (debug) {
+              if (debugline) {
                 fprintf(stderr, "advance_line from %" PRId64 " to %" PRId64 "\n",
                   regs.line, regs.line + d);
               }
@@ -438,7 +439,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
             {
               uint64_t u = dw_read_uleb128(&data, cuend);
               regs.address += u * hdr_1.min_insn_len;
-              if (debug) {
+              if (debugline) {
                 fprintf(stderr, "advance_pc: addr=0x%" PRIx64 "\n", (uintptr_t)regs.address);
               }
               break;
@@ -447,28 +448,28 @@ static int process_line_numbers(gimli_mapped_object_t f)
           {
             uint64_t u = dw_read_uleb128(&data, cuend);
             regs.file = u;
-            if (debug) fprintf(stderr, "set_file: %" PRIu64 "\n", regs.file);
+            if (debugline) fprintf(stderr, "set_file: %" PRIu64 "\n", regs.file);
             break;
           }
           case DW_LNS_set_column:
           {
             uint64_t u = dw_read_uleb128(&data, cuend);
             regs.column = u;
-            if (debug) fprintf(stderr, "set_column: %" PRIu64 "\n", regs.column);
+            if (debugline) fprintf(stderr, "set_column: %" PRIu64 "\n", regs.column);
             break;
           }
           case DW_LNS_negate_stmt:
-            if (debug) fprintf(stderr, "negate_stmt\n");
+            if (debugline) fprintf(stderr, "negate_stmt\n");
             regs.is_stmt = !regs.is_stmt;
             break;
           case DW_LNS_set_basic_block:
-            if (debug) fprintf(stderr, "set_basic_block\n");
+            if (debugline) fprintf(stderr, "set_basic_block\n");
             regs.basic_block = 1;
             break;
           case DW_LNS_const_add_pc:
             regs.address += ((255 - hdr_1.opcode_base) /
                             hdr_1.line_range) * hdr_1.min_insn_len;
-            if (debug) {
+            if (debugline) {
               fprintf(stderr, "const_add_pc: addr=0x%" PRIx64 "\n", (uintptr_t)regs.address);
             }
             break;
@@ -478,26 +479,26 @@ static int process_line_numbers(gimli_mapped_object_t f)
             memcpy(&u, data, sizeof(u));
             data += sizeof(u);
             regs.address += u;
-            if (debug) {
+            if (debugline) {
               fprintf(stderr, "fixed_advance_pc: 0x%" PRIx64 "\n", (uintptr_t)regs.address);
             }
             break;
           }
           case DW_LNS_set_prologue_end:
-            if (debug) {
+            if (debugline) {
               fprintf(stderr, "set_prologue_end\n");
             }
             regs.prologue_end = 1;
             break;
           case DW_LNS_set_epilogue_begin:
-            if (debug) {
+            if (debugline) {
               fprintf(stderr, "set_epilogue_begin\n");
             }
             regs.epilogue_begin = 1;
             break;
           case DW_LNS_set_isa:
             regs.isa = dw_read_uleb128(&data, cuend);
-            if (debug) {
+            if (debugline) {
               fprintf(stderr, "set_isa: 0x%" PRIx64 "\n", regs.isa);
             }
             break;
@@ -512,7 +513,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
         /* special opcode */
         op -= hdr_1.opcode_base;
 
-        if (debug) {
+        if (debugline) {
           fprintf(stderr, "special before: addr = %p, line = %" PRId64 "\n",
               regs.address, regs.line);
           fprintf(stderr, "line_base = %d, line_range = %d\n",
@@ -521,7 +522,7 @@ static int process_line_numbers(gimli_mapped_object_t f)
 
         regs.address += (op / hdr_1.line_range) * hdr_1.min_insn_len;
         regs.line += hdr_1.line_base + (op % hdr_1.line_range);
-        if (debug) {
+        if (debugline) {
           fprintf(stderr, "special: addr = %p, line = %" PRId64 "\n",
             regs.address, regs.line);
         }
@@ -907,7 +908,7 @@ static uint64_t get_value(uint64_t form, uint64_t addr_size, int is_64,
       form = DW_FORM_ref_udata;
       break;
   }
-  if (debug) {
+  if (debug && 0) {
     printf("value normalized to form 0x%" PRIx64 " val=0x%" PRIx64 " bytep=%p %s\n",
        form, *vptr, *byteptr, form == DW_FORM_string ? (char*)*byteptr : "");
   }
@@ -940,7 +941,7 @@ static struct gimli_dwarf_die *process_die(
   abbr_code = dw_read_uleb128(&data, end);
   if (abbr_code == 0) {
     // Skip over NUL entry
-//    printf("found a NUL entry @ %llx\n", offset);
+//    printf("found a NUL entry @ 0x%" PRIx64 "\n", offset);
     *datap = data;
     return NULL;
   }
@@ -1019,6 +1020,41 @@ static struct gimli_dwarf_die *process_die(
   return die;
 }
 
+/* Calculate the relocation slide value; it only applies
+ * to shared objects (not the main executable) and must
+ * be the value of the lowest load address of all the
+ * mappings for that object */
+static gimli_addr_t calc_reloc(gimli_mapped_object_t f)
+{
+  int i;
+  struct gimli_object_mapping *m;
+  gimli_addr_t smallest = 0;
+
+  if (gimli_object_is_executable(f->elf) || f->debug_info.reloc) {
+    return f->debug_info.reloc;
+  }
+
+  for (i = 0; i < the_proc->nmaps; i++) {
+    m = the_proc->mappings[i];
+
+    if (m->objfile == f) {
+      if (smallest) {
+        if (m->base < smallest) {
+          smallest = m->base;
+        }
+      } else {
+        smallest = m->base;
+      }
+    }
+    f->debug_info.reloc = smallest;
+  }
+#if 0
+  printf("Using reloc adjustment for %s: 0x%" PRIx64 "\n",
+      m->objfile->objname, f->debug_info.reloc);
+#endif
+  return f->debug_info.reloc;
+}
+
 static int init_debug_info(gimli_mapped_object_t f)
 {
   if (f->debug_info.start) return 1;
@@ -1029,19 +1065,7 @@ static int init_debug_info(gimli_mapped_object_t f)
     return 0;
   }
 
-  if (!gimli_object_is_executable(f->elf)) {
-    int i;
-    struct gimli_object_mapping *m;
-
-    for (i = 0; i < the_proc->nmaps; i++) {
-      m = the_proc->mappings[i];
-
-      if (m->objfile == f) {
-        f->debug_info.reloc = m->base;
-      }
-    }
-    //    printf("Using reloc adjustment for %s: 0x%llx\n", m->objfile->objname, reloc);
-  }
+  calc_reloc(f);
 
   return 1;
 }
@@ -1286,10 +1310,7 @@ static int load_arange(struct gimli_object_mapping *m)
     return 0;
   }
 
-  if (!gimli_object_is_executable(m->objfile->elf)) {
-    reloc = (uint64_t)(intptr_t)m->base;
-//    printf("Using reloc adjustment for %s: 0x%llx\n", m->objfile->objname, reloc);
-  }
+  reloc = calc_reloc(m->objfile);
 
   while (data < end) {
     uint64_t mask;
@@ -1417,6 +1438,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr
   arange = bsearch(&pc, m->objfile->arange, m->objfile->num_arange,
       sizeof(*arange), search_compare_arange);
   if (!arange) {
+    printf("no arange for pc " PTRFMT "\n", pc);
     return NULL;
   }
   /* arange gives us a pointer to the CU */
@@ -1425,43 +1447,61 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr
     cu = load_cu(m->objfile, arange->di_offset);
   }
   if (!cu) {
+    printf("no CU for pc " PTRFMT " arange said off %" PRIx64 "\n", pc, arange->di_offset);
     return NULL;
   }
 
-  die = STAILQ_FIRST(&cu->dies);
-  if (!die) {
-    printf("no DIE for cu!?\n");
-    abort();
-  }
+//  printf("got CU " PTRFMT " - " PTRFMT " arange said off %" PRIx64 "\n", cu->offset, cu->end, arange->di_offset);
 
-  if (die->tag != DW_TAG_compile_unit) {
-    printf("DIE is not a compile unit!?\n");
-  }
-
-  /* this is the die for the compilation unit; we need to walk
-   * through it and find the subprogram that matches */
-  STAILQ_FOREACH(kid, &die->kids, siblings) {
+  STAILQ_FOREACH(die, &cu->dies, siblings) {
     uint64_t lopc, hipc;
 
-    if (kid->tag != DW_TAG_subprogram) {
+    if (die->tag != DW_TAG_compile_unit) {
+      printf("DIE is not a compile unit!? tag=0x%" PRIx64 "\n", die->tag);
       continue;
     }
 
-    if (!gimli_dwarf_die_get_uint64_t_attr(kid, DW_AT_low_pc, &lopc)) {
+    /* this is the die for the compilation unit; we need to walk
+     * through it and find the subprogram that matches */
+    STAILQ_FOREACH(kid, &die->kids, siblings) {
       lopc = arange->addr;
-      continue;
-    }
-    if (!gimli_dwarf_die_get_uint64_t_attr(kid, DW_AT_high_pc, &hipc)) {
-      hipc = arange->addr + arange->len;
-      continue;
+      hipc = arange->len;
+
+      if (kid->tag != DW_TAG_subprogram) {
+//        printf("skipping kid with tag 0x%" PRIx64 "\n", kid->tag);
+        continue;
+      }
+
+      if (!gimli_dwarf_die_get_uint64_t_attr(kid, DW_AT_low_pc, &lopc)) {
+        continue;
+      }
+      if (!gimli_dwarf_die_get_uint64_t_attr(kid, DW_AT_high_pc, &hipc)) {
+        continue;
+      }
+
+#if 0
+      printf("consider pc:" PTRFMT " vs " PTRFMT " - " PTRFMT " (m->base=%" PRIx64 ")\n",
+          pc, lopc, hipc, m->base);
+#endif
+
+      if (pc >= lopc && pc <= hipc) {
+        return kid;
+      }
     }
 
-    if (pc >= lopc && pc <= hipc) {
-      return kid;
-    }
+#if 0
+    lopc = 0;
+    hipc = 0;
+      gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_low_pc, &lopc);
+      gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_high_pc, &hipc);
+
+      printf("bottom pc:" PTRFMT " vs " PTRFMT " - " PTRFMT " (m->base=%" PRIx64 ")\n",
+          pc, lopc, hipc, m->base);
+#endif
   }
 
   /* no joy */
+  printf("fell out bottom; no subprogram in range for pc " PTRFMT "\n", pc);
   return NULL;
 }
 
@@ -2012,6 +2052,7 @@ int gimli_dwarf_load_frame_var_info(gimli_stack_frame_t frame)
 
   die = gimli_dwarf_get_die_for_pc(proc, pc);
   if (!die) {
+    printf("no DIE for pc=" PTRFMT "\n", pc);
     return 0;
   }
   m = gimli_mapping_for_addr(proc, pc);

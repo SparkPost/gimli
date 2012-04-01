@@ -47,12 +47,30 @@ struct gimli_object_mapping *gimli_mapping_for_addr(gimli_proc_t proc, gimli_add
         sort_compare_mapping);
     proc->maps_changed = 0;
 
-    for (i = 0; i < proc->nmaps; i++) {
+    /* print out the maps, coalesce adjacent maps for the same object */
+    printf("\nMEMORY MAP: (executable, shared objects and named mmaps)\n");
+    i = 0;
+    while (i < proc->nmaps) {
+      int j;
       struct gimli_object_mapping *map = proc->mappings[i];
-      printf("MAP: " PTRFMT " - " PTRFMT " %s\n",
-          map->base, map->base + map->len, map->objfile->objname);
+      uint64_t upper = map->base + map->len;
+
+      for (j = i + 1; j < proc->nmaps; j++) {
+        struct gimli_object_mapping *om = proc->mappings[j];
+
+        if (om->objfile == map->objfile && om->base == upper) {
+          upper = om->base + om->len;
+          i = j;
+          continue;
+        }
+        break;
+      }
+
+      printf(PTRFMT " - " PTRFMT " %s\n",
+          map->base, upper, map->objfile->objname);
+      i++;
     }
-    printf("--\n");
+    printf("\n\n");
   }
 
   mptr = bsearch(&addr, proc->mappings, proc->nmaps, sizeof(struct gimli_object_mapping*),
