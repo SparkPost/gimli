@@ -14,6 +14,18 @@ gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames)
   gimli_stack_trace_t trace = calloc(1, sizeof(*trace));
   struct gimli_unwind_cursor cur;
   gimli_stack_frame_t frame;
+  struct {
+    const char *name;
+    int before;
+    struct gimli_symbol *sym;
+  } stopsyms[] = {
+    { "main", 0 },
+#ifdef __linux__
+    { "start_thread", 1 },
+#endif
+  };
+  int i;
+  int stop;
 
   if (!trace) return NULL;
 
@@ -28,7 +40,31 @@ gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames)
     free(trace);
     return NULL;
   }
+
+  for (i = 0; i < sizeof(stopsyms)/sizeof(stopsyms[0]); i++) {
+    stopsyms[i].sym = gimli_sym_lookup(thr->proc, NULL, stopsyms[i].name);
+#if 0
+    printf("Looking up %s %" PRIx64 "-%" PRIx64 "\n",
+        stopsyms[i].name, stopsyms[i].sym->addr,
+        stopsyms[i].sym->addr + stopsyms[i].sym->size);
+#endif
+  }
+
   do {
+    stop = 0;
+
+    for (i = 0; i < sizeof(stopsyms)/sizeof(stopsyms[0]); i++) {
+      if (!stopsyms[i].before) continue;
+      if ((gimli_addr_t)cur.st.pc >= stopsyms[i].sym->addr &&
+          (gimli_addr_t)cur.st.pc <= stopsyms[i].sym->addr + stopsyms[i].sym->size) {
+        stop = 1;
+        break;
+      }
+    }
+    if (stop) {
+      break;
+    }
+
     frame = calloc(1, sizeof(*frame));
 
     STAILQ_INIT(&frame->vars);
@@ -37,6 +73,18 @@ gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames)
 
     frame->cur = cur;
     STAILQ_INSERT_TAIL(&trace->frames, frame, frames);
+
+    for (i = 0; i < sizeof(stopsyms)/sizeof(stopsyms[0]); i++) {
+      if (stopsyms[i].before) continue;
+      if ((gimli_addr_t)cur.st.pc >= stopsyms[i].sym->addr &&
+          (gimli_addr_t)cur.st.pc <= stopsyms[i].sym->addr + stopsyms[i].sym->size) {
+        stop = 1;
+        break;
+      }
+    }
+    if (stop) {
+      break;
+    }
 
   } while (trace->num_frames < max_frames &&
       cur.st.pc && gimli_unwind_next(&cur) && cur.st.pc);
