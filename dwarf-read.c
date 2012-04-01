@@ -171,9 +171,10 @@ static int sort_by_addr(const void *A, const void *B)
   return a->addr - b->addr;
 }
 
-static int search_compare_line(const void *pc, const void *L)
+static int search_compare_line(const void *addrp, const void *L)
 {
   struct gimli_line_info *line = (struct gimli_line_info*)L;
+  gimli_addr_t pc = *(gimli_addr_t*)addrp;
 
   if (pc < line->addr) {
     return -1;
@@ -188,15 +189,15 @@ static int process_line_numbers(gimli_mapped_object_t f);
 
 /* read dwarf info to determine the source/line information for a given
  * address */
-int dwarf_determine_source_line_number(gimli_proc_t proc,
-  void *pc, char *src, int srclen,
+int gimli_determine_source_line_number(gimli_proc_t proc,
+  gimli_addr_t pc, char *src, int srclen,
   uint64_t *lineno)
 {
   struct gimli_object_mapping *m;
   gimli_mapped_object_t f;
   struct gimli_line_info *linfo;
 
-  m = gimli_mapping_for_addr(proc, (gimli_addr_t)pc);
+  m = gimli_mapping_for_addr(proc, pc);
   if (!m) return 0;
   f = m->objfile;
 
@@ -215,7 +216,7 @@ int dwarf_determine_source_line_number(gimli_proc_t proc,
     pc -= m->base;
   }
 
-  linfo = bsearch(pc, f->lines, f->linecount, sizeof(*linfo),
+  linfo = bsearch(&pc, f->lines, f->linecount, sizeof(*linfo),
       search_compare_line);
 
   if (linfo) {
@@ -535,9 +536,9 @@ static int process_line_numbers(gimli_mapped_object_t f)
           f->lines = realloc(f->lines, f->linealloc * sizeof(*linfo));
         }
         linfo = &f->lines[f->linecount++];
-        linfo->filename = (char*)filenames[regs.file];
+        linfo->filename = filenames[regs.file];
         linfo->lineno = regs.line;
-        linfo->addr = regs.address;
+        linfo->addr = (gimli_addr_t)regs.address;
       }
     }
   }
@@ -956,6 +957,10 @@ static struct gimli_dwarf_die *process_die(
   tag = dw_read_uleb128(&abbr, file->abbr.end);
   memcpy(&has_children, abbr, sizeof(has_children));
   abbr += sizeof(has_children);
+  if (has_children != 0 && has_children != 1) {
+    printf("invalid value for has_children! %d\n", has_children);
+    abort();
+  }
 
   die = gimli_slab_alloc(&file->dieslab);
   memset(die, 0, sizeof(*die));
@@ -1016,6 +1021,10 @@ static struct gimli_dwarf_die *process_die(
     }
   }
 
+#if 0
+  printf("process_die stopping at offset %" PRIx64 "\n",
+      data - file->debug_info.start);
+#endif
   *datap = data;
   return die;
 }
@@ -1223,11 +1232,32 @@ static struct gimli_dwarf_cu *find_cu(
   return NULL;
 }
 
+static struct gimli_dwarf_die *find_die_r(struct gimli_dwarf_die *die, uint64_t offset)
+{
+  struct gimli_dwarf_die *kid, *res;
+
+  if (die->offset == offset) {
+    return die;
+  }
+  STAILQ_FOREACH(kid, &die->kids, siblings) {
+    if (kid->offset == offset) {
+      return kid;
+    }
+  }
+  STAILQ_FOREACH(kid, &die->kids, siblings) {
+    res = find_die_r(kid, offset);
+    if (res) {
+      return res;
+    }
+  }
+  return NULL;
+}
+
 struct gimli_dwarf_die *gimli_dwarf_get_die(
   gimli_mapped_object_t f,
   uint64_t offset)
 {
-  struct gimli_dwarf_die *die = NULL, *kid;
+  struct gimli_dwarf_die *die = NULL, *res;
   struct gimli_dwarf_cu *cu;
 
   cu = find_cu(f, offset);
@@ -1238,18 +1268,15 @@ struct gimli_dwarf_die *gimli_dwarf_get_die(
 
   if (cu) {
     STAILQ_FOREACH(die, &cu->dies, siblings) {
-      if (die->offset == offset) {
-        return die;
-      }
-      STAILQ_FOREACH(kid, &die->kids, siblings) {
-        if (kid->offset == offset) {
-          return kid;
-        }
+      res = find_die_r(die, offset);
+      if (res) {
+        return res;
       }
     }
   }
 
-  printf("get_die: %" PRIx64 " MISSING\n", offset);
+  printf("get_die: %" PRIx64 " MISSING cu=%p %" PRIx64 "-%" PRIx64 "\n",
+      offset, cu, cu->offset, cu->end);
   return NULL;
 }
 
@@ -1266,7 +1293,7 @@ struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   return NULL;
 }
 
-int gimli_dwarf_die_get_uint64_t_attr(
+static int gimli_dwarf_die_get_uint64_t_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode, uint64_t *val)
 {
   struct gimli_dwarf_attr *attr;
@@ -1347,6 +1374,13 @@ static int load_arange(struct gimli_object_mapping *m)
     memcpy(&seg_size, data, sizeof(seg_size));
     data += sizeof(seg_size);
 
+    if (seg_size) {
+      printf("DWARF: I don't support segmented debug_aranges data\n");
+      return 0;
+    }
+
+//    printf("arange: ver %d addr_size %d seg %d\n", ver, addr_size, seg_size);
+
     /* align to double-addr-size boundary */
     mask = (2 * addr_size) - 1;
     data += mask;
@@ -1354,15 +1388,23 @@ static int load_arange(struct gimli_object_mapping *m)
 
     while (data < next) {
       /* now we have a series of tuples */
-      void *addr;
+      gimli_addr_t addr;
       uint64_t l;
       struct dw_die_arange *arange;
 
-      memcpy(&addr, data, sizeof(addr));
-      data += sizeof(addr);
+      if (addr_size == 8) {
+        memcpy(&l, data, sizeof(l));
+        data += sizeof(l);
+        addr = l;
+      } else {
+        memcpy(&len32, data, sizeof(len32));
+        data += sizeof(len32);
+        addr = len32;
+      }
+
       if (data >= next) break;
 
-      if (sizeof(void*) == 8) {
+      if (addr_size == 8) {
         memcpy(&l, data, sizeof(l));
         data += sizeof(l);
       } else {
@@ -1382,11 +1424,11 @@ static int load_arange(struct gimli_object_mapping *m)
         m->objfile->arange = realloc(m->objfile->arange, m->objfile->alloc_arange * sizeof(*arange));
       }
       arange = &m->objfile->arange[m->objfile->num_arange++];
-      arange->addr = (uint64_t)(intptr_t)addr;
+      arange->addr = addr;
       arange->len = l;
       arange->di_offset = di_offset;
 
-//      printf("arange: pc=%p addr=%p %llx\n", cur->st.pc, addr, l);
+//      printf("arange: addr=" PTRFMT " 0x%" PRIx64 "\n", addr, l);
     }
     data = next;
   }
@@ -1413,6 +1455,158 @@ static int search_compare_arange(const void *K, const void *R)
   }
 
   return 1;
+}
+
+/* Given a CU, locate the DIE corresponding to the provided data address */
+static struct gimli_dwarf_die *find_var_die_for_addr(gimli_proc_t proc,
+    struct gimli_object_mapping *m,
+    struct gimli_dwarf_cu *cu, gimli_addr_t addr)
+{
+  struct gimli_dwarf_die *die, *kid;
+  struct gimli_unwind_cursor cur;
+  uint64_t frame_base = 0;
+  uint64_t comp_unit_base = 0;
+  int is_stack = 0;
+  struct gimli_dwarf_attr *frame_base_attr;
+
+  memset(&cur, 0, sizeof(cur));
+  cur.proc = proc;
+
+  STAILQ_FOREACH(die, &cu->dies, siblings) {
+    uint64_t lopc, hipc;
+
+    if (die->tag != DW_TAG_compile_unit) {
+      printf("DIE is not a compile unit!? tag=0x%" PRIx64 "\n", die->tag);
+      continue;
+    }
+
+    gimli_dwarf_die_get_uint64_t_attr(die,
+        DW_AT_low_pc, &comp_unit_base);
+
+    frame_base_attr = gimli_dwarf_die_get_attr(die, DW_AT_frame_base);
+    if (frame_base_attr) {
+      switch (frame_base_attr->form) {
+        case DW_FORM_block:
+          dw_eval_expr(&cur, (uint8_t*)frame_base_attr->ptr, frame_base_attr->code,
+              0, &frame_base, NULL, &is_stack);
+          break;
+        case DW_FORM_data8:
+          dw_calc_location(&cur, comp_unit_base, m,
+              frame_base_attr->code, &frame_base, NULL, &is_stack);
+          break;
+        default:
+          printf("Unhandled frame base form 0x%" PRIx64 "\n",
+              frame_base_attr->form);
+          return 0;
+      }
+    }
+
+    /* this is the die for the compilation unit; we need to walk
+     * through it and find the data it contains */
+    STAILQ_FOREACH(kid, &die->kids, siblings) {
+      uint64_t res = 0;
+      is_stack = 1;
+      struct gimli_dwarf_attr *location, *type, *name;
+
+      if (kid->tag != DW_TAG_variable && kid->tag != DW_TAG_constant) {
+//        printf("skipping kid with tag 0x%" PRIx64 "\n", kid->tag);
+        continue;
+      }
+
+      location = gimli_dwarf_die_get_attr(kid, DW_AT_location);
+      if (!location) {
+        continue;
+      }
+
+      switch (location->form) {
+        case DW_FORM_block:
+          if (!dw_eval_expr(&cur, (uint8_t*)location->ptr, location->code,
+                frame_base, &res, NULL, &is_stack)) {
+            res = 0;
+          }
+          break;
+        case DW_FORM_data8:
+          if (!dw_calc_location(&cur, comp_unit_base, m,
+                location->code, &res, NULL, &is_stack)) {
+            res = 0;
+          }
+          break;
+        default:
+          printf("Unhandled location form 0x%" PRIx64 "\n", location->form);
+          res = 0;
+      }
+
+      if (res == addr) {
+        return kid;
+      }
+    }
+  }
+
+  /* no joy */
+  return NULL;
+}
+
+/* attempt to locate a DW_TAG_variable or DW_TAG_constant die
+ * corresponding to the provided data address.
+ * We make this attempt using the debug_aranges data, but it
+ * may not be successful, as gcc doesn't appear to generate
+ * it for the data segment, despite the DWARF standard indicating
+ * that it can be used in that fashion.
+ * In that case, we have to fall back to crawling the CU data.
+ * */
+static struct gimli_dwarf_die *gimli_dwarf_get_die_for_data(
+    gimli_proc_t proc, gimli_addr_t pc)
+{
+  struct gimli_object_mapping *m;
+  struct gimli_dwarf_cu *cu;
+  struct dw_die_arange *arange;
+  struct gimli_dwarf_die *die;
+  gimli_mapped_object_t file;
+  const uint8_t *cuptr;
+  uint64_t off;
+
+  m = gimli_mapping_for_addr(proc, pc);
+  if (!m) {
+    return NULL;
+  }
+  file = m->objfile;
+
+  if (!file->elf) {
+    return NULL;
+  }
+
+  if (!file->arange && !load_arange(m)) {
+    return NULL;
+  }
+
+  arange = bsearch(&pc, file->arange, file->num_arange,
+      sizeof(*arange), search_compare_arange);
+  if (arange) {
+    /* arange gives us a pointer to the CU */
+    cu = find_cu(file, arange->di_offset);
+    if (!cu) {
+      cu = load_cu(file, arange->di_offset);
+    }
+    if (cu) {
+      return find_var_die_for_addr(proc, m, cu, pc);
+    }
+  }
+
+  cuptr = file->debug_info.start;
+  while (cuptr < file->debug_info.end) {
+    off = cuptr - file->debug_info.start;
+    cu = find_cu(file, off);
+    if (!cu) {
+      cu = load_cu(file, off);
+    }
+    if (!cu) break;
+    cuptr = file->debug_info.start + cu->end;
+
+    die = find_var_die_for_addr(proc, m, cu, pc);
+    if (die) return die;
+  }
+
+  return NULL;
 }
 
 struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr_t pc)
@@ -1468,7 +1662,6 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr
       hipc = arange->len;
 
       if (kid->tag != DW_TAG_subprogram) {
-//        printf("skipping kid with tag 0x%" PRIx64 "\n", kid->tag);
         continue;
       }
 
@@ -1479,29 +1672,13 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr
         continue;
       }
 
-#if 0
-      printf("consider pc:" PTRFMT " vs " PTRFMT " - " PTRFMT " (m->base=%" PRIx64 ")\n",
-          pc, lopc, hipc, m->base);
-#endif
-
       if (pc >= lopc && pc <= hipc) {
         return kid;
       }
     }
-
-#if 0
-    lopc = 0;
-    hipc = 0;
-      gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_low_pc, &lopc);
-      gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_high_pc, &hipc);
-
-      printf("bottom pc:" PTRFMT " vs " PTRFMT " - " PTRFMT " (m->base=%" PRIx64 ")\n",
-          pc, lopc, hipc, m->base);
-#endif
   }
 
   /* no joy */
-//  printf("fell out bottom; no subprogram in range for pc " PTRFMT "\n", pc);
   return NULL;
 }
 
@@ -1539,69 +1716,6 @@ int gimli_dwarf_read_value(gimli_proc_t proc,
   return 0;
 }
 
-static int do_before(
-    struct gimli_unwind_cursor *cur,
-//    int tid, int frameno, void *pcaddr, void *context,
-    const char *datatype, const char *varname,
-    void *varaddr, uint64_t varsize)
-{
-  gimli_mapped_object_t file;
-
-#if 0
-  for (file = cur->proc->files; file; file = file->next) {
-    if (file->tracer_module &&
-        file->tracer_module->api_version >= 2 &&
-        file->tracer_module->before_print_frame_var) {
-      if (file->tracer_module->before_print_frame_var(
-            &ana_api, file->objname, cur->tid, cur->frameno,
-            cur->st.pc, (void*)cur, datatype, varname, varaddr, varsize)
-          == GIMLI_ANA_SUPPRESS) {
-        return 1;
-      }
-    }
-  }
-#endif
-
-  /* ideally would like to factor this out somewhere nicer...
-   * When we see a siginfo_t, replace our usual render with a more terse
-   * and readable version; siginfo_t is quite a big structure with a lot
-   * of union fields that are quite noisy to read */
-  if (!strcmp(datatype, "siginfo_t *")) {
-    char namebuf[1024];
-    siginfo_t si;
-
-    if (gimli_read_mem(cur->proc, (gimli_addr_t)varaddr,
-          &si, sizeof(si)) == sizeof(si)) {
-      gimli_render_siginfo(cur->proc, &si, namebuf, sizeof(namebuf));
-      printf("  siginfo_t *%s = %p\n    %s\n",
-          varname, varaddr, namebuf);
-      return 1;
-    }
-  }
-  return 0;
-}
-
-static int do_after(
-    struct gimli_unwind_cursor *cur, // FIXME: gimli_stack_frame_t
-//    int tid, int frameno, void *pcaddr, void *context,
-    const char *datatype, const char *varname,
-    void *varaddr, uint64_t varsize)
-{
-  gimli_mapped_object_t file;
-
-#if 0
-  for (file = cur->proc->files; file; file = file->next) {
-    if (file->tracer_module &&
-        file->tracer_module->api_version >= 2 &&
-        file->tracer_module->after_print_frame_var) {
-      file->tracer_module->after_print_frame_var(
-          &ana_api, file->objname, cur->tid, cur->frameno,
-          cur->st.pc, (void*)cur, datatype, varname, varaddr, varsize);
-    }
-  }
-#endif
-  return 0;
-}
 
 static gimli_type_t load_type(
     gimli_mapped_object_t file,
@@ -1644,7 +1758,10 @@ static void populate_struct_or_union(
 
     memt = load_type(file, type);
     if (!memt) {
-      printf("failed to load type info for member %s\n", mname->ptr);
+#if 0
+      printf("failed to load type info for member %s %" PRIx64 "\n", mname->ptr,
+          type->code);
+#endif
       continue;
     }
     offset = 0;
@@ -1707,8 +1824,14 @@ static gimli_type_t populate_array(gimli_mapped_object_t file,
     return NULL;
   }
 
+  /* find target type */
   type = gimli_dwarf_die_get_attr(die, DW_AT_type);
-  t = array_dim(file, STAILQ_FIRST(&die->kids), load_type(file, type));
+  t = load_type(file, type);
+  if (!t) {
+    return NULL;
+  }
+
+  t = array_dim(file, STAILQ_FIRST(&die->kids), t);
   return t;
 }
 
@@ -1798,21 +1921,16 @@ static int populate_enum(gimli_type_t t,
   return 1;
 }
 
-static gimli_type_t load_type(
+static gimli_type_t load_type_die(
     gimli_mapped_object_t file,
-    struct gimli_dwarf_attr *type)
+    struct gimli_dwarf_die *die)
 {
   gimli_type_t t = NULL, target = NULL;
-  struct gimli_dwarf_die *die;
   uint64_t ate, size = 0;
   struct gimli_type_encoding enc;
   const char *type_name = NULL;
   struct gimli_dwarf_attr *name = NULL;
-
-  die = gimli_dwarf_get_die(file, type->code);
-  if (!die) {
-    return NULL;
-  }
+  struct gimli_dwarf_attr *type = NULL;
 
   if (file->die_to_type) {
     if (gimli_hash_find_ptr(file->die_to_type, die, (void**)&t)) {
@@ -1982,6 +2100,104 @@ static gimli_type_t load_type(
   }
 
   return t;
+}
+
+static gimli_type_t load_type(
+    gimli_mapped_object_t file,
+    struct gimli_dwarf_attr *type)
+{
+  struct gimli_dwarf_die *die;
+
+  die = gimli_dwarf_get_die(file, type->code);
+  if (!die) {
+    return NULL;
+  }
+
+  return load_type_die(file, die);
+}
+
+static void load_types_in_die(gimli_mapped_object_t file,
+    struct gimli_dwarf_die *die)
+{
+  struct gimli_dwarf_die *kid;
+
+  switch (die->tag) {
+    case DW_TAG_base_type:
+    case DW_TAG_pointer_type:
+    case DW_TAG_const_type:
+    case DW_TAG_volatile_type:
+    case DW_TAG_restrict_type:
+    case DW_TAG_typedef:
+    case DW_TAG_structure_type:
+    case DW_TAG_union_type:
+    case DW_TAG_array_type:
+    case DW_TAG_enumeration_type:
+    case DW_TAG_subroutine_type:
+      load_type_die(file, die);
+      break;
+  }
+
+  STAILQ_FOREACH(kid, &die->kids, siblings) {
+    load_types_in_die(file, kid);
+  }
+}
+
+/* pull in all the CU's and register all the types we find;
+ * this is relatively expensive but we only do it based
+ * on user request; a module has to ask for a type by name
+ * that we haven't already loaded */
+void gimli_dwarf_load_all_types(gimli_mapped_object_t file)
+{
+  struct gimli_dwarf_cu *cu;
+  struct gimli_dwarf_die *die;
+  const uint8_t *cuptr;
+  uint64_t off;
+
+  if (!init_debug_info(file)) {
+    return;
+  }
+
+  cuptr = file->debug_info.start;
+  while (cuptr < file->debug_info.end) {
+    off = cuptr - file->debug_info.start;
+    cu = find_cu(file, off);
+    if (!cu) {
+      cu = load_cu(file, off);
+    }
+    if (!cu) break;
+    cuptr = file->debug_info.start + cu->end;
+
+    /* now walk the DIEs and map the types */
+    STAILQ_FOREACH(die, &cu->dies, siblings) {
+      load_types_in_die(file, die);
+    }
+  }
+}
+
+/* Locate the DIE for a data address and load its type
+ * information */
+gimli_type_t gimli_dwarf_load_type_for_data(gimli_proc_t proc,
+    gimli_addr_t addr)
+{
+  struct gimli_dwarf_die *die;
+  struct gimli_object_mapping *m;
+  gimli_mapped_object_t file;
+  struct gimli_dwarf_attr *type;
+
+  die = gimli_dwarf_get_die_for_data(proc, addr);
+  if (!die) {
+    return NULL;
+  }
+
+  m = gimli_mapping_for_addr(proc, addr);
+  file = m->objfile;
+
+  type = gimli_dwarf_die_get_attr(die, DW_AT_type);
+  if (!type) {
+    return NULL;
+  }
+
+  return load_type(file, type);
 }
 
 static void load_var(

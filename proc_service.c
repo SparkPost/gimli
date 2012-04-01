@@ -173,7 +173,8 @@ static int resume_threads(const td_thrhandle_t *thr, void *pp)
     return 0;
   }
 
-  if (info.ti_lid != proc->pid && gimli_ptrace(PTRACE_DETACH, info.ti_lid, NULL, SIGCONT)) {
+  if (info.ti_lid != proc->pid && 
+      gimli_ptrace(PTRACE_DETACH, info.ti_lid, NULL, (void*)SIGCONT)) {
     fprintf(stderr, "resume_threads: failed to detach from thread %d %s\n",
         info.ti_lid, strerror(errno));
   }

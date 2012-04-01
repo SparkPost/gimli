@@ -217,7 +217,7 @@ static gimli_iter_status_t run_trace_module(
   return GIMLI_ITER_CONT;
 }
 
-void trace_process(int pid)
+static void trace_process(int pid)
 {
   int i;
   struct glider_args args;

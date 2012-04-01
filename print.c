@@ -541,11 +541,13 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
   char addrkey[64];
   int dummy;
 
-  data->suppress = 0;
+  if (data->frame) {
+    data->suppress = 0;
 
-  gimli_hash_iter(data->proc->files, should_suppress_var, data);
-  if (data->suppress) {
-    return GIMLI_ITER_CONT;
+    gimli_hash_iter(data->proc->files, should_suppress_var, data);
+    if (data->suppress) {
+      return GIMLI_ITER_CONT;
+    }
   }
 
   if (!t) {
@@ -624,7 +626,9 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
   }
 
 after:
-  gimli_hash_iter(data->proc->files, after_print_var, data);
+  if (data->frame) {
+    gimli_hash_iter(data->proc->files, after_print_var, data);
+  }
 
   return GIMLI_ITER_CONT;
 }
@@ -655,6 +659,24 @@ static void tidy_deref(void)
   }
 }
 
+int gimli_print_addr_as_type(gimli_proc_t proc, const char *varname,
+    gimli_type_t t, gimli_addr_t addr)
+{
+  struct print_data data;
+
+  memset(&data, 0, sizeof(data));
+  data.proc = proc;
+  data.show_decl = 1;
+  data.prefix = " = ";
+  data.suffix = "\n";
+  data.addr = addr;
+  data.size = gimli_type_size(t);
+
+  print_var(&data, t, varname);
+
+  return 1;
+}
+
 void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
 {
   const char *name;
@@ -675,7 +697,7 @@ void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
     name = gimli_pc_sym_name(cur.proc, (gimli_addr_t)cur.st.pc,
         namebuf, sizeof(namebuf));
     printf("#%-2d " PTRFMT " %s", nframe, (PTRFMT_T)cur.st.pc, name);
-    if (dwarf_determine_source_line_number(cur.proc, cur.st.pc,
+    if (gimli_determine_source_line_number(cur.proc, (gimli_addr_t)cur.st.pc,
           filebuf, sizeof(filebuf), &lineno)) {
       printf(" (%s:%" PRId64 ")", filebuf, lineno);
     }

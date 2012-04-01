@@ -9,6 +9,9 @@ AC_C_INLINE
 
 CFLAGS=`echo $CFLAGS | sed -e 's/-O2//;'`
 CFLAGS="-D_REENTRANT $CFLAGS"
+if test "$GCC" == "yes" ; then
+  CFLAGS="$CFLAGS -Wmissing-prototypes -Wformat"
+fi
 MODULE_SUFFIX=".so"
 SHLIB_SUFFIX=".so"
 DWARF_DEBUG_FLAGS="-gdwarf-2 -g3"

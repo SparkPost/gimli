@@ -112,7 +112,7 @@ static uint16_t native_machine =
 #endif
   ;
 
-struct gimli_elf_shdr *gimli_get_section_by_index(
+static struct gimli_elf_shdr *gimli_get_section_by_index(
   struct gimli_elf_ehdr *elf, int section)
 {
   struct gimli_elf_shdr *s;
@@ -125,7 +125,7 @@ struct gimli_elf_shdr *gimli_get_section_by_index(
   return NULL;
 }
 
-struct gimli_elf_shdr *gimli_get_elf_section_by_name(struct gimli_elf_ehdr *elf,
+static struct gimli_elf_shdr *gimli_get_elf_section_by_name(struct gimli_elf_ehdr *elf,
   const char *name)
 {
   struct gimli_elf_shdr *s = NULL;
@@ -138,7 +138,7 @@ struct gimli_elf_shdr *gimli_get_elf_section_by_name(struct gimli_elf_ehdr *elf,
   return NULL;
 }
 
-const char *gimli_get_section_data(struct gimli_elf_ehdr *elf, int section)
+static const char *gimli_get_section_data(struct gimli_elf_ehdr *elf, int section)
 {
   struct gimli_elf_shdr *s;
   int i;
@@ -187,7 +187,7 @@ struct gimli_section_data *gimli_get_section_by_name(
 }
 
 
-const char *gimli_elf_get_string(struct gimli_elf_ehdr *elf,
+static const char *gimli_elf_get_string(struct gimli_elf_ehdr *elf,
   int section, uint64_t off)
 {
   const char *d = gimli_get_section_data(elf, section);

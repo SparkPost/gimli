@@ -187,10 +187,9 @@ struct gimli_stack_trace {
 
 
 struct gimli_line_info {
-  char *filename;
+  const char *filename;
   uint64_t lineno;
-  void *addr;
-  void *end;
+  gimli_addr_t addr, end;
 };
 
 #ifdef __MACH__
@@ -420,9 +419,6 @@ int gimli_dwarf_unwind_next(struct gimli_unwind_cursor *cur);
 int gimli_dwarf_regs_to_thread(struct gimli_unwind_cursor *cur);
 int gimli_thread_regs_to_dwarf(struct gimli_unwind_cursor *cur);
 void *gimli_reg_addr(struct gimli_unwind_cursor *cur, int col);
-int dwarf_determine_source_line_number(gimli_proc_t proc,
-  void *pc, char *src, int srclen,
-  uint64_t *lineno);
 
 char **gimli_init_proctitle(int argc, char **argv);
 void gimli_set_proctitle(const char *fmt, ...);
@@ -438,12 +434,7 @@ int gimli_demangle(const char *mangled, char *out, int out_size);
 gimli_err_t gimli_attach(gimli_proc_t proc);
 gimli_err_t gimli_detach(gimli_proc_t proc);
 
-const char *gimli_data_sym_name(gimli_proc_t proc, gimli_addr_t addr, char *buf, int buflen);
-const char *gimli_pc_sym_name(gimli_proc_t proc, gimli_addr_t addr, char *buf, int buflen);
-int gimli_read_mem(gimli_proc_t proc, gimli_addr_t src, void *dest, int len);
-int gimli_write_mem(gimli_proc_t proc, gimli_addr_t src, const void *dest, int len);
 struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc, const char *obj, const char *name);
-char *gimli_read_string(gimli_proc_t proc, gimli_addr_t addr);
 int gimli_get_parameter(void *context, const char *varname,
   const char **datatype, void **addr, uint64_t *size);
 extern struct gimli_symbol *find_symbol_for_addr(gimli_mapped_object_t f,
@@ -481,7 +472,28 @@ const char *gimli_dwarf_resolve_type_name(gimli_mapped_object_t f,
   struct gimli_dwarf_attr *type);
 int gimli_dwarf_read_value(gimli_proc_t proc, gimli_addr_t addr, int is_stack, void *out, uint64_t size);
 
+gimli_type_t gimli_dwarf_load_type_for_data(gimli_proc_t proc,
+    gimli_addr_t addr);
 
+int tracer_attach(int pid);
+void gimli_proc_service_destroy(gimli_proc_t proc);
+#ifdef __linux__
+long gimli_ptrace(int cmd, pid_t pid, void *addr, void *data);
+#endif
+int gimli_init_unwind(struct gimli_unwind_cursor *cur,
+  struct gimli_thread_state *st);
+int gimli_is_signal_frame(struct gimli_unwind_cursor *cur);
+void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame);
+
+int dw_calc_location(struct gimli_unwind_cursor *cur,
+  uint64_t compilation_unit_base_addr,
+  struct gimli_object_mapping *m, uint64_t offset, uint64_t *res,
+  gimli_object_file_t elf, int *is_stack);
+void gimli_dwarf_load_all_types(gimli_mapped_object_t file);
+
+void gimli_object_file_destroy(struct gimli_elf_ehdr *elf);
+void gimli_hash_diagnose(gimli_hash_t h);
+void gimli_dw_fde_destroy(gimli_mapped_object_t file);
 
 /* ensure that the table size is a power of 2 */
 static inline uint32_t power_2(uint32_t x)

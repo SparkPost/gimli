@@ -48,9 +48,9 @@ typedef uint64_t gimli_addr_t;
 
 struct gimli_symbol {
   /** de-mangled symbol name */
-  char *name;
+  const char *name;
   /** raw, un-mangled symbol name */
-  char *rawname;
+  const char *rawname;
   /** resolved address in the target process */
   gimli_addr_t addr;
   /** size of the symbol. Not all systems provide this information
@@ -60,6 +60,8 @@ struct gimli_symbol {
 
 #define GIMLI_ANA_API_VERSION 3
 
+/* {{{ Deprecated V1 and V2 Gimli APIs enclosed in this block */
+
 struct gimli_proc_stat {
   pid_t pid;
   size_t pr_size;
@@ -68,18 +70,26 @@ struct gimli_proc_stat {
 
 struct gimli_ana_api {
   int api_version;
-  /** lookup a symbol based on its raw, un-mangled, name */
+  /** lookup a symbol based on its raw, un-mangled, name.
+   * @deprecated use gimli_sym_lookup() instead.
+   * */
   struct gimli_symbol *(*sym_lookup)(const char *obj, const char *name);
 
-  /** compute a readable label for an address */
+  /** compute a readable label for an address.
+   * @deprecated use gimli_data_sym_name() or gimli_pc_sym_name() instead.
+   * */
   const char *(*sym_name)(void *addr, char *buf, int buflen);
 
   /** read memory from the target process, returns the length that
-   * was successfully read */
+   * was successfully read.
+   * @deprecated use gimli_read_mem() or gimli_proc_mem_ref()
+   * */
   int (*read_mem)(void *src, void *dest, int len);
 
   /** read a NUL terminated string from target process.
-   * The caller must free() the memory when it is no longer required */
+   * The caller must free() the memory when it is no longer required.
+   * @deprecated use gimli_read_string()
+   * */
   char *(*read_string)(void *src);
 
 /* API Version 2 begins here */
@@ -87,13 +97,17 @@ struct gimli_ana_api {
   /** determine the source filename and line number information
    * for a given code address.
    * Returns 1 if the source information is found, 0 otherwise.
-   * Populates filebuf and lineno if the source is found. */
+   * Populates filebuf and lineno if the source is found.
+   * @deprecated use gimli_determine_source_line_number()
+   * */
   int (*get_source_info)(void *addr, char *buf, int buflen, int *lineno);
 
   /** Given a context, locate a named parameter and return its
    * C-style datatype name, address and size.  Returns 1 if located.
    * 0 otherwise.
-   * context is a gimli_stack_frame_t */
+   * context is a gimli_stack_frame_t.
+   * @deprecated use gimli_stack_frame_resolve_var()
+   * */
   int (*get_parameter)(void *context, const char *varname,
     const char **datatype, void **addr, uint64_t *size);
 
@@ -102,7 +116,9 @@ struct gimli_ana_api {
    * This is logically equivalent to sym_lookup, deref'ing the
    * result, and then read_string'ing the result of that.
    * The caller must free() the return memory when it is no longer
-   * required. */
+   * required.
+   * @deprecated use gimli_get_string_symbol()
+   * */
   char *(*get_string_symbol)(const char *obj, const char *name);
 
   /** Lookup a symbol and copy its target into a caller provided
@@ -112,7 +128,9 @@ struct gimli_ana_api {
    * de-reference each of those levels to arrive at a final address.
    * SIZE bytes of data will then be read from the final address
    * and copied in the the caller provided buffer.
-   * Returns 0 if SIZE could not be read completely, 1 on success */
+   * Returns 0 if SIZE could not be read completely, 1 on success.
+   * @deprecated use gimli_copy_from_symbol()
+   * */
   int (*copy_from_symbol)(const char *obj, const char *name,
     int deref, void *addr, uint32_t size);
 
@@ -196,6 +214,8 @@ struct gimli_ana_module {
 typedef struct gimli_ana_module *(*gimli_module_init_func)(
   const struct gimli_ana_api *api);
 extern struct gimli_ana_module *gimli_ana_init(const struct gimli_ana_api *api);
+
+/* }}} end of deprecated V1 and V2 APIs */
 
 /* Version 3 APIs start here */
 
@@ -332,27 +352,77 @@ gimli_iter_status_t gimli_stack_frame_visit_vars(
     gimli_stack_frame_visit_f func,
     void *arg);
 
+/** Given ADDR and a type definition, print out the contents of
+ * ADDR interpreted as that type, using VARNAME as the hypothetical
+ * name of the variable */
+int gimli_print_addr_as_type(gimli_proc_t proc, const char *varname,
+    gimli_type_t t, gimli_addr_t addr);
+
+const char *gimli_data_sym_name(gimli_proc_t proc,
+    gimli_addr_t addr, char *buf, int buflen);
+const char *gimli_pc_sym_name(gimli_proc_t proc,
+    gimli_addr_t addr, char *buf, int buflen);
+struct gimli_symbol *gimli_sym_lookup(gimli_proc_t proc,
+    const char *obj, const char *name);
+
+int gimli_determine_source_line_number(gimli_proc_t proc,
+  gimli_addr_t pc, char *src, int srclen,
+  uint64_t *lineno);
+
+/* {{{ Reading and writing memory */
+
+/** Read memory from SRC address in the target and copy it into the
+ * buffer DEST whose length is LEN.
+ * Returns the number of bytes that were successfully read from the
+ * target */
+int gimli_read_mem(gimli_proc_t proc, gimli_addr_t src, void *dest, int len);
+
+/** Write memory to DEST address in the target by copying it from the
+ * buffer SRC whose length is LEN.
+ * Returns the number of bytes that were successfully written to the
+ * target */
+int gimli_write_mem(gimli_proc_t proc, gimli_addr_t dest, const void *src, int len);
+
+/** Given the address of a pointer in the target, de-reference it
+ * and return the result.
+ * This automatically handles differences in pointer size between
+ * gimli and the target process */
+int gimli_read_pointer(gimli_proc_t proc, gimli_addr_t addr, gimli_addr_t *val);
+
+/** read a NUL terminated string from target process.
+ * The caller must free() the memory when it is no longer required.  */
+char *gimli_read_string(gimli_proc_t proc, gimli_addr_t addr);
+
+/** Lookup a symbol, treat it as a char* in the target and return a copy of the
+ * NUL-terminated string to which it points.
+ * This is logically equivalent to
+ * sym_lookup, deref'ing the result, and then read_string'ing the result of
+ * that.  The caller must free() the returned memory when it is no longer
+ * required. */
+char *gimli_get_string_symbol(gimli_proc_t proc,
+    const char *obj, const char *name);
+
+/** Lookup a symbol and copy its target into a caller provided buffer.
+ * If deref is non-zero, the symbol value is treated as pointer with that
+ * many levels of indirection; this function will de-reference each of those
+ * levels to arrive at a final address.  SIZE bytes of data will then be read
+ * from the final address and copied in the the caller provided buffer.
+ * Returns 0 if SIZE could not be read completely, 1 on success */
+int gimli_copy_from_symbol(const char *obj, const char *name,
+  int deref, void *buf, uint32_t size);
 
 /** Returns mapping to the target address space.
- * Depending on the system and the target, this may be a live mapping
- * wherein writes to the local area are immediately reflected in the
- * target, or it may be a buffered copy of the data that will not
- * update in the target until gimli_proc_mem_commit() is called.
- * For portability, if you want to ensure that writes take effect,
- * you must always call gimli_proc_mem_commit at the appropriate time.
+ * Writes will be buffered and will not reflect in the target
+ * until gimli_proc_mem_commit() is called.
  *
  * NOTE! always verify the length of the mapping, as it may be
  * shorter than you requested, especially if a portion of the
  * range is invalid.
- *
- * NOTE! on systems that can mmap the ref, some memory accesses
- * may lead to a fault in the local process!
  * */
 gimli_err_t gimli_proc_mem_ref(gimli_proc_t p,
     gimli_addr_t addr, size_t size, gimli_mem_ref_t *ref);
 
-/** For targets that don't support direct mmap of the address space,
- * this function will apply changes in the mapping to the target.
+/** apply changes in the mapping to the target.
  * Changes are not guaranteed to be applied unless you call this
  * function at the appropriate time */
 gimli_err_t gimli_proc_mem_commit(gimli_mem_ref_t ref);
@@ -361,7 +431,7 @@ gimli_err_t gimli_proc_mem_commit(gimli_mem_ref_t ref);
 gimli_addr_t gimli_mem_ref_target(gimli_mem_ref_t mem);
 
 /** Returns the base address of a mapping in my address space.
- * This is the start of the readable/writable mapped view of
+ * This is the start of the readable/writable view of
  * the target process */
 void *gimli_mem_ref_local(gimli_mem_ref_t mem);
 
@@ -375,9 +445,16 @@ void gimli_mem_ref_delete(gimli_mem_ref_t mem);
 /** adds a reference to a mapping */
 void gimli_mem_ref_addref(gimli_mem_ref_t mem);
 
+/* }}} */
 
-/* --- types */
+/* {{{ --- types */
 
+gimli_type_t gimli_find_type_by_name(gimli_proc_t proc,
+    const char *objname,
+    const char *tname);
+
+gimli_type_t gimli_find_type_by_addr(gimli_proc_t proc,
+    gimli_addr_t addr);
 
 /** create a new empty type collection object */
 gimli_type_collection_t gimli_type_collection_new(void);
@@ -567,10 +644,6 @@ const char *gimli_type_enum_resolve(gimli_type_t t, int value);
 struct gimli_type_arinfo {
   /** type of array elements */
   gimli_type_t contents;
-#if 0
-  /** type of array index */
-  gimli_type_t idx;
-#endif
   /** size of the array */
   uint32_t nelems;
 };
@@ -626,6 +699,8 @@ typedef gimli_iter_status_t gimli_type_visit_f(
 gimli_iter_status_t gimli_type_visit(gimli_type_t t,
     gimli_type_visit_f func,
     void *arg);
+
+/* }}} */
 
 #ifdef __cplusplus
 }

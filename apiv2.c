@@ -16,7 +16,8 @@ static int v2_get_source_info(void *addr, char *buf,
   int buflen, int *lineno)
 {
   uint64_t l;
-  int ret = dwarf_determine_source_line_number(the_proc, addr, buf, buflen, &l);
+  int ret = gimli_determine_source_line_number(the_proc,
+      (gimli_addr_t)addr, buf, buflen, &l);
   if (ret) {
     *lineno = (int)l;
   }
@@ -25,39 +26,13 @@ static int v2_get_source_info(void *addr, char *buf,
 
 static char *v2_get_string_symbol(const char *obj, const char *name)
 {
-  struct gimli_symbol *sym;
-
-  sym = gimli_sym_lookup(the_proc, obj, name);
-  if (sym) {
-    void *addr;
-
-    if (gimli_read_mem(the_proc, sym->addr, &addr,
-          sizeof(addr)) == sizeof(addr)) {
-      return gimli_read_string(the_proc, (gimli_addr_t)addr);
-    }
-  }
-  return NULL;
+  return gimli_get_string_symbol(the_proc, obj, name);
 }
 
 static int v2_copy_from_symbol(const char *obj, const char *name,
   int deref, void *buf, uint32_t size)
 {
-  struct gimli_symbol *sym;
-
-  sym = gimli_sym_lookup(the_proc, obj, name);
-  if (sym) {
-    void *addr = (void*)sym->addr;
-
-    while (deref--) {
-      if (gimli_read_mem(the_proc, (gimli_addr_t)addr,
-            &addr, sizeof(addr)) != sizeof(addr)) {
-        return 0;
-      }
-    }
-
-    return gimli_read_mem(the_proc, (gimli_addr_t)addr, buf, size) == size;
-  }
-  return 0;
+  return gimli_copy_from_symbol(obj, name, deref, buf, size);
 }
 
 static struct gimli_symbol *v1_sym_lookup(

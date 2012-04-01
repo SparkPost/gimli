@@ -16,7 +16,8 @@ glider_LDADD = libgimli_ana.la liblua.la $(TRACELDFLAGS)
 libgimli_ana_la_SOURCES = \
 	trace.c linux.c elf.c hash.c elf-read.c dwarf-read.c dwarf-unwind.c \
 	dwarf-expr.c darwin.c solaris.c demangle.c freebsd.c proc.c \
-	proc_service.c symbols.c types.c maps.c apiv2.c print.c slab.c
+	proc_service.c symbols.c types.c maps.c apiv2.c print.c slab.c \
+	apiv3.c
 
 libgimli_la_SOURCES = \
   heartbeat.c

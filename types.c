@@ -46,7 +46,7 @@ struct gimli_type {
   STAILQ_ENTRY(gimli_type) typelist;
 
   int kind;
-  char *name;
+  const char *name;
   char *declname;
   char declbuf[24];
   struct gimli_type_encoding enc;
@@ -55,7 +55,7 @@ struct gimli_type {
   struct gimli_type_arinfo arinfo;
 
   struct {
-    char *name;
+    const char *name;
     union {
       struct gimli_type_membinfo info;
       int value;
@@ -462,6 +462,73 @@ gimli_type_t gimli_type_collection_find_type(
   return NULL;
 }
 
+struct type_lookup_data {
+  const char *typename;
+  gimli_type_t result;
+};
+
+static gimli_iter_status_t find_type_in_object1(
+    const char *k, int klen, void *item, void *arg)
+{
+  struct type_lookup_data *data = arg;
+  gimli_mapped_object_t file = item;
+
+  if (file->types) {
+    data->result = gimli_type_collection_find_type(file->types, data->typename);
+    if (data->result) {
+      return GIMLI_ITER_STOP;
+    }
+  }
+
+  return GIMLI_ITER_CONT;
+}
+
+static gimli_iter_status_t find_type_in_object2(
+    const char *k, int klen, void *item, void *arg)
+{
+  struct type_lookup_data *data = arg;
+  gimli_mapped_object_t file = item;
+
+  gimli_dwarf_load_all_types(file);
+
+  if (file->types) {
+    data->result = gimli_type_collection_find_type(file->types, data->typename);
+    if (data->result) {
+      return GIMLI_ITER_STOP;
+    }
+  }
+
+  return GIMLI_ITER_CONT;
+}
+
+gimli_type_t gimli_find_type_by_name(gimli_proc_t proc,
+    const char *objname,
+    const char *typename)
+{
+  gimli_mapped_object_t f;
+  struct type_lookup_data data;
+
+  memset(&data, 0, sizeof(data));
+  data.typename = typename;
+
+  /* stage 1: lookup in already processed type data */
+  gimli_hash_iter(proc->files, find_type_in_object1, &data);
+  if (data.result) {
+    return data.result;
+  }
+
+  /* stage 2: more expensive crawl of type data */
+  gimli_hash_iter(proc->files, find_type_in_object2, &data);
+
+  return data.result;
+}
+
+gimli_type_t gimli_find_type_by_addr(gimli_proc_t proc,
+    gimli_addr_t addr)
+{
+  return gimli_dwarf_load_type_for_data(proc, addr);
+}
+
 gimli_type_t gimli_type_collection_find_function(
     gimli_type_collection_t col,
     const char *name)
@@ -504,10 +571,12 @@ size_t gimli_type_size(gimli_type_t t)
 
   s = t->enc.bits;
 
+#if 0
   if (s == 0) {
     printf("gimli_type_size: kind=%d name=%s has 0 size!\n",
         t->kind, t->name);
   }
+#endif
   return s;
 }
 
@@ -556,7 +625,7 @@ static gimli_type_t new_type(gimli_type_collection_t col,
   }
 
   if (name) {
-    t->name = name;//strdup(name);
+    t->name = name;
     if (!t->name) {
       return NULL;
     }
