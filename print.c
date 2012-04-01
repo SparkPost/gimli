@@ -468,17 +468,13 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
 }
 
 static gimli_iter_status_t should_suppress_var(
-    const char *k, int klen, void *item, void *arg)
+    struct module_item *mod, void *arg)
 {
-  gimli_mapped_object_t file = item;
   struct print_data *data = arg;
   const char *typename;
   uint64_t size;
 
-  if (file->tracer_module &&
-      file->tracer_module->api_version >= 2 &&
-      file->tracer_module->before_print_frame_var) {
-
+  if (mod->api_version == 2 && mod->ptr.v2->before_print_frame_var) {
     if (data->var->type) {
       size = gimli_type_size(data->var->type);
       typename = gimli_type_declname(data->var->type);
@@ -487,8 +483,8 @@ static gimli_iter_status_t should_suppress_var(
       typename = "<optimized out>";
     }
 
-    if (file->tracer_module->before_print_frame_var(&ana_api,
-          file->objname, data->frame->cur.tid,
+    if (mod->ptr.v2->before_print_frame_var(&ana_api,
+          mod->exename, data->frame->cur.tid,
           data->frame->cur.frameno, data->frame->cur.st.pc,
           data->frame,
           typename,
@@ -503,17 +499,13 @@ static gimli_iter_status_t should_suppress_var(
 }
 
 static gimli_iter_status_t after_print_var(
-    const char *k, int klen, void *item, void *arg)
+    struct module_item *mod, void *arg)
 {
-  gimli_mapped_object_t file = item;
   struct print_data *data = arg;
   const char *typename;
   uint64_t size;
 
-  if (file->tracer_module &&
-      file->tracer_module->api_version >= 2 &&
-      file->tracer_module->after_print_frame_var) {
-
+  if (mod->api_version == 2 && mod->ptr.v2->after_print_frame_var) {
     if (data->var->type) {
       size = gimli_type_size(data->var->type);
       typename = gimli_type_declname(data->var->type);
@@ -522,8 +514,8 @@ static gimli_iter_status_t after_print_var(
       typename = "<optimized out>";
     }
 
-    file->tracer_module->after_print_frame_var(&ana_api,
-          file->objname, data->frame->cur.tid,
+    mod->ptr.v2->after_print_frame_var(&ana_api,
+          mod->exename, data->frame->cur.tid,
           data->frame->cur.frameno, data->frame->cur.st.pc,
           data->frame,
           typename,
@@ -544,7 +536,7 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
   if (data->frame) {
     data->suppress = 0;
 
-    gimli_hash_iter(data->proc->files, should_suppress_var, data);
+    gimli_visit_modules(should_suppress_var, data);
     if (data->suppress) {
       return GIMLI_ITER_CONT;
     }
@@ -627,7 +619,7 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
 
 after:
   if (data->frame) {
-    gimli_hash_iter(data->proc->files, after_print_var, data);
+    gimli_visit_modules(after_print_var, data);
   }
 
   return GIMLI_ITER_CONT;

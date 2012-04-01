@@ -276,7 +276,6 @@ struct gimli_mapped_object {
     const uint8_t *start, *end;
   } abbr;
 //  struct gimli_dwarf_die *first_die;
-  struct gimli_ana_module *tracer_module;
   struct gimli_slab dieslab, attrslab;
 
   gimli_hash_t sections; /* sectname => gimli_section_data */
@@ -389,6 +388,20 @@ extern int max_frames;
 
 extern void logprint(const char *fmt, ...);
 
+struct module_item {
+  STAILQ_ENTRY(module_item) modules;
+  int api_version;
+  /* name of the gimli module */
+  char *name;
+  /* name of the target executable */
+  char *exename;
+  union {
+    struct gimli_ana_module *v2;
+  } ptr;
+};
+
+typedef gimli_iter_status_t (*gimli_module_visit_f)(struct module_item *mod, void *arg);
+
 struct gimli_object_mapping *gimli_add_mapping(
   gimli_proc_t proc,
   const char *objname, gimli_addr_t base, unsigned long len,
@@ -453,8 +466,8 @@ void gimli_destroy_mapped_object_hash(void *item);
 void gimli_mapped_object_addref(gimli_mapped_object_t file);
 void gimli_mapped_object_delete(gimli_mapped_object_t file);
 
-int dw_read_encptr(gimli_proc_t proc, uint8_t enc, const uint8_t **ptr, const uint8_t *end,
-  uint64_t pc, uint64_t *output);
+int dw_read_encptr(gimli_proc_t proc, uint8_t enc, const uint8_t **ptr,
+    const uint8_t *end, uint64_t pc, uint64_t *output);
 uint64_t dw_read_uleb128(const uint8_t **ptr, const uint8_t *end);
 int64_t dw_read_leb128(const uint8_t **ptr, const uint8_t *end);
 int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
@@ -470,7 +483,8 @@ struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode);
 const char *gimli_dwarf_resolve_type_name(gimli_mapped_object_t f,
   struct gimli_dwarf_attr *type);
-int gimli_dwarf_read_value(gimli_proc_t proc, gimli_addr_t addr, int is_stack, void *out, uint64_t size);
+int gimli_dwarf_read_value(gimli_proc_t proc, gimli_addr_t addr,
+    int is_stack, void *out, uint64_t size);
 
 gimli_type_t gimli_dwarf_load_type_for_data(gimli_proc_t proc,
     gimli_addr_t addr);
@@ -494,6 +508,8 @@ void gimli_dwarf_load_all_types(gimli_mapped_object_t file);
 void gimli_object_file_destroy(struct gimli_elf_ehdr *elf);
 void gimli_hash_diagnose(gimli_hash_t h);
 void gimli_dw_fde_destroy(gimli_mapped_object_t file);
+
+void gimli_load_modules(gimli_proc_t proc);
 
 /* ensure that the table size is a power of 2 */
 static inline uint32_t power_2(uint32_t x)
