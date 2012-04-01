@@ -1501,7 +1501,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr
   }
 
   /* no joy */
-  printf("fell out bottom; no subprogram in range for pc " PTRFMT "\n", pc);
+//  printf("fell out bottom; no subprogram in range for pc " PTRFMT "\n", pc);
   return NULL;
 }
 
@@ -1858,6 +1858,10 @@ static gimli_type_t load_type(
           break;
         case DW_ATE_signed_char:
           enc.format = GIMLI_INT_SIGNED|GIMLI_INT_CHAR;
+          t = gimli_type_new_integer(file->types, type_name, &enc);
+          break;
+        case DW_ATE_boolean:
+          enc.format = GIMLI_INT_BOOL;
           t = gimli_type_new_integer(file->types, type_name, &enc);
           break;
         case DW_ATE_float:
