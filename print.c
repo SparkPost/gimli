@@ -681,7 +681,6 @@ void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
     data.show_decl = 1;
     data.prefix = " = ";
     data.suffix = "\n";
-    data.recursion = 8;
 
     if (!derefd) {
       derefd = gimli_hash_new(NULL);
