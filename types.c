@@ -649,7 +649,7 @@ static gimli_type_t new_alias(gimli_type_collection_t col,
 
   memset(&enc, 0, sizeof(enc));
   if (kind == GIMLI_K_POINTER) {
-    enc.bits = sizeof(void*);
+    enc.bits = 8 * sizeof(void*);
   }
   t = new_type(col, kind, NULL, &enc);
 
@@ -715,7 +715,7 @@ gimli_type_t gimli_type_new_function(gimli_type_collection_t col,
   struct gimli_type_encoding enc;
 
   memset(&enc, 0, sizeof(enc));
-  enc.bits = sizeof(void*);
+  enc.bits = 8 * sizeof(void*);
   enc.format = flags;
 
   t = new_type(col, GIMLI_K_FUNCTION, name, &enc);

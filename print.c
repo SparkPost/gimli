@@ -17,6 +17,7 @@ struct print_data {
   unsigned is_param:1;
   unsigned terse:1;
   unsigned suppress:1;
+  unsigned in_array;
   const char *prefix;
   const char *suffix;
 
@@ -113,7 +114,7 @@ static void print_float(gimli_proc_t proc,
   addr += (offset / 8);
 
   if (gimli_read_mem(proc, addr, &u.f, bytes) != bytes) {
-    printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
+    printf("<unable to read %" PRIu64 " bytes @ " PTRFMT ">",
       bytes, addr);
     return;
   }
@@ -153,7 +154,7 @@ static void print_enum(gimli_proc_t proc,
   u.u64 = 0;
 
   if (gimli_read_mem(proc, addr, &u.u64, bytes) != bytes) {
-    printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
+    printf("<unable to read %" PRIu64 " bytes @ " PTRFMT ">",
         bytes, addr);
     return;
   }
@@ -219,7 +220,7 @@ static void print_integer(struct print_data *data,
       return;
     }
     if (gimli_read_mem(proc, addr, &u.u64, bytes) != bytes) {
-      printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
+      printf("<unable to read %" PRIu64 " bytes @ " PTRFMT ">",
         bytes, addr);
       return;
     }
@@ -232,7 +233,7 @@ static void print_integer(struct print_data *data,
     bytes = 8;
 
   } else if (gimli_read_mem(proc, addr, &u.u64, bytes) != bytes) {
-    printf("<failed to read %" PRIu64 " bytes @ " PTRFMT ">",
+    printf("<unable to read %" PRIu64 " bytes @ " PTRFMT ">",
         bytes, addr);
     return;
   }
@@ -290,17 +291,23 @@ static void print_array(struct print_data *data, gimli_type_t t)
   int dummy;
   uint32_t i;
   struct print_data savdata = *data;
+  int is_struct;
+  gimli_type_t target;
 
-  gimli_type_arinfo(t, &arinfo);
+  if (!gimli_type_arinfo(t, &arinfo)) {
+    printf("not an array type in print_array!?\n");
+    return;
+  }
 
-
-  gimli_type_encoding(arinfo.contents, &enc);
+  target = gimli_type_resolve(arinfo.contents);
+  gimli_type_encoding(target, &enc);
 #if 0
   printf("array has %" PRIu64 " elements, kind=%" PRIu64 "\n",
-      arinfo.nelems, gimli_type_kind(arinfo.contents));
-  printf("enc.format = %" PRIx64 "\n", enc.format);
+      arinfo.nelems, gimli_type_kind(target));
+  printf("enc.format = %" PRIx64 " size=%" PRIu64 "\n",
+      enc.format, gimli_type_size(target));
 #endif
-  if (gimli_type_kind(arinfo.contents) == GIMLI_K_INTEGER &&
+  if (gimli_type_kind(target) == GIMLI_K_INTEGER &&
       enc.format & GIMLI_INT_CHAR) {
     /* Could be a string; try to read and print it as such */
 
@@ -310,10 +317,27 @@ static void print_array(struct print_data *data, gimli_type_t t)
     return;
   }
 
+  is_struct = 0;
+  switch (gimli_type_kind(target)) {
+    case GIMLI_K_STRUCT:
+    case GIMLI_K_UNION:
+      is_struct = 1;
+      break;
+    case GIMLI_K_POINTER:
+      switch (gimli_type_kind(gimli_type_resolve(
+              gimli_type_follow_pointer(target)))) {
+        case GIMLI_K_STRUCT:
+        case GIMLI_K_UNION:
+          is_struct = 1;
+          break;
+      }
+      break;
+  }
+
   printf("\n%.*s[",
       (data->depth + 1) * 4, indentstr);
 
-  if (gimli_type_kind(arinfo.contents) == GIMLI_K_ARRAY) {
+  if (gimli_type_kind(target) == GIMLI_K_ARRAY) {
     printf("%.*s",
       (data->depth + 2) * 4, indentstr);
   } else {
@@ -321,18 +345,27 @@ static void print_array(struct print_data *data, gimli_type_t t)
       (data->depth + 2) * 4, indentstr);
   }
   data->offset = 0;
-  data->size = gimli_type_size(arinfo.contents);
+  data->size = gimli_type_size(target);
   data->show_decl = 0;
   data->prefix = "";
-  data->suffix = "";
+  data->suffix = is_struct ? "\n" : "";
   data->terse = 1;
+  data->in_array++;
 
   for (i = 0; i < arinfo.nelems; i++) {
     data->depth = depth + 1;
-    data->addr = addr + (i * data->size / 8);
+    data->addr = addr + (i * (data->size / 8));
 
-    if (i) printf(", ");
-    print_var(data, arinfo.contents, "");
+    if (i) {
+      if (is_struct) {
+        printf("\n%.*s,\n%.*s",
+            (depth + 2) * 4, indentstr,
+            (depth + 2) * 4, indentstr);
+      } else {
+        printf(", ");
+      }
+    }
+    print_var(data, target, "");
   }
   printf("\n%.*s]", (depth + 1) * 4, indentstr);
 
@@ -376,6 +409,10 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
 
   symname = gimli_data_sym_name(data->proc, ptr, namebuf, sizeof(namebuf));
   if (symname && strlen(symname)) {
+    if (gimli_type_kind(target) == GIMLI_K_FUNCTION) {
+      printf("%s", symname);
+      return;
+    }
     printf("(%s) ", symname);
   }
 
@@ -400,9 +437,17 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
     return;
   }
 
+  /* don't deref if the target is invalid memory */
+  if (!gimli_read_mem(data->proc, ptr, &dummy, 1) ||
+      !gimli_read_mem(data->proc, ptr + gimli_type_size(target), &dummy, 1)) {
+    printf(PTRFMT " <invalid>", ptr);
+    return;
+  }
+
+
   snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, target, data->addr);
   if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
-    printf(" " PTRFMT " [deref'd above]\n", ptr);
+    printf(" " PTRFMT " [deref'd above]", ptr);
     return;
   }
 
@@ -420,82 +465,6 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
   print_var(data, target, NULL);
 
   *data = savdata;
-}
-
-static int print_var(struct print_data *data, gimli_type_t t, const char *varname)
-{
-  int indent = 4 * (data->depth + 1);
-  gimli_addr_t addr;
-  char addrkey[64];
-  int dummy;
-
-  if (data->show_decl) {
-    printf("%.*s%s",
-      indent, indentstr,
-      gimli_type_declname(t));
-    if (varname) {
-      printf(" %s", varname);
-    }
-  }
-
-  t = gimli_type_resolve(t);
-
-  switch (gimli_type_kind(t)) {
-    case GIMLI_K_UNION:
-    case GIMLI_K_STRUCT:
-      snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, t, data->addr);
-      if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
-        printf(" " PTRFMT " [deref'd above]\n", data->addr);
-        return;
-      }
-      if (!gimli_hash_insert(derefd, addrkey, NULL)) {
-        printf(" " PTRFMT " <hash insert failed>\n", data->addr);
-        return;
-      }
-
-      printf(" " PTRFMT " = {\n", data->addr);
-      data->depth++;
-      addr = data->addr;
-      gimli_type_member_visit(t, print_member, data);
-      data->depth--;
-      data->addr = addr;
-      printf("%.*s}\n", indent, indentstr);
-      break;
-    case GIMLI_K_INTEGER:
-      printf("%s", data->prefix);
-      print_integer(data, data->proc, t, data->addr, data->offset, data->size);
-      printf("%s", data->suffix);
-      break;
-    case GIMLI_K_FLOAT:
-      printf("%s", data->prefix);
-      print_float(data->proc, t, data->addr, data->offset, data->size);
-      printf("%s", data->suffix);
-      break;
-    case GIMLI_K_POINTER:
-      printf("%s", data->prefix);
-      print_pointer(data, t);
-      printf("%s", data->suffix);
-      break;
-    case GIMLI_K_ENUM:
-      printf("%s", data->prefix);
-      print_enum(data->proc, t, data->addr, data->offset, data->size);
-      printf("%s", data->suffix);
-      break;
-    case GIMLI_K_ARRAY:
-      printf("%s", data->prefix);
-      print_array(data, t);
-      printf("%s", data->suffix);
-      break;
-    default:
-      printf(" <kind:%d offsetbits:%" PRIu64 " @" PTRFMT ">",
-        gimli_type_kind(t),
-        data->offset,
-        data->addr + (data->offset / 8));
-      printf("%s", data->suffix);
-  }
-
-
-  return GIMLI_ITER_CONT;
 }
 
 static gimli_iter_status_t should_suppress_var(
@@ -565,6 +534,95 @@ static gimli_iter_status_t after_print_var(
   return GIMLI_ITER_CONT;
 }
 
+static int print_var(struct print_data *data, gimli_type_t t, const char *varname)
+{
+  int indent = 4 * (data->depth + 1);
+  gimli_addr_t addr;
+  char addrkey[64];
+  int dummy;
+
+  data->suppress = 0;
+
+  gimli_hash_iter(data->proc->files, should_suppress_var, data);
+  if (data->suppress) {
+    return GIMLI_ITER_CONT;
+  }
+
+  if (!t) {
+    printf("%.*s%s <optimized out>%s",
+        indent, indentstr, varname, data->suffix);
+  } else {
+    if (data->show_decl) {
+      printf("%.*s%s",
+          indent, indentstr,
+          gimli_type_declname(t));
+      if (varname) {
+        printf(" %s", varname);
+      }
+    }
+
+    t = gimli_type_resolve(t);
+
+    switch (gimli_type_kind(t)) {
+      case GIMLI_K_UNION:
+      case GIMLI_K_STRUCT:
+        snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, t, data->addr);
+        if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
+          printf(" " PTRFMT " [deref'd above]\n", data->addr);
+          return;
+        }
+        if (!gimli_hash_insert(derefd, addrkey, NULL)) {
+          printf(" " PTRFMT " <hash insert failed>\n", data->addr);
+          return;
+        }
+
+        printf(" " PTRFMT " = {\n", data->addr);
+        data->depth++;
+        addr = data->addr;
+        gimli_type_member_visit(t, print_member, data);
+        data->depth--;
+        data->addr = addr;
+        printf("%.*s}\n", indent, indentstr);
+        break;
+      case GIMLI_K_INTEGER:
+        printf("%s", data->prefix);
+        print_integer(data, data->proc, t, data->addr, data->offset, data->size);
+        printf("%s", data->suffix);
+        break;
+      case GIMLI_K_FLOAT:
+        printf("%s", data->prefix);
+        print_float(data->proc, t, data->addr, data->offset, data->size);
+        printf("%s", data->suffix);
+        break;
+      case GIMLI_K_POINTER:
+        printf("%s", data->prefix);
+        print_pointer(data, t);
+        printf("%s", data->suffix);
+        break;
+      case GIMLI_K_ENUM:
+        printf("%s", data->prefix);
+        print_enum(data->proc, t, data->addr, data->offset, data->size);
+        printf("%s", data->suffix);
+        break;
+      case GIMLI_K_ARRAY:
+        printf("%s", data->prefix);
+        print_array(data, t);
+        printf("%s", data->suffix);
+        break;
+      default:
+        printf(" <kind:%d offsetbits:%" PRIu64 " @" PTRFMT ">",
+            gimli_type_kind(t),
+            data->offset,
+            data->addr + (data->offset / 8));
+        printf("%s", data->suffix);
+    }
+  }
+
+  gimli_hash_iter(data->proc->files, after_print_var, data);
+
+  return GIMLI_ITER_CONT;
+}
+
 static gimli_iter_status_t show_var(
     gimli_stack_frame_t frame,
     gimli_var_t var,
@@ -576,21 +634,10 @@ static gimli_iter_status_t show_var(
   data->is_param = var->is_param;
   data->addr = var->addr;
   data->offset = 0;
-  data->suppress = 0;
+  data->size = var->type ? gimli_type_size(var->type) : 0;
 
-  gimli_hash_iter(data->proc->files, should_suppress_var, data);
-  if (data->suppress) {
-    return GIMLI_ITER_CONT;
-  }
+  print_var(data, var->type, var->varname);
 
-  if (var->type && var->addr) {
-    data->size = gimli_type_size(var->type);
-    print_var(data, var->type, var->varname);
-  } else {
-    printf("    %s <optimized out>\n", var->varname);
-  }
-
-  gimli_hash_iter(data->proc->files, after_print_var, data);
   return GIMLI_ITER_CONT;
 }
 
@@ -634,6 +681,7 @@ void gimli_render_frame(int tid, int nframe, gimli_stack_frame_t frame)
     data.show_decl = 1;
     data.prefix = " = ";
     data.suffix = "\n";
+    data.recursion = 8;
 
     if (!derefd) {
       derefd = gimli_hash_new(NULL);

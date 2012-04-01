@@ -1438,7 +1438,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr
   arange = bsearch(&pc, m->objfile->arange, m->objfile->num_arange,
       sizeof(*arange), search_compare_arange);
   if (!arange) {
-    printf("no arange for pc " PTRFMT "\n", pc);
+//    printf("no arange for pc " PTRFMT "\n", pc);
     return NULL;
   }
   /* arange gives us a pointer to the CU */
@@ -1447,7 +1447,7 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr
     cu = load_cu(m->objfile, arange->di_offset);
   }
   if (!cu) {
-    printf("no CU for pc " PTRFMT " arange said off %" PRIx64 "\n", pc, arange->di_offset);
+//    printf("no CU for pc " PTRFMT " arange said off %" PRIx64 "\n", pc, arange->di_offset);
     return NULL;
   }
 
@@ -2052,7 +2052,7 @@ int gimli_dwarf_load_frame_var_info(gimli_stack_frame_t frame)
 
   die = gimli_dwarf_get_die_for_pc(proc, pc);
   if (!die) {
-    printf("no DIE for pc=" PTRFMT "\n", pc);
+//    printf("no DIE for pc=" PTRFMT "\n", pc);
     return 0;
   }
   m = gimli_mapping_for_addr(proc, pc);
