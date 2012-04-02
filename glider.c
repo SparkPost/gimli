@@ -146,14 +146,32 @@ static gimli_iter_status_t trace_thread(
   return GIMLI_ITER_CONT;
 }
 
-static gimli_iter_status_t run_trace_module(
-  struct module_item *mod, void *arg)
+static gimli_iter_status_t print_siginfo(gimli_proc_t proc,
+    gimli_stack_frame_t frame,
+    const char *varname, gimli_type_t t, gimli_addr_t addr,
+    int depth, void *arg)
 {
-  if (mod->api_version <= 2 && mod->ptr.v2->perform_trace) {
-    mod->ptr.v2->perform_trace(&ana_api, mod->exename);
+  siginfo_t si;
+  char buf[1024];
+  int i;
+
+  if (gimli_read_mem(proc, addr, &si, sizeof(si)) != sizeof(si)) {
+    return GIMLI_ITER_CONT;
   }
-  return GIMLI_ITER_CONT;
+
+  gimli_render_siginfo(proc, &si, buf, sizeof(buf));
+  for (i = 0; i < (depth + 1) * 4; i++) putchar(' ');
+  printf("%s\n", buf);
+
+  return GIMLI_ITER_STOP;
 }
+
+static const char *siginfo_names[] = {
+  "siginfo_t",
+#ifdef __linux__
+  "struct siginfo",
+#endif
+};
 
 static void trace_process(int pid)
 {
@@ -163,6 +181,10 @@ static void trace_process(int pid)
   if (!tracer_attach(pid)) {
     return;
   }
+
+  gimli_module_register_var_printer_for_types(siginfo_names,
+      sizeof(siginfo_names)/sizeof(siginfo_names[0]),
+      print_siginfo, NULL);
 
   args.proc = the_proc;
   args.frames = calloc(max_frames, sizeof(*args.frames));
@@ -182,7 +204,7 @@ static void trace_process(int pid)
 
   printf("\n");
 
-  gimli_visit_modules(run_trace_module, NULL);
+  gimli_module_call_tracers(the_proc);
 
   free(args.frames);
   free(args.pcaddrs);

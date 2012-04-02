@@ -467,37 +467,6 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
   *data = savdata;
 }
 
-static gimli_iter_status_t should_suppress_var(
-    struct module_item *mod, void *arg)
-{
-  struct print_data *data = arg;
-  const char *typename;
-  uint64_t size;
-
-  if (mod->api_version == 2 && mod->ptr.v2->before_print_frame_var) {
-    if (data->var->type) {
-      size = gimli_type_size(data->var->type);
-      typename = gimli_type_declname(data->var->type);
-    } else {
-      size = 0;
-      typename = "<optimized out>";
-    }
-
-    if (mod->ptr.v2->before_print_frame_var(&ana_api,
-          mod->exename, data->frame->cur.tid,
-          data->frame->cur.frameno, data->frame->cur.st.pc,
-          data->frame,
-          typename,
-          data->var->varname,
-          (void*)data->var->addr,
-          size) == GIMLI_ANA_SUPPRESS) {
-      data->suppress = 1;
-      return GIMLI_ITER_STOP;
-    }
-  }
-  return GIMLI_ITER_CONT;
-}
-
 static gimli_iter_status_t after_print_var(
     struct module_item *mod, void *arg)
 {
@@ -534,10 +503,10 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
   int dummy;
 
   if (data->frame) {
-    data->suppress = 0;
 
-    gimli_visit_modules(should_suppress_var, data);
-    if (data->suppress) {
+    if (gimli_module_call_var_printer(data->proc,
+          data->frame, varname, t,
+          data->addr, data->depth) == GIMLI_ITER_STOP) {
       return GIMLI_ITER_CONT;
     }
   }
@@ -651,13 +620,15 @@ static void tidy_deref(void)
   }
 }
 
-int gimli_print_addr_as_type(gimli_proc_t proc, const char *varname,
+int gimli_print_addr_as_type(gimli_proc_t proc,
+    gimli_stack_frame_t frame, const char *varname,
     gimli_type_t t, gimli_addr_t addr)
 {
   struct print_data data;
 
   memset(&data, 0, sizeof(data));
   data.proc = proc;
+  data.frame = frame;
   data.show_decl = 1;
   data.prefix = " = ";
   data.suffix = "\n";

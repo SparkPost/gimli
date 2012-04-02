@@ -511,6 +511,19 @@ void gimli_dw_fde_destroy(gimli_mapped_object_t file);
 
 void gimli_load_modules(gimli_proc_t proc);
 
+gimli_iter_status_t gimli_visit_modules(gimli_module_visit_f func, void *arg);
+void gimli_module_call_tracers(gimli_proc_t proc);
+
+typedef void (*gimli_hook_f)();
+typedef gimli_iter_status_t (*gimli_hook_visit_f)(gimli_hook_f func, void *farg, void *arg);
+gimli_iter_status_t gimli_hook_visit(const char *name,
+    gimli_hook_visit_f func, void *arg);
+int gimli_hook_register(const char *name, gimli_hook_f func, void *arg);
+gimli_iter_status_t gimli_module_call_var_printer(
+    gimli_proc_t proc, gimli_stack_frame_t frame,
+    const char *varname, gimli_type_t t,
+    gimli_addr_t addr, int depth);
+
 /* ensure that the table size is a power of 2 */
 static inline uint32_t power_2(uint32_t x)
 {

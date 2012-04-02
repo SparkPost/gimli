@@ -5,8 +5,20 @@
  */
 #include "impl.h"
 
+struct module_func_item {
+  STAILQ_ENTRY(module_func_item) items;
+  void (*func)();
+  void *arg;
+};
+
+struct module_func_list {
+  STAILQ_HEAD(funclist, module_func_item) list;
+};
+
 static STAILQ_HEAD(modulelist, module_item)
   modules = STAILQ_HEAD_INITIALIZER(modules);
+
+static gimli_hash_t hooks = NULL;
 
 gimli_iter_status_t gimli_visit_modules(gimli_module_visit_f func, void *arg)
 {
@@ -21,6 +33,50 @@ gimli_iter_status_t gimli_visit_modules(gimli_module_visit_f func, void *arg)
   }
   return status;
 }
+
+/* {{{ API v2 compat shims */
+
+static void v2_tracer_shim(gimli_proc_t proc, void *arg)
+{
+  struct module_item *mod = arg;
+
+  mod->ptr.v2->perform_trace(&ana_api, mod->exename);
+}
+
+static gimli_iter_status_t v2_printer_shim(gimli_proc_t proc,
+    gimli_stack_frame_t frame,
+    const char *varname, gimli_type_t t, gimli_addr_t addr,
+    int depth, void *arg)
+{
+  struct module_item *mod = arg;
+  const char *typename;
+  uint64_t size;
+
+  if (t) {
+    size = gimli_type_size(t);
+    typename = gimli_type_declname(t);
+  } else {
+    size = 0;
+    typename = "<optimized out>";
+  }
+
+  if (mod->ptr.v2->before_print_frame_var(&ana_api,
+        mod->exename,
+        frame ? frame->cur.tid : 0,
+        frame ? frame->cur.frameno : 0,
+        frame ? frame->cur.st.pc : 0,
+        frame,
+        typename,
+        varname,
+        (void*)addr,
+        size) == GIMLI_ANA_SUPPRESS) {
+    return GIMLI_ITER_STOP;
+  }
+
+  return GIMLI_ITER_CONT;
+}
+
+/* }}} */
 
 static int load_module(const char *exename, const char *filename)
 {
@@ -49,6 +105,13 @@ static int load_module(const char *exename, const char *filename)
       mod->exename = strdup(exename);
       mod->api_version = mod->ptr.v2->api_version == 1 ? 1 : 2;
       STAILQ_INSERT_TAIL(&modules, mod, modules);
+
+      if (mod->ptr.v2->perform_trace) {
+        gimli_module_register_tracer(v2_tracer_shim, mod);
+      }
+      if (mod->ptr.v2->before_print_frame_var) {
+        gimli_module_register_var_printer(v2_printer_shim, mod);
+      }
     }
   }
 
@@ -113,6 +176,79 @@ void gimli_load_modules(gimli_proc_t proc)
   gimli_hash_iter(the_proc->files, load_modules_for_file, NULL);
 }
 
+static void destroy_hooks(void *hptr)
+{
+  struct module_func_list *hook = hptr;
+  struct module_func_item *item;
+
+  while (STAILQ_FIRST(&hook->list)) {
+    item = STAILQ_FIRST(&hook->list);
+    STAILQ_REMOVE_HEAD(&hook->list, items);
+    free(item);
+  }
+  free(hook);
+}
+
+gimli_iter_status_t gimli_hook_visit(const char *name,
+    gimli_hook_visit_f func, void *arg)
+{
+  gimli_iter_status_t status = GIMLI_ITER_CONT;
+  struct module_func_list *hook = NULL;
+  struct module_func_item *item;
+
+  if (!hooks) {
+    return GIMLI_ITER_CONT;
+  }
+
+  if (!gimli_hash_find(hooks, name, (void**)&hook)) {
+    return GIMLI_ITER_CONT;
+  }
+
+  STAILQ_FOREACH(item, &hook->list, items) {
+    status = func(item->func, item->arg, arg);
+    if (status != GIMLI_ITER_CONT) {
+      break;
+    }
+  }
+
+  return status;
+}
+
+int gimli_hook_register(const char *name, void (*func)(), void *arg)
+{
+  struct module_func_item *item;
+  struct module_func_list *hook = NULL;
+
+  if (!hooks || !gimli_hash_find(hooks, name, (void**)&hook)) {
+    hook = calloc(1, sizeof(*hook));
+    if (!hook) {
+      return 0;
+    }
+
+    STAILQ_INIT(&hook->list);
+
+    if (!hooks) {
+      hooks = gimli_hash_new(destroy_hooks);
+      if (!hooks) {
+        free(hook);
+        return 0;
+      }
+    }
+    gimli_hash_insert(hooks, name, hook);
+  }
+
+  item = calloc(1, sizeof(*item));
+  if (!item) {
+    return 0;
+  }
+
+  item->func = func;
+  item->arg = arg;
+
+  STAILQ_INSERT_TAIL(&hook->list, item, items);
+
+  return 1;
+}
 
 /* vim:ts=2:sw=2:et:
  */

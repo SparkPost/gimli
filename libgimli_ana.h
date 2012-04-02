@@ -58,9 +58,8 @@ struct gimli_symbol {
   uint32_t size;
 };
 
-#define GIMLI_ANA_API_VERSION 2
-
 /* {{{ Deprecated V1 and V2 Gimli APIs enclosed in this block */
+#define GIMLI_ANA_API_VERSION 2
 
 struct gimli_proc_stat {
   pid_t pid;
@@ -219,6 +218,16 @@ extern struct gimli_ana_module *gimli_ana_init(const struct gimli_ana_api *api);
 
 /* Version 3 APIs start here */
 
+/* V3 and later modules define an init function with this signature */
+extern int gimli_module_init(int api_version);
+
+typedef void (*gimli_tracer_f)(gimli_proc_t proc, void *arg);
+
+/** register a trace function; it will be called after the stack
+ * trace has been rendered */
+int gimli_module_register_tracer(gimli_tracer_f func, void *arg);
+
+
 /** hash table utility API */
 
 typedef enum {
@@ -354,9 +363,18 @@ gimli_iter_status_t gimli_stack_frame_visit_vars(
 
 /** Given ADDR and a type definition, print out the contents of
  * ADDR interpreted as that type, using VARNAME as the hypothetical
- * name of the variable */
-int gimli_print_addr_as_type(gimli_proc_t proc, const char *varname,
+ * name of the variable.  FRAME may be NULL. */
+int gimli_print_addr_as_type(gimli_proc_t proc,
+    gimli_stack_frame_t frame, const char *varname,
     gimli_type_t t, gimli_addr_t addr);
+
+typedef gimli_iter_status_t (*gimli_var_printer_f)(gimli_proc_t proc,
+    gimli_stack_frame_t frame,
+    const char *varname, gimli_type_t t, gimli_addr_t addr,
+    int depth, void *arg);
+int gimli_module_register_var_printer(gimli_var_printer_f func, void *arg);
+int gimli_module_register_var_printer_for_types(const char *typenames[],
+    int ntypes, gimli_var_printer_f func, void *arg);
 
 const char *gimli_data_sym_name(gimli_proc_t proc,
     gimli_addr_t addr, char *buf, int buflen);
