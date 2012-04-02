@@ -28,6 +28,10 @@ struct wedgie_data {
   signed moo:5;
   double aftermoo;
   int (*func)(int, ...);
+  int arr[4];
+  struct lemon {
+    int a, b;
+  } lone, ltwo;
 };
 
 char global_string[] = "global!";
@@ -111,6 +115,14 @@ static void func_two(void)
   d.bit2 = 0;
   d.moo = 13;
   d.aftermoo = 4.5;
+  d.lone.a = 3;
+  d.lone.b = 4;
+  d.ltwo.a = 5;
+  d.ltwo.b = 6;
+  d.arr[0] = 9;
+  d.arr[1] = 8;
+  d.arr[2] = 7;
+  d.arr[3] = 6;
 
   func(3);
 

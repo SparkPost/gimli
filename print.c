@@ -278,19 +278,18 @@ static void print_integer(struct print_data *data,
   }
 }
 
-static void print_array(struct print_data *data, gimli_type_t t)
+static void print_array(struct print_data *sdata, gimli_type_t t)
 {
   struct gimli_type_encoding enc;
   struct gimli_type_arinfo arinfo;
   void *ptr;
-  gimli_addr_t addr = data->addr + (data->offset / 8);
-  gimli_addr_t addrsave = data->addr;
-  uint64_t off = data->offset;
-  int depth = data->depth;
+  gimli_addr_t addr = sdata->addr + (sdata->offset / 8);
+  uint64_t off = sdata->offset;
+  int depth = sdata->depth;
   char addrkey[64];
   int dummy;
   uint32_t i;
-  struct print_data savdata = *data;
+  struct print_data data = *sdata;
   int is_struct;
   gimli_type_t target;
 
@@ -312,7 +311,7 @@ static void print_array(struct print_data *data, gimli_type_t t)
     /* Could be a string; try to read and print it as such */
 
     printf("[ ");
-    print_quoted_string(data->proc, addr);
+    print_quoted_string(data.proc, addr);
     printf(" ]");
     return;
   }
@@ -335,26 +334,26 @@ static void print_array(struct print_data *data, gimli_type_t t)
   }
 
   printf("\n%.*s[",
-      (data->depth + 1) * 4, indentstr);
+      (data.depth + 1) * 4, indentstr);
 
   if (gimli_type_kind(target) == GIMLI_K_ARRAY) {
     printf("%.*s",
-      (data->depth + 2) * 4, indentstr);
+      (data.depth + 2) * 4, indentstr);
   } else {
     printf("\n%.*s",
-      (data->depth + 2) * 4, indentstr);
+      (data.depth + 2) * 4, indentstr);
   }
-  data->offset = 0;
-  data->size = gimli_type_size(target);
-  data->show_decl = 0;
-  data->prefix = "";
-  data->suffix = is_struct ? "\n" : "";
-  data->terse = 1;
-  data->in_array++;
+  data.offset = 0;
+  data.size = gimli_type_size(target);
+  data.show_decl = 0;
+  data.prefix = "";
+  data.suffix = is_struct ? "\n" : "";
+  data.terse = 1;
+  data.in_array++;
 
   for (i = 0; i < arinfo.nelems; i++) {
-    data->depth = depth + 1;
-    data->addr = addr + (i * (data->size / 8));
+    data.depth = depth + 1;
+    data.addr = addr + (i * (data.size / 8));
 
     if (i) {
       if (is_struct) {
@@ -365,11 +364,9 @@ static void print_array(struct print_data *data, gimli_type_t t)
         printf(", ");
       }
     }
-    print_var(data, target, "");
+    print_var(&data, target, "");
   }
   printf("\n%.*s]", (depth + 1) * 4, indentstr);
-
-  *data = savdata;
 }
 
 static void print_pointer(struct print_data *data, gimli_type_t t)
@@ -530,26 +527,29 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
     }
 
     t = gimli_type_resolve(t);
+    addr = data->addr + (data->offset / 8);
 
     switch (gimli_type_kind(t)) {
       case GIMLI_K_UNION:
       case GIMLI_K_STRUCT:
-        snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, t, data->addr);
+        snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, t, addr);
         if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
-          printf(" " PTRFMT " [deref'd above]\n", data->addr);
+          printf(" " PTRFMT " [deref'd above]\n", addr);
           return;
         }
         if (!gimli_hash_insert(derefd, addrkey, NULL)) {
-          printf(" " PTRFMT " <hash insert failed>\n", data->addr);
+          printf(" " PTRFMT " <hash insert failed>\n", addr);
           return;
         }
 
-        printf(" " PTRFMT " = {\n", data->addr);
-        data->depth++;
-        addr = data->addr;
-        gimli_type_member_visit(t, print_member, data);
-        data->depth--;
-        data->addr = addr;
+        printf(" " PTRFMT " = {\n", addr);
+        {
+          struct print_data d = *data;
+          d.depth++;
+          d.addr = addr;
+          d.offset = 0;
+          gimli_type_member_visit(t, print_member, &d);
+        }
         printf("%.*s}\n", indent, indentstr);
         break;
       case GIMLI_K_INTEGER:
