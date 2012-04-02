@@ -213,15 +213,20 @@ static void print_integer(struct print_data *data,
 
   if (bytes > 8 || (bits % 8 != 0) || (bytes & (bytes - 1)) != 0) {
     /* it's a bitfield */
-    uint8_t bitoff = offset - (8*(offset/8));
-    uint8_t shift =
-#if WORDS_BIGENDIAN
-        (sizeof(u.u64)*8) - (bitoff + bits);
-#else
-        bitoff - (bits - 1);
-#endif
     uint64_t mask = (1ULL << bits) - 1;
-    bytes = (bits + 7) / 8;
+    uint8_t bitoff = offset - (8*(offset/8));
+    uint8_t shift;
+
+    /* how many bytes we're going to read. */
+    bytes = (bits + bitoff + 7) / 8;
+
+    /* shift is how far we need to shift to make it line up in
+     * the u64 that we're storing it into */
+#if WORDS_BIGENDIAN
+    shift = (sizeof(u.u64)*8) - (bitoff + bits);
+#else
+    shift = bitoff;
+#endif
 
 //printf("bitfield read from " PTRFMT " bits=%" PRIu64 " bytes=%" PRIu64 " offset=%" PRIu64 " bitoff=%d shift=%d mask=%" PRIx64 "\n", addr, bits, bytes, offset, bitoff, shift, mask);
     if (bytes > sizeof(u.u64)) {

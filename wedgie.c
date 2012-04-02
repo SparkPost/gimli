@@ -26,6 +26,7 @@ struct wedgie_data {
   unsigned bit1:1;
   unsigned bit2:1;
   signed moo:5;
+  unsigned bigbits:18;
   double aftermoo;
   int (*func)(int, ...);
   int arr[4];
@@ -114,6 +115,7 @@ static void func_two(void)
   d.bit1 = 1;
   d.bit2 = 0;
   d.moo = 13;
+  d.bigbits = 0x29999;
   d.aftermoo = 4.5;
   d.lone.a = 3;
   d.lone.b = 4;
