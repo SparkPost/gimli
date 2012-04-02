@@ -523,6 +523,7 @@ gimli_iter_status_t gimli_module_call_var_printer(
     gimli_proc_t proc, gimli_stack_frame_t frame,
     const char *varname, gimli_type_t t,
     gimli_addr_t addr, int depth);
+void gimli_show_memory_map(gimli_proc_t proc);
 
 /* ensure that the table size is a power of 2 */
 static inline uint32_t power_2(uint32_t x)

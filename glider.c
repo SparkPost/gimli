@@ -200,6 +200,7 @@ static void trace_process(int pid)
   }
 
   gimli_load_modules(the_proc);
+  gimli_show_memory_map(the_proc);
   gimli_proc_visit_threads(the_proc, trace_thread, &args);
 
   printf("\n");
