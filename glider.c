@@ -168,9 +168,7 @@ static gimli_iter_status_t print_siginfo(gimli_proc_t proc,
 
 static const char *siginfo_names[] = {
   "siginfo_t",
-#ifdef __linux__
   "struct siginfo",
-#endif
 };
 
 static void trace_process(int pid)

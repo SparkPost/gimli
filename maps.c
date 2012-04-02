@@ -145,11 +145,11 @@ struct gimli_object_mapping *gimli_add_mapping(
   m->proc = proc; // FIXME: refcnt
   m->base = base;
   m->len = len;
-  if (debug) {
-    fprintf(stderr, "MAP: %p - %p %s\n", (void*)m->base,
-      (void*)(m->base + m->len),  objname);
-  }
   m->offset = offset;
+  if (debug) {
+    fprintf(stderr, "MAP: " PTRFMT " - " PTRFMT " [off=0x%" PRIx64 "] %s\n",
+        m->base, m->base + m->len, m->offset, objname);
+  }
   m->objfile = gimli_find_object(proc, objname);
   if (!m->objfile) {
     m->objfile = gimli_add_object(proc, objname, base);

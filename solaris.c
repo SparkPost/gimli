@@ -99,7 +99,7 @@ ps_err_e ps_pglobal_lookup(struct ps_prochandle *ph,
     for (av = ph->tdep.auxv; av->a_type != AT_NULL; av++) {
       if (av->a_type == AT_BASE) {
         base = av->a_un.a_val;
-        m = gimli_mapping_for_addr(ph, (void*)base);
+        m = gimli_mapping_for_addr(ph, base);
         object_name = m->objfile->objname;
         break;
       }
@@ -198,7 +198,7 @@ static void read_maps(gimli_proc_t proc)
     ret = readlink(filename, target, sizeof(target));
     if (ret > 0) {
       target[ret] = '\0';
-      gimli_add_mapping(proc, target, (void*)m->pr_vaddr, m->pr_size, m->pr_offset);
+      gimli_add_mapping(proc, target, m->pr_vaddr, m->pr_size, m->pr_offset);
     }
   }
 
@@ -367,8 +367,8 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
   if (gimli_is_signal_frame(cur)) {
     ucontext_t uc;
 
-    if (gimli_read_mem(cur->proc, (void*)cur->st.lwpst.pr_oldcontext, &uc, sizeof(uc)) !=
-        sizeof(uc)) {
+    if (gimli_read_mem(cur->proc, cur->st.lwpst.pr_oldcontext,
+          &uc, sizeof(uc)) != sizeof(uc)) {
       fprintf(stderr, "unable to read old context\n");
       return 0;
     }
@@ -380,22 +380,36 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
     cur->st.fp = (void*)cur->st.regs[R_FP];
     cur->st.pc = (void*)cur->st.regs[R_PC];
     cur->st.sp = (void*)cur->st.regs[R_SP];
+    /* registers are all good for dwarf */
+    cur->dwarffail = 0;
     return 1;
   }
 
   c = *cur;
+#if 0
+  /* disabling dwarf unwinding on Solaris for the time being;
+   * it doesn't appear to be accurately, or perhaps, we're not
+   * correctly supporting some aspects of it on this system.
+   * Solaris does build with frame pointers though (thanks dtrace!)
+   * and they're reliable enough that we're not losing out */
   if (gimli_dwarf_unwind_next(cur) && cur->st.pc && cur->st.pc != c.st.pc) {
+    fprintf(stderr, "dwarf WIN! %p\n", cur->st.pc);
+    cur->st.regs[R_FP] = (intptr_t)cur->st.fp;
+    cur->st.regs[R_SP] = (intptr_t)cur->st.sp;
+    cur->st.regs[R_PC] = (intptr_t)cur->st.pc;
     return 1;
   }
-  if (debug) {
+  if (debug || 1) {
     fprintf(stderr, "dwarf unwind unsuccessful\n");
   }
+#endif
 
   if (c.st.fp) {
     *cur = c;
 
 #ifndef __sparc__
-    if (gimli_read_mem(cur->proc, c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
+    if (gimli_read_mem(cur->proc, (gimli_addr_t)c.st.fp,
+          &frame, sizeof(frame)) != sizeof(frame)) {
       memset(&frame, 0, sizeof(frame));
     }
 
@@ -409,6 +423,9 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
       cur->st.pc--;
     }
     cur->st.regs[R_FP] = (intptr_t)cur->st.fp;
+    cur->st.regs[R_SP] = (intptr_t)cur->st.fp;
+    cur->st.regs[R_PC] = (intptr_t)cur->st.pc;
+    cur->st.sp = cur->st.regs[R_SP];
 #else
     cur->st.regs[R_PC] = cur->st.regs[R_I7];
     cur->st.regs[R_nPC] = cur->st.regs[R_PC] + 4;
@@ -539,11 +556,11 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
       siginfo_t *siptr;
     } frame;
 
-    gimli_read_mem(cur->proc, (char*)cur->st.lwpst.pr_oldcontext - sizeof(frame),
+    gimli_read_mem(cur->proc, (gimli_addr_t)((char*)cur->st.lwpst.pr_oldcontext - sizeof(frame)),
       &frame, sizeof(frame));
 
     if (frame.siptr) {
-      gimli_read_mem(cur->proc, frame.siptr, &cur->si, sizeof(cur->si));
+      gimli_read_mem(cur->proc, (gimli_addr_t)frame.siptr, &cur->si, sizeof(cur->si));
     } else {
       memset(&cur->si, 0, sizeof(cur->si));
       cur->si.si_signo = frame.signo;
