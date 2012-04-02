@@ -58,8 +58,9 @@ struct gimli_symbol {
   uint32_t size;
 };
 
+#define GIMLI_ANA_API_VERSION 3
+
 /* {{{ Deprecated V1 and V2 Gimli APIs enclosed in this block */
-#define GIMLI_ANA_API_VERSION 2
 
 struct gimli_proc_stat {
   pid_t pid;

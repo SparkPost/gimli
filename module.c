@@ -83,12 +83,19 @@ static int load_module(const char *exename, const char *filename)
   void *h;
   struct module_item *mod;
   gimli_module_init_func func;
+  int (*modinit)(int);
   int found = 0;
 
   h = dlopen(filename, RTLD_NOW|RTLD_GLOBAL);
   if (!h) {
     printf("Unable to load library: %s: %s\n", filename, dlerror());
     return 0;
+  }
+
+  modinit = (int (*)(int))dlsym(h, "gimli_module_init");
+  if (modinit) {
+    found++;
+    modinit(GIMLI_ANA_API_VERSION);
   }
 
   func = (gimli_module_init_func)dlsym(h, "gimli_ana_init");
