@@ -25,6 +25,7 @@ gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames)
 #endif
 #ifdef sun
     { "_thr_setup", 1 },
+    { "_lwp_start", 1 },
 #endif
   };
   int i;
