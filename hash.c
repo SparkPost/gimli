@@ -29,9 +29,9 @@ struct libgimli_hash_table {
 	unsigned vers;
 	int no_rebucket;
 	void (*compile_key)(hash_key_t *key);
-	int (*copy_key)(gimli_hash_bucket *b, hash_key_t key);
-	uint32_t (*hash)(hash_key_t key, uint32_t initval);
-	int (*same_key)(gimli_hash_bucket *b, hash_key_t key);
+	int (*copy_key)(gimli_hash_bucket *b, hash_key_t *key);
+	uint32_t (*hash)(hash_key_t *key, uint32_t initval);
+	int (*same_key)(gimli_hash_bucket *b, hash_key_t *key);
 	struct gimli_slab bucketslab;
 	gimli_hash_free_func_t dtor;
 };
@@ -57,23 +57,23 @@ static void u64_key_compile(hash_key_t *key)
 	key->len = sizeof(uint64_t);
 }
 
-static int u64_key_copy(gimli_hash_bucket *b, hash_key_t key)
+static int u64_key_copy(gimli_hash_bucket *b, hash_key_t *key)
 {
-	b->k = key;
+	b->k = *key;
 	return 1;
 }
 
-static uint32_t u64_key_hash(hash_key_t hkey, uint32_t initval)
+static uint32_t u64_key_hash(hash_key_t *hkey, uint32_t initval)
 {
 #if 0
-	uint32_t a = 0, b = hkey.u.u64 >> 32;
-	uint32_t c = hkey.u.u64 & 0xffffffff;
+	uint32_t a = 0, b = hkey->u.u64 >> 32;
+	uint32_t c = hkey->u.u64 & 0xffffffff;
 
 	mix(a, b, c);
 	return c;
 #elif 1
 	/* http://www.cris.com/~Ttwang/tech/inthash.htm -> hash6432shift */
-	uint64_t key = hkey.u.u64;
+	uint64_t key = hkey->u.u64;
 
   key = (~key) + (key << 18); // key = (key << 18) - key - 1;
   key = key ^ (key >> 31);
@@ -83,13 +83,13 @@ static uint32_t u64_key_hash(hash_key_t hkey, uint32_t initval)
   key = key ^ (key >> 22);
   return (uint32_t) key;
 #else
-	return (uint32_t)hkey.u.u64;
+	return (uint32_t)hkey->u.u64;
 #endif
 }
 
-static int u64_key_same(gimli_hash_bucket *b, hash_key_t key)
+static int u64_key_same(gimli_hash_bucket *b, hash_key_t *key)
 {
-	return b->k.u.u64 == key.u.u64;
+	return b->k.u.u64 == key->u.u64;
 }
 
 static void ptr_key_compile(hash_key_t *key)
@@ -97,29 +97,29 @@ static void ptr_key_compile(hash_key_t *key)
 	key->len = sizeof(void*);
 }
 
-static int ptr_key_copy(gimli_hash_bucket *b, hash_key_t key)
+static int ptr_key_copy(gimli_hash_bucket *b, hash_key_t *key)
 {
-	b->k = key;
+	b->k = *key;
 	return 1;
 }
 
-static uint32_t ptr_key_hash(hash_key_t key, uint32_t initval)
+static uint32_t ptr_key_hash(hash_key_t *key, uint32_t initval)
 {
-	return (uint32_t)(intptr_t)key.u.ptr;
+	return (uint32_t)(intptr_t)key->u.ptr;
 }
 
-static int ptr_key_same(gimli_hash_bucket *b, hash_key_t key)
+static int ptr_key_same(gimli_hash_bucket *b, hash_key_t *key)
 {
-	return b->k.u.ptr == key.u.ptr;
+	return b->k.u.ptr == key->u.ptr;
 }
 
-static int string_key_dup(gimli_hash_bucket *b, hash_key_t key)
+static int string_key_dup(gimli_hash_bucket *b, hash_key_t *key)
 {
-	b->k = key;
-	b->k.u.str = malloc(key.len + 1);
+	b->k = *key;
+	b->k.u.str = malloc(key->len + 1);
 	if (!b->k.u.str) return 0;
-	memcpy(b->k.u.str, key.u.str, key.len);
-	b->k.u.str[key.len] = '\0';
+	memcpy(b->k.u.str, key->u.str, key->len);
+	b->k.u.str[key->len] = '\0';
 	return 1;
 }
 
@@ -129,18 +129,18 @@ static void string_key_compile(hash_key_t *key)
 	key->len = strlen(key->u.str);
 }
 
-static int string_key_same(gimli_hash_bucket *b, hash_key_t k)
+static int string_key_same(gimli_hash_bucket *b, hash_key_t *k)
 {
-	return b->k.len == k.len && !memcmp(b->k.u.str, k.u.str, k.len);
+	return b->k.len == k->len && !memcmp(b->k.u.str, k->u.str, k->len);
 }
 
-static uint32_t string_key_hash(hash_key_t key, uint32_t initval)
+static uint32_t string_key_hash(hash_key_t *key, uint32_t initval)
 {
    register uint32_t a,b,c,len;
-	 const char *k = key.u.ptr;
+   const char *k = key->u.ptr;
 
    /* Set up the internal state */
-   len = key.len;
+   len = key->len;
    a = b = 0x9e3779b9;  /* the golden ratio; an arbitrary value */
    c = initval;         /* the previous hash value */
 
@@ -155,7 +155,7 @@ static uint32_t string_key_hash(hash_key_t key, uint32_t initval)
    }
 
    /*------------------------------------- handle the last 11 bytes */
-   c += key.len;
+   c += key->len;
    switch(len)              /* all the case statements fall through */
    {
    case 11: c+=((uint32_t)k[10]<<24);
@@ -223,7 +223,7 @@ static void free_bucket(gimli_hash_t h, gimli_hash_bucket *b)
 //	free(b);
 }
 
-static gimli_hash_bucket *new_bucket(gimli_hash_t h, hash_key_t key, void *item)
+static gimli_hash_bucket *new_bucket(gimli_hash_t h, hash_key_t *key, void *item)
 {
 	gimli_hash_bucket *b;
 
@@ -262,7 +262,7 @@ static void rebucket(gimli_hash_t h, int newsize)
 		b = h->buckets[i];
 		while (b) {
 			n = b->next;
-			newoff = h->hash(b->k, h->initval) & (newsize-1);
+			newoff = h->hash(&b->k, h->initval) & (newsize-1);
 			b->next = newbuckets[newoff];
 			newbuckets[newoff] = b;
 			b = n;
@@ -273,12 +273,12 @@ static void rebucket(gimli_hash_t h, int newsize)
 	h->buckets = newbuckets;
 }
 
-static int do_hash_insert(gimli_hash_t h, hash_key_t key, void *item)
+static int do_hash_insert(gimli_hash_t h, hash_key_t *key, void *item)
 {
 	int off;
 	gimli_hash_bucket *b;
 
-	h->compile_key(&key);
+	h->compile_key(key);
 
 	off = h->hash(key, h->initval) & (h->table_size - 1);
 	b = h->buckets[off];
@@ -300,12 +300,12 @@ static int do_hash_insert(gimli_hash_t h, hash_key_t key, void *item)
 	return 1;
 }
 
-static int do_hash_find(gimli_hash_t h, hash_key_t key, void **item_p)
+static int do_hash_find(gimli_hash_t h, hash_key_t *key, void **item_p)
 {
 	int off;
 	gimli_hash_bucket *b;
 
-	h->compile_key(&key);
+	h->compile_key(key);
 
 	off = h->hash(key, h->initval) & (h->table_size - 1);
 	b = h->buckets[off];
@@ -321,12 +321,12 @@ static int do_hash_find(gimli_hash_t h, hash_key_t key, void **item_p)
 	return 0;
 }
 
-static int do_hash_delete(gimli_hash_t h, hash_key_t key)
+static int do_hash_delete(gimli_hash_t h, hash_key_t *key)
 {
 	int off;
 	gimli_hash_bucket *b, *prev = NULL;
 
-	h->compile_key(&key);
+	h->compile_key(key);
 
 	off = h->hash(key, h->initval) & (h->table_size - 1);
 	b = h->buckets[off];
@@ -359,7 +359,7 @@ int gimli_hash_insert(gimli_hash_t h, const char *k, void *item)
 
 	key.u.str = (char*)k;
 
-	return do_hash_insert(h, key, item);
+	return do_hash_insert(h, &key, item);
 }
 
 int gimli_hash_find(gimli_hash_t h, const char *k, void **item_p)
@@ -368,7 +368,7 @@ int gimli_hash_find(gimli_hash_t h, const char *k, void **item_p)
 
 	key.u.str = (char*)k;
 
-	return do_hash_find(h, key, item_p);
+	return do_hash_find(h, &key, item_p);
 }
 
 int gimli_hash_delete(gimli_hash_t h, const char *k)
@@ -377,7 +377,7 @@ int gimli_hash_delete(gimli_hash_t h, const char *k)
 
 	key.u.str = (char*)k;
 
-	return do_hash_delete(h, key);
+	return do_hash_delete(h, &key);
 }
 
 int gimli_hash_delete_u64(gimli_hash_t h, uint64_t k)
@@ -386,7 +386,7 @@ int gimli_hash_delete_u64(gimli_hash_t h, uint64_t k)
 
 	key.u.u64 = k;
 
-	return do_hash_delete(h, key);
+	return do_hash_delete(h, &key);
 }
 
 int gimli_hash_find_u64(gimli_hash_t h, uint64_t k, void **item_p)
@@ -395,7 +395,7 @@ int gimli_hash_find_u64(gimli_hash_t h, uint64_t k, void **item_p)
 
 	key.u.u64 = k;
 
-	return do_hash_find(h, key, item_p);
+	return do_hash_find(h, &key, item_p);
 }
 
 int gimli_hash_insert_u64(gimli_hash_t h, uint64_t k, void *item)
@@ -404,7 +404,7 @@ int gimli_hash_insert_u64(gimli_hash_t h, uint64_t k, void *item)
 
 	key.u.u64 = k;
 
-	return do_hash_insert(h, key, item);
+	return do_hash_insert(h, &key, item);
 }
 
 int gimli_hash_delete_ptr(gimli_hash_t h, void * k)
@@ -413,7 +413,7 @@ int gimli_hash_delete_ptr(gimli_hash_t h, void * k)
 
 	key.u.ptr = k;
 
-	return do_hash_delete(h, key);
+	return do_hash_delete(h, &key);
 }
 
 int gimli_hash_find_ptr(gimli_hash_t h, void * k, void **item_p)
@@ -422,7 +422,7 @@ int gimli_hash_find_ptr(gimli_hash_t h, void * k, void **item_p)
 
 	key.u.ptr = k;
 
-	return do_hash_find(h, key, item_p);
+	return do_hash_find(h, &key, item_p);
 }
 
 int gimli_hash_insert_ptr(gimli_hash_t h, void * k, void *item)
@@ -431,7 +431,7 @@ int gimli_hash_insert_ptr(gimli_hash_t h, void * k, void *item)
 
 	key.u.ptr = k;
 
-	return do_hash_insert(h, key, item);
+	return do_hash_insert(h, &key, item);
 }
 
 void gimli_hash_delete_all(gimli_hash_t h, int downsize)

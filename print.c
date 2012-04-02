@@ -236,6 +236,7 @@ static void print_integer(struct print_data *data,
 //printf("READ: 0x%" PRIx64 "\n", u.u64);
     u.u64 >>= shift;
     u.u64 &= mask;
+//printf("PROC: 0x%" PRIx64 "\n", u.u64);
 
     bytes = 8;
 

@@ -173,7 +173,7 @@ static void read_maps(gimli_proc_t proc)
   }
   maps = malloc(sb.st_size);
   if (maps == NULL) {
-    fprintf(stderr, "malloc(%d) for maps: %s\n", sb.st_size, strerror(errno));
+    fprintf(stderr, "malloc(%" PRIu64 ") for maps: %s\n", (uint64_t)sb.st_size, strerror(errno));
     close(fd);
     return;
   }
@@ -327,7 +327,7 @@ static int read_gwindow(struct gimli_unwind_cursor *cur)
   gwindows_t gwin;
 
   snprintf(path, sizeof(path), "/proc/%d/lwp/%d/gwindows",
-    targetph.pid, cur->st.lwpid);
+    cur->proc->pid, cur->st.lwpid);
 
   if (stat64(path, &st) == -1 || st.st_size == 0) {
     return 0;
@@ -435,12 +435,12 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
       return 0;
     }
 
-    if (gimli_read_mem(cur->proc, (void*)(cur->st.regs[R_FP] + STACK_BIAS),
+    if (gimli_read_mem(cur->proc, (cur->st.regs[R_FP] + STACK_BIAS),
         &cur->st.regs[R_L0],
         sizeof(struct rwindow)) != sizeof(struct rwindow)) {
       /* try to fill this data in via gwindow information */
       if (!read_gwindow(cur)) {
-        fprintf(stderr, "unable to read rwindow @ %p, and no gwindow\n",
+        fprintf(stderr, "unable to read rwindow @ " PTRFMT ", and no gwindow\n",
           cur->st.regs[R_FP]);
       }
     }

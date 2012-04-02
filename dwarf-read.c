@@ -1776,7 +1776,9 @@ static void populate_struct_or_union(
       if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_byte_size, &bytesize)) {
         bytesize = gimli_type_size(memt)/8;
       }
+#if !WORDS_BIGENDIAN
       offset = ((bytesize * 8) - 1) - offset;
+#endif
 
     } else {
       size = gimli_type_size(memt);
