@@ -213,10 +213,17 @@ static void print_integer(struct print_data *data,
 
   if (bytes > 8 || (bits % 8 != 0) || (bytes & (bytes - 1)) != 0) {
     /* it's a bitfield */
-    uint8_t shift = offset - (bits - 1);
+    uint8_t bitoff = offset - (8*(offset/8));
+    uint8_t shift =
+#if WORDS_BIGENDIAN
+        (sizeof(u.u64)*8) - (bitoff + bits);
+#else
+        bitoff - (bits - 1);
+#endif
     uint64_t mask = (1ULL << bits) - 1;
-
     bytes = (bits + 7) / 8;
+
+//printf("bitfield read from " PTRFMT " bits=%" PRIu64 " bytes=%" PRIu64 " offset=%" PRIu64 " bitoff=%d shift=%d mask=%" PRIx64 "\n", addr, bits, bytes, offset, bitoff, shift, mask);
     if (bytes > sizeof(u.u64)) {
       printf("??? <invalid bitfield size %" PRIu64 ">", bits);
       return;
@@ -226,10 +233,8 @@ static void print_integer(struct print_data *data,
         bytes, addr);
       return;
     }
-    if (offset % 8 != 0) {
-      /* not at a byte boundary, so shift it down to the lowest bits */
-      u.u64 >>= shift;
-    }
+//printf("READ: 0x%" PRIx64 "\n", u.u64);
+    u.u64 >>= shift;
     u.u64 &= mask;
 
     bytes = 8;
@@ -289,7 +294,6 @@ static void print_array(struct print_data *sdata, gimli_type_t t)
   uint64_t off = sdata->offset;
   int depth = sdata->depth;
   char addrkey[64];
-  int dummy;
   uint32_t i;
   struct print_data data = *sdata;
   int is_struct;
@@ -380,6 +384,7 @@ static void print_array(struct print_data *sdata, gimli_type_t t)
 
 static void print_pointer(struct print_data *data, gimli_type_t t)
 {
+  void *dummy;
   gimli_type_t target = gimli_type_resolve(gimli_type_follow_pointer(t));
   struct gimli_type_encoding enc;
   void *tptr;
@@ -388,7 +393,6 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
   gimli_addr_t addrsave = data->addr;
   int depth = data->depth;
   char addrkey[64];
-  int dummy;
   char namebuf[1024];
   const char *symname;
   struct print_data savdata = *data;
@@ -456,7 +460,7 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
   }
 
   snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, target, data->addr);
-  if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
+  if (gimli_hash_find(derefd, addrkey, &dummy)) {
     printf(" " PTRFMT " [deref'd above]", ptr);
     return;
   }
@@ -510,7 +514,7 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
   int indent = 4 * (data->depth + 1);
   gimli_addr_t addr;
   char addrkey[64];
-  int dummy;
+  void *dummy;
 
   if (data->frame) {
 
@@ -546,7 +550,7 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
       case GIMLI_K_UNION:
       case GIMLI_K_STRUCT:
         snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, t, addr);
-        if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
+        if (gimli_hash_find(derefd, addrkey, &dummy)) {
           printf(" " PTRFMT " [deref'd above]\n", addr);
           return;
         }

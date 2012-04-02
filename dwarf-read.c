@@ -1774,7 +1774,7 @@ static void populate_struct_or_union(
       /* convert to bit offset from start of storage */
       /* FIXME: check this for big endian systems */
       if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_byte_size, &bytesize)) {
-        bytesize = gimli_type_size(memt);
+        bytesize = gimli_type_size(memt)/8;
       }
       offset = ((bytesize * 8) - 1) - offset;
 
