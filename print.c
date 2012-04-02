@@ -6,6 +6,8 @@
 #include "impl.h"
 
 static gimli_hash_t derefd = NULL;
+static int max_depth = 4;
+static int max_arr = 16;
 
 static char indentstr[] =
 "                                                                      ";
@@ -315,6 +317,10 @@ static void print_array(struct print_data *sdata, gimli_type_t t)
     printf(" ]");
     return;
   }
+  if (depth + 1 > max_depth) {
+    printf("[ ... ]");
+    return;
+  }
 
   is_struct = 0;
   switch (gimli_type_kind(target)) {
@@ -351,7 +357,7 @@ static void print_array(struct print_data *sdata, gimli_type_t t)
   data.terse = 1;
   data.in_array++;
 
-  for (i = 0; i < arinfo.nelems; i++) {
+  for (i = 0; i < arinfo.nelems && i < max_arr; i++) {
     data.depth = depth + 1;
     data.addr = addr + (i * (data.size / 8));
 
@@ -365,6 +371,9 @@ static void print_array(struct print_data *sdata, gimli_type_t t)
       }
     }
     print_var(&data, target, "");
+  }
+  if (arinfo.nelems > max_arr) {
+    printf(" ...");
   }
   printf("\n%.*s]", (depth + 1) * 4, indentstr);
 }
@@ -441,6 +450,10 @@ static void print_pointer(struct print_data *data, gimli_type_t t)
     return;
   }
 
+  if (data->depth + 1 > max_depth) {
+    printf(PTRFMT, ptr);
+    return;
+  }
 
   snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, target, data->addr);
   if (gimli_hash_find(derefd, addrkey, (void**)&dummy)) {
