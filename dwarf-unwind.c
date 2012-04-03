@@ -508,7 +508,7 @@ static int apply_regs(struct gimli_unwind_cursor *cur,
             printf("couldn't find address for column %d\n", i);
             return 0;
           }
-          val = *(void**)(intptr_t)ret;
+          val = (void*)(intptr_t)ret;
           *(void**)regaddr = val;
           if (debug) {
             fprintf(stderr, "Setting col %d to %p\n", i, val);

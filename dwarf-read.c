@@ -1464,6 +1464,9 @@ static struct gimli_dwarf_die *find_var_die_for_addr(gimli_proc_t proc,
 
   memset(&cur, 0, sizeof(cur));
   cur.proc = proc;
+#ifdef __MACH__
+  addr -= m->objfile->base_addr;
+#endif
 
   STAILQ_FOREACH(die, &cu->dies, siblings) {
     uint64_t lopc, hipc;
@@ -1571,9 +1574,15 @@ static struct gimli_dwarf_die *gimli_dwarf_get_die_for_data(
   if (!file->arange && !load_arange(m)) {
     return NULL;
   }
-
+#ifdef __MACH__
+  pc -= m->objfile->base_addr;
+#endif
   arange = bsearch(&pc, file->arange, file->num_arange,
       sizeof(*arange), search_compare_arange);
+#ifdef __MACH__
+  pc += m->objfile->base_addr;
+#endif
+
   if (arange) {
     /* arange gives us a pointer to the CU */
     cu = find_cu(file, arange->di_offset);
@@ -1621,6 +1630,9 @@ struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(gimli_proc_t proc, gimli_addr
   if (!m->objfile->arange && !load_arange(m)) {
     return NULL;
   }
+#ifdef __MACH__
+  pc -= m->objfile->base_addr;
+#endif
 
   arange = bsearch(&pc, m->objfile->arange, m->objfile->num_arange,
       sizeof(*arange), search_compare_arange);

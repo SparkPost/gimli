@@ -721,7 +721,7 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
   } frame;
   struct gimli_unwind_cursor c;
 
-  if (gimli_is_signal_frame(cur)) {
+  if (0 && gimli_is_signal_frame(cur)) {
 #if defined(__x86_64__)
     _STRUCT_MCONTEXT64 mctx;
     
@@ -731,7 +731,7 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
       return 0;
     }
 #if 0
-#define SHOWREG(n) fprintf(stderr, #n ": %p\n", mctx.GIMLI_DARWIN_REGNAME(ss).GIMLI_DARWIN_REGNAME(n));
+#define SHOWREG(n) fprintf(stderr, #n ": " PTRFMT "\n", mctx.GIMLI_DARWIN_REGNAME(ss).GIMLI_DARWIN_REGNAME(n));
     SHOWREG(rax);
     SHOWREG(rbx);
     SHOWREG(rcx);
@@ -898,7 +898,10 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
   if (sigtramp && (gimli_addr_t)cur->st.pc >= sigtramp &&
       (gimli_addr_t)cur->st.pc <= sigtramp + 0xff) {
 #if defined(__x86_64__)
-    if (gimli_read_mem(cur->proc, (gimli_addr_t)cur->st.fp + GIMLI_KERNEL_SIGINFO64,
+    /* I can see the pointer in rsi when I used gdb on the target,
+     * but we don't have a valid register set here when we need it :-/ */
+    if (gimli_read_mem(cur->proc,
+        cur->st.regs.GIMLI_DARWIN_REGNAME(rsi),
         &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
       memset(&cur->si, 0, sizeof(cur->si));
     }
