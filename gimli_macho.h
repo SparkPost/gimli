@@ -30,7 +30,7 @@ typedef struct section gimli_section;
 
 struct gimli_macho_object {
   char *objname;
-  struct gimli_object_file *gobject;
+  gimli_mapped_object_t gobject;
   int is_exec;
 };
 

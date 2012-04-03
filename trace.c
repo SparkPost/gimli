@@ -27,6 +27,10 @@ gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames)
     { "_thr_setup", 1 },
     { "_lwp_start", 1 },
 #endif
+#ifdef __MACH__
+    { "_main", 0 },
+    { "__pthread_work_internal_init", 1 },
+#endif
   };
   int i;
   int stop;
@@ -58,7 +62,7 @@ gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames)
     stop = 0;
 
     for (i = 0; i < sizeof(stopsyms)/sizeof(stopsyms[0]); i++) {
-      if (!stopsyms[i].before) continue;
+      if (!stopsyms[i].before || !stopsyms[i].sym) continue;
       if ((gimli_addr_t)cur.st.pc >= stopsyms[i].sym->addr &&
           (gimli_addr_t)cur.st.pc <= stopsyms[i].sym->addr + stopsyms[i].sym->size) {
         stop = 1;
@@ -79,7 +83,7 @@ gimli_stack_trace_t gimli_thread_stack_trace(gimli_thread_t thr, int max_frames)
     STAILQ_INSERT_TAIL(&trace->frames, frame, frames);
 
     for (i = 0; i < sizeof(stopsyms)/sizeof(stopsyms[0]); i++) {
-      if (stopsyms[i].before) continue;
+      if (stopsyms[i].before || !stopsyms[i].sym) continue;
       if ((gimli_addr_t)cur.st.pc >= stopsyms[i].sym->addr &&
           (gimli_addr_t)cur.st.pc <= stopsyms[i].sym->addr + stopsyms[i].sym->size) {
         stop = 1;

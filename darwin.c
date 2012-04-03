@@ -72,7 +72,11 @@ struct gimli_kernel_sigframe32 {
 static int target_pid;
 static int got_task = 0;
 static task_t targetTask;
-static void *sigtramp = NULL;
+static gimli_addr_t sigtramp = 0;
+
+void gimli_object_file_destroy(gimli_object_file_t obj)
+{
+}
 
 /* Given a path to an image file, open it, find the correct architecture
  * portion for the header, populate rethdr with it and return the file
@@ -140,7 +144,7 @@ static int read_mach_header(const char *filename,
  * Attempt to load such a beast and process the dwarf info from
  * it.
  */
-static void find_dwarf_dSYM(struct gimli_object_file *of)
+static void find_dwarf_dSYM(gimli_mapped_object_t file)
 {
   char dsym[PATH_MAX];
   char *base;
@@ -152,13 +156,13 @@ static void find_dwarf_dSYM(struct gimli_object_file *of)
   int fd;
   gimli_segment_command scmd;
   char sectname[16];
-  gimli_object_file_t *container;
+  gimli_object_file_t container;
   
-  strcpy(basepath, of->objname);
+  strcpy(basepath, file->objname);
   base = basename(basepath);
 
   snprintf(dsym, sizeof(dsym)-1,
-    "%s.dSYM/Contents/Resources/DWARF/%s", of->objname, base);
+    "%s.dSYM/Contents/Resources/DWARF/%s", file->objname, base);
 
   if (debug) {
     fprintf(stderr, "dsym: trying %s\n", dsym);
@@ -170,11 +174,11 @@ static void find_dwarf_dSYM(struct gimli_object_file *of)
   if (fd == -1) return;
 
   container = calloc(1, sizeof(*container));
-  container->gobject = of;
+  container->gobject = file;
   container->objname = strdup(dsym);
   container->is_exec = 1;
 
-  of->aux_elf = container;
+  file->aux_elf = container;
 
   /* we're looking for an LC_SEGMENT with a segname of __DWARF */
   cmd_offset = hdr_offset + sizeof(hdr);
@@ -205,8 +209,8 @@ static void find_dwarf_dSYM(struct gimli_object_file *of)
           s->name[0] = '.';
           s->addr = sec.addr;
           if (debug) {
-            fprintf(stderr, "%s %s s->addr=%p base_addr=%p\n",
-              of->objname, sectname, s->addr, of->base_addr);
+            fprintf(stderr, "%s %s s->addr=" PTRFMT " base_addr=" PTRFMT "\n",
+              file->objname, sectname, s->addr, file->base_addr);
           }
           s->size = sec.size;
           s->data = malloc(s->size);
@@ -214,7 +218,7 @@ static void find_dwarf_dSYM(struct gimli_object_file *of)
           s->container = container;
           pread(fd, s->data, s->size, s->offset);
 
-          gimli_hash_insert(of->sections, s->name, s);
+          gimli_hash_insert(file->sections, s->name, s);
         }
       }
     }
@@ -222,7 +226,7 @@ static void find_dwarf_dSYM(struct gimli_object_file *of)
 }
 
 struct gimli_section_data *gimli_get_section_by_name(
-  gimli_object_file_t *elf, const char *name)
+  gimli_object_file_t elf, const char *name)
 {
   struct gimli_section_data *s = NULL;
 
@@ -310,7 +314,7 @@ static void walk_symtab(void *context, symcallback cb,
 static int add_symbol(gimli_mach_header *mhdr, void *context,
   const char *strtab, gimli_nlist *nsym)
 {
-  struct gimli_object_file *of = context;
+  gimli_mapped_object_t file = context;
 
   if (nsym->n_value != 0 && nsym->n_type != N_UNDF &&
       strtab[nsym->n_un.n_strx] != '\0') {
@@ -322,11 +326,18 @@ static int add_symbol(gimli_mach_header *mhdr, void *context,
         case N_FNAME:
         case N_FUN: /* may have line numbers */
         case N_LSYM:
+        case N_STSYM:
           want_symbol = 1;
           break;
         default:
           want_symbol = 0;
-          //printf("        stab:%x\n", nsym->n_type);
+#if 0
+          printf("%02x %s sect=%d desc=%d val=%" PRIu64 "\n",
+              nsym->n_type,
+              strtab + nsym->n_un.n_strx,
+              nsym->n_sect, nsym->n_desc, nsym->n_value);
+#endif
+
       }
     } else if (nsym->n_type & N_PEXT) {
       want_symbol = 0;
@@ -342,15 +353,15 @@ static int add_symbol(gimli_mach_header *mhdr, void *context,
 #endif
     }
     if (want_symbol) {
-      void *value = (void*)(intptr_t)nsym->n_value;
+      gimli_addr_t value = nsym->n_value;
 
       if (mhdr->filetype != MH_EXECUTE) {
-        value += of->base_addr;
+        value += file->base_addr;
       }
       //          printf("sym: %s %p\n", strtab + nsym->n_un.n_strx, (char*)value);
-      gimli_add_symbol(of, strtab + nsym->n_un.n_strx, value, 0);
+      gimli_add_symbol(file, strtab + nsym->n_un.n_strx, value, 0);
 
-      if (sigtramp == NULL &&
+      if (sigtramp == 0 &&
           !strcmp(strtab + nsym->n_un.n_strx, "__sigtramp")) {
         sigtramp = value;
       }
@@ -359,11 +370,11 @@ static int add_symbol(gimli_mach_header *mhdr, void *context,
   return 1;
 }
 
-static void read_symtab(struct gimli_object_file *of,
+static void read_symtab(gimli_mapped_object_t file,
   int fd, uint32_t cmd_offset, uint32_t file_off,
   gimli_mach_header *mhdr)
 {
-  walk_symtab(of, add_symbol, fd, cmd_offset, file_off, mhdr);
+  walk_symtab(file, add_symbol, fd, cmd_offset, file_off, mhdr);
 }
 
 /* dyld bootstrap.
@@ -371,8 +382,8 @@ static void read_symtab(struct gimli_object_file *of,
  * the nlist() library routine, so we need to manually grub around in dyld
  * to find the dyld symbols we need for discover_maps. */
 struct gimli_dyld_bootstrap {
-  void *info;
-  void *cache;
+  gimli_addr_t info;
+  gimli_addr_t cache;
 };
 
 static int find_dyld_symbols(gimli_mach_header *mhdr, void *context,
@@ -383,13 +394,13 @@ static int find_dyld_symbols(gimli_mach_header *mhdr, void *context,
 
   if (!dyld->info) {
     if (!strcmp(name, "_dyld_all_image_infos")) {
-      dyld->info = (void*)nsym->n_value;
+      dyld->info = nsym->n_value;
       return 1;
     }
   }
   if (dyld->cache) {
     if (!strcmp(name, "_dyld_shared_region_ranges")) {
-      dyld->cache = (void*)nsym->n_value;
+      dyld->cache = nsym->n_value;
       return 1;
     }
   }
@@ -404,7 +415,7 @@ static int find_dyld_symbols(gimli_mach_header *mhdr, void *context,
  * target (which should always be true) and read the info out of the target
  * from that address.  This interface is documented in <mach-o/dyld_images.h>
  */
-static void discover_maps(void)
+static void discover_maps(gimli_proc_t proc)
 {
   int i;
   char *symoff = NULL;
@@ -437,13 +448,13 @@ static void discover_maps(void)
     /* adjust the cache information by the same slide that we observe
      * for the difference between the symbol for _dyld_all_image_infos
      * and the value we got from the task_info above */
-    dyld.cache -= (void*)tinfo.all_image_info_addr - dyld.info;
+    dyld.cache -= tinfo.all_image_info_addr - dyld.info;
   }
   dyld.info = tinfo.all_image_info_addr;
 
   if (dyld.info) {
-    if (gimli_read_mem(dyld.info, &infos, sizeof(infos)) != sizeof(infos)) {
-      fprintf(stderr, "DYLD: failed to read _dyld_all_image_infos from %p\n"
+    if (gimli_read_mem(proc, dyld.info, &infos, sizeof(infos)) != sizeof(infos)) {
+      fprintf(stderr, "DYLD: failed to read _dyld_all_image_infos from " PTRFMT "\n"
           "DYLD: no maps, symbols or DWARF info will be available\n",
           dyld.info);
       return;
@@ -459,7 +470,7 @@ static void discover_maps(void)
    * addresses match against the shared cache, then we need to perform
    * an additional computation to obtain the relocated address in the target */
   have_shared_cache = 0;
-  if (dyld.cache && gimli_read_mem(dyld.cache, &shared_cache,
+  if (dyld.cache && gimli_read_mem(proc, dyld.cache, &shared_cache,
         sizeof(shared_cache)) == sizeof(shared_cache)) {
     have_shared_cache = 1;
   }
@@ -469,7 +480,7 @@ static void discover_maps(void)
     struct dyld_image_info im;
     char name[PATH_MAX];
     char rname[PATH_MAX];
-    struct gimli_object_file *of = NULL;
+    gimli_mapped_object_t file = NULL;
     gimli_mach_header mhdr;
     int n, fd;
     char *addr = NULL;
@@ -477,7 +488,7 @@ static void discover_maps(void)
     char sectname[16];
     uint32_t hdr_offset, cmd_offset;
 
-    gimli_read_mem((char*)infos.infoArray + (i * sizeof(im)),
+    gimli_read_mem(proc, (gimli_addr_t)infos.infoArray + (i * sizeof(im)),
         &im, sizeof(im));
 
     if (im.imageLoadAddress == 0) {
@@ -485,7 +496,7 @@ static void discover_maps(void)
     }
 
     memset(name, 0, sizeof(name));
-    gimli_read_mem((void*)im.imageFilePath, name, sizeof(name));
+    gimli_read_mem(proc, (gimli_addr_t)im.imageFilePath, name, sizeof(name));
     if (!realpath(name, rname)) strcpy(rname, name);
 
     if (debug) {
@@ -493,15 +504,15 @@ static void discover_maps(void)
           im.imageLoadAddress, im.imageFilePath, rname);
     }
 
-    of = gimli_add_object(rname, 0);
-    of->elf = calloc(1, sizeof(*of->elf));
-    of->elf->gobject = of;
-    of->elf->is_exec = 1;
-    of->elf->objname = of->objname;
+    file = gimli_add_object(proc, rname, 0);
+    file->elf = calloc(1, sizeof(*file->elf));
+    file->elf->gobject = file;
+    file->elf->is_exec = 1;
+    file->elf->objname = file->objname;
 
     /* now, from the mach header, find each segment and its
      * address range and record the mapping */
-    gimli_read_mem((void*)im.imageLoadAddress, &mhdr, sizeof(mhdr));
+    gimli_read_mem(proc, (gimli_addr_t)im.imageLoadAddress, &mhdr, sizeof(mhdr));
 
     in_shared_cache = 0;
     if (have_shared_cache) {
@@ -529,7 +540,7 @@ static void discover_maps(void)
     for (n = 0; n < hdr.ncmds; n++, cmd_offset += seg.cmdsize) {
       pread(fd, &seg, sizeof(struct load_command), cmd_offset);
       if (seg.cmd == LC_SYMTAB) {
-        read_symtab(of, fd, cmd_offset, hdr_offset, &mhdr);
+        read_symtab(file, fd, cmd_offset, hdr_offset, &mhdr);
         continue;
       }
       if (seg.cmd != GIMLI_LC_SEGMENT) {
@@ -543,12 +554,12 @@ static void discover_maps(void)
         /* ignore zero page mapping */
         continue;
       }
-      if (!strcmp(seg.segname, SEG_TEXT) && of->base_addr == 0) {
+      if (!strcmp(seg.segname, SEG_TEXT) && file->base_addr == 0) {
         /* compute the slide */
-        of->base_addr = (intptr_t)im.imageLoadAddress - seg.vmaddr;
+        file->base_addr = (intptr_t)im.imageLoadAddress - seg.vmaddr;
       }
-      gimli_add_mapping(of->objname,
-        (void*)(intptr_t)(seg.vmaddr + of->base_addr), seg.vmsize, seg.fileoff);
+      gimli_add_mapping(proc, file->objname,
+        (gimli_addr_t)(seg.vmaddr + file->base_addr), seg.vmsize, seg.fileoff);
 
       if (!strcmp(seg.segname, "__TEXT")) {
         /* look for an __eh_frame section */
@@ -574,16 +585,16 @@ static void discover_maps(void)
             s->size = sec.size;
             s->data = malloc(s->size);
             s->offset = sec.offset + hdr_offset;
-            s->container = of->elf;
+            s->container = file->elf;
             pread(fd, s->data, s->size, s->offset);
 
-            gimli_hash_insert(of->sections, s->name, s);
+            gimli_hash_insert(file->sections, s->name, s);
           }
         }
       }
 
     }
-    find_dwarf_dSYM(of);
+    find_dwarf_dSYM(file);
   }
 }
 
@@ -614,11 +625,11 @@ static void make_authz_request(void)
   }
 }
 
-int gimli_attach(int pid)
+gimli_err_t gimli_attach(gimli_proc_t proc)
 {
   kern_return_t rc;
   mach_msg_type_number_t n;
-  struct gimli_thread_state *threads;
+  struct gimli_thread_state *thr;
   thread_act_port_array_t threadlist;
   int i;
 
@@ -638,8 +649,8 @@ int gimli_attach(int pid)
    * See also taskgated(8)
    */
   make_authz_request();
-  target_pid = pid;
-  rc = task_for_pid(mach_task_self(), pid, &targetTask);
+  target_pid = proc->pid;
+  rc = task_for_pid(mach_task_self(), proc->pid, &targetTask);
   if (rc != KERN_SUCCESS) {
     /* this will usually fail unless you call this from the
      * parent of the faulting process, or have root */
@@ -652,53 +663,51 @@ int gimli_attach(int pid)
 "http://sourceware.org/gdb/wiki/BuildingOnDarwin\n"
 "http://developer.apple.com/library/mac/#documentation/Security/Conceptual/CodeSigningGuide/Procedures/Procedures.html#//apple_ref/doc/uid/TP40005929-CH4-SW1\n"
 , rc);
-    return 0;
+    return GIMLI_ERR_PERM;
   }
   got_task = 1;
   task_suspend(targetTask);
 
-  discover_maps();
+  discover_maps(proc);
 
   rc = task_threads(targetTask, &threadlist, &n);
 
   if (rc == KERN_SUCCESS) {
-    threads = calloc(n, sizeof(*threads));
-
     for (i = 0; i < n; i++) {
 #ifdef __x86_64__
       x86_thread_state64_t ts;
       mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
 
+      thr = gimli_proc_thread_by_lwpid(proc, i, 1);
       memset(&ts, 0, sizeof(ts));
       rc = thread_get_state(threadlist[i], x86_THREAD_STATE64,
           (thread_state_t)&ts, &count);
       if (rc == KERN_SUCCESS) {
-        memcpy(&threads[i].regs, &ts, sizeof(ts));
-        threads[i].pc = (void*)ts.GIMLI_DARWIN_REGNAME(rip);
-        threads[i].fp = (void*)ts.GIMLI_DARWIN_REGNAME(rbp);
-        threads[i].sp = (void*)ts.GIMLI_DARWIN_REGNAME(rsp);
+        memcpy(&thr->regs, &ts, sizeof(ts));
+        thr->pc = (void*)ts.GIMLI_DARWIN_REGNAME(rip);
+        thr->fp = (void*)ts.GIMLI_DARWIN_REGNAME(rbp);
+        thr->sp = (void*)ts.GIMLI_DARWIN_REGNAME(rsp);
       }
 #elif defined(__i386__)
       x86_thread_state32_t ts;
       mach_msg_type_number_t count = x86_THREAD_STATE32_COUNT;
 
+      thr = gimli_proc_thread_by_lwpid(proc, i, 1);
       memset(&ts, 0, sizeof(ts));
       rc = thread_get_state(threadlist[i], x86_THREAD_STATE32,
           (thread_state_t)&ts, &count);
       if (rc == KERN_SUCCESS) {
-        memcpy(&threads[i].regs, &ts, sizeof(ts));
-        threads[i].pc = (void*)ts.GIMLI_DARWIN_REGNAME(eip);
-        threads[i].fp = (void*)ts.GIMLI_DARWIN_REGNAME(ebp);
-        threads[i].sp = (void*)ts.GIMLI_DARWIN_REGNAME(esp);
+        memcpy(&thr->regs, &ts, sizeof(ts));
+        thr->pc = (void*)ts.GIMLI_DARWIN_REGNAME(eip);
+        thr->fp = (void*)ts.GIMLI_DARWIN_REGNAME(ebp);
+        thr->sp = (void*)ts.GIMLI_DARWIN_REGNAME(esp);
       }
 #else
 # error unknown architecture
 #endif
     }
-    gimli_nthreads = n;
-    gimli_threads = threads;
   }
-  return 1;
+  return GIMLI_ERR_OK;
 }
 
 int gimli_init_unwind(struct gimli_unwind_cursor *cur,
@@ -720,7 +729,7 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 #if defined(__x86_64__)
     _STRUCT_MCONTEXT64 mctx;
     
-    if (gimli_read_mem(cur->st.fp + GIMLI_KERNEL_MCTX64, &mctx,
+    if (gimli_read_mem(cur->proc, (gimli_addr_t)cur->st.fp + GIMLI_KERNEL_MCTX64, &mctx,
         sizeof(mctx)) != sizeof(mctx)) {
       fprintf(stderr, "unable to read old context\n");
       return 0;
@@ -781,7 +790,8 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
   }
 
   if (c.st.fp) {
-    if (gimli_read_mem(c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
+    if (gimli_read_mem(cur->proc, (gimli_addr_t)c.st.fp,
+          &frame, sizeof(frame)) != sizeof(frame)) {
       memset(&frame, 0, sizeof(frame));
     }
     if (debug) {
@@ -811,7 +821,7 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
   return 0;
 }
 
-int gimli_detach(void)
+gimli_err_t gimli_detach(gimli_proc_t proc)
 {
   if (got_task) {
     task_resume(targetTask);
@@ -820,7 +830,7 @@ int gimli_detach(void)
   return 0;
 }
 
-int gimli_read_mem(void *src, void *dest, int len)
+int gimli_read_mem(gimli_proc_t proc, gimli_addr_t src, void *dest, int len)
 {
   kern_return_t rc;
   vm_size_t dataCnt = len;
@@ -889,16 +899,18 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
     memset(&cur->si, 0, sizeof(cur->si));
     return 1;
   }
-  if (sigtramp && cur->st.pc >= sigtramp && cur->st.pc <= sigtramp + 0xff) {
+  if (sigtramp && (gimli_addr_t)cur->st.pc >= sigtramp &&
+      (gimli_addr_t)cur->st.pc <= sigtramp + 0xff) {
 #if defined(__x86_64__)
-    if (gimli_read_mem(cur->st.fp + GIMLI_KERNEL_SIGINFO64,
+    if (gimli_read_mem(cur->proc, (gimli_addr_t)cur->st.fp + GIMLI_KERNEL_SIGINFO64,
         &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
       memset(&cur->si, 0, sizeof(cur->si));
     }
     return 1;
 #elif defined(__i386__)
     struct gimli_kernel_sigframe32 *f = cur->st.fp;
-    if (gimli_read_mem(&f->si, &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
+    if (gimli_read_mem(cur->proc, (gimli_addr_t)&f->si,
+          &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
       memset(&cur->si, 0, sizeof(cur->si));
     }
     return 1;

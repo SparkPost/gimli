@@ -97,7 +97,9 @@ gimli_err_t gimli_proc_attach(int pid, gimli_proc_t *proc)
 
   *proc = p;
   p->refcnt = 1;
+#ifndef __MACH__
   p->proc_mem = -1;
+#endif
   p->pid = pid;
   STAILQ_INIT(&p->threads);
   p->files = gimli_hash_new(gimli_destroy_mapped_object_hash);
@@ -149,6 +151,7 @@ gimli_err_t gimli_proc_mem_ref(gimli_proc_t p,
     gimli_addr_t addr, size_t size, gimli_mem_ref_t *refp)
 {
   gimli_mem_ref_t ref;
+  int actual;
 
   /* TODO: maintain a cache of page sized mappings for efficiency */
 
@@ -164,42 +167,19 @@ gimli_err_t gimli_proc_mem_ref(gimli_proc_t p,
   ref->proc = p;
   gimli_proc_addref(p);
 
-  if (p->proc_mem_supports_mmap == -1) {
-    /* TODO: try mmap, as that would be ideal.
-     * Linux 2.6 doesn't support this.
-     * When we try this for Solaris and FreeBSD, we need to remember
-     * that mmap wants things page aligned and with page offsets, so
-     * we'll need to rebase addr against the page size and then provide
-     * an offset relative to the page, recording the offset in the
-     * map that we're going to return.  We'll also need to record
-     * the actual mmap size that we produced.
-     * Another way to deal with this is to make the page aligned mapping
-     * the relative of this one, and keep the "complex" adjustments
-     * as part of the ->relative handling. */
-
-    /* our "probing" determined that we don't do mmap */
-    p->proc_mem_supports_mmap = 0;
+  ref->base = malloc(size);
+  if (!ref->base) {
+    gimli_mem_ref_delete(ref);
+    return GIMLI_ERR_OOM;
   }
-
-  if (!p->proc_mem_supports_mmap) {
-    /* Poor-mans approach, which is to allocate a buffer and copy
-     * data into it */
-    int actual;
-
-    ref->base = malloc(size);
-    if (!ref->base) {
-      gimli_mem_ref_delete(ref);
-      return GIMLI_ERR_OOM;
-    }
-    ref->map_type = gimli_mem_ref_is_malloc;
-    actual = gimli_read_mem(p, ref->target, ref->base, ref->size);
-    if (actual == 0) {
-      gimli_mem_ref_delete(ref);
-      return GIMLI_ERR_BAD_ADDR;
-    }
-    /* may not have obtained full size */
-    ref->size = actual;
+  ref->map_type = gimli_mem_ref_is_malloc;
+  actual = gimli_read_mem(p, ref->target, ref->base, ref->size);
+  if (actual == 0) {
+    gimli_mem_ref_delete(ref);
+    return GIMLI_ERR_BAD_ADDR;
   }
+  /* may not have obtained full size */
+  ref->size = actual;
 
   *refp = ref;
   return GIMLI_ERR_OK;

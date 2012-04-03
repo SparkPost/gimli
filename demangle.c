@@ -1262,6 +1262,11 @@ static bool ParseSubstitution(State *state) {
 int gimli_demangle(const char *mangled, char *out, int out_size)
 {
   State state;
+
+#ifdef __MACH__
+  /* skip leading '_' that is present on this platform */
+  mangled++;
+#endif
   InitState(&state, mangled, out, out_size);
   return (ParseMangledName(&state) &&
           state.overflowed == false &&

@@ -92,7 +92,7 @@ static void bake_symtab(gimli_mapped_object_t f)
     s->size = 8; /* start with something lame */
     for (j = i + 1; j < f->symcount; j++) {
       if (f->symtab[j].addr > s->addr) {
-        f->size = f->symtab[j].addr - s->addr;
+        s->size = f->symtab[j].addr - s->addr;
         break;
       }
     }

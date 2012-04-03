@@ -321,8 +321,6 @@ struct gimli_proc {
   /** for efficient memory accesses, this is a descriptor
    * for /proc/pid/mem. */
   int proc_mem;
-  /** whether mmap works on proc_mem */
-  int proc_mem_supports_mmap;
 #endif
 
   /** list of threads */
@@ -456,8 +454,10 @@ struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
   struct gimli_dwarf_die *die, uint64_t attrcode);
 gimli_err_t gimli_proc_service_init(gimli_proc_t proc);
 int gimli_render_siginfo(gimli_proc_t proc, siginfo_t *si, char *buf, size_t bufsize);
+#ifndef __MACH__
 void gimli_user_regs_to_thread(prgregset_t *ur,
   struct gimli_thread_state *thr);
+#endif
 struct gimli_thread_state *gimli_proc_thread_by_lwpid(gimli_proc_t proc, int lwpid, int create);
 int gimli_stack_trace(gimli_proc_t proc, struct gimli_thread_state *thr, struct gimli_unwind_cursor *frames, int nframes);
 int gimli_dwarf_load_frame_var_info(gimli_stack_frame_t frame);
@@ -505,7 +505,7 @@ int dw_calc_location(struct gimli_unwind_cursor *cur,
   gimli_object_file_t elf, int *is_stack);
 void gimli_dwarf_load_all_types(gimli_mapped_object_t file);
 
-void gimli_object_file_destroy(struct gimli_elf_ehdr *elf);
+void gimli_object_file_destroy(gimli_object_file_t obj);
 void gimli_hash_diagnose(gimli_hash_t h);
 void gimli_dw_fde_destroy(gimli_mapped_object_t file);
 

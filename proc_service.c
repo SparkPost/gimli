@@ -21,6 +21,8 @@
 #define _GNU_SOURCE 1
 #endif
 
+#ifndef __MACH__
+
 #include "impl.h"
 
 #ifdef __linux__
@@ -445,7 +447,7 @@ void ps_plog(const char *fmt, ...)
   va_end(ap);
 }
 
-
+#endif
 
 /* vim:ts=2:sw=2:et:
  */
