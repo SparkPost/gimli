@@ -9,7 +9,13 @@ else
   libtoolize --automake
 fi
 autoheader
-aclocal 
-automake --add-missing --foreign
+if test -z "$ACLOCAL" ; then
+  ACLOCAL=aclocal
+fi
+$ACLOCAL
+if test -z "$AUTOMAKE" ; then
+  AUTOMAKE=automake
+fi
+$AUTOMAKE --add-missing --foreign
 autoconf
 

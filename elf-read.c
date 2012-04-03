@@ -112,12 +112,12 @@ static uint16_t native_machine =
 #endif
   ;
 
-struct gimli_elf_shdr *gimli_get_section_by_index(
+static struct gimli_elf_shdr *gimli_get_section_by_index(
   struct gimli_elf_ehdr *elf, int section)
 {
   struct gimli_elf_shdr *s;
 
-  for (s = elf->sections; s; s = s->next) {
+  STAILQ_FOREACH(s, &elf->sections, shdrs) {
     if (s->section_no == section) {
       return s;
     }
@@ -125,12 +125,12 @@ struct gimli_elf_shdr *gimli_get_section_by_index(
   return NULL;
 }
 
-struct gimli_elf_shdr *gimli_get_elf_section_by_name(struct gimli_elf_ehdr *elf,
+static struct gimli_elf_shdr *gimli_get_elf_section_by_name(struct gimli_elf_ehdr *elf,
   const char *name)
 {
   struct gimli_elf_shdr *s = NULL;
 
-  for (s = elf->sections; s; s = s->next) {
+  STAILQ_FOREACH(s, &elf->sections, shdrs) {
     if (!strcmp(s->name, name)) {
       return s;
     }
@@ -138,7 +138,7 @@ struct gimli_elf_shdr *gimli_get_elf_section_by_name(struct gimli_elf_ehdr *elf,
   return NULL;
 }
 
-const char *gimli_get_section_data(struct gimli_elf_ehdr *elf, int section)
+static const char *gimli_get_section_data(struct gimli_elf_ehdr *elf, int section)
 {
   struct gimli_elf_shdr *s;
   int i;
@@ -165,7 +165,7 @@ const char *gimli_get_section_data(struct gimli_elf_ehdr *elf, int section)
 }
 
 struct gimli_section_data *gimli_get_section_by_name(
-  gimli_object_file_t *elf, const char *name)
+  gimli_object_file_t elf, const char *name)
 {
   struct gimli_section_data *data;
   struct gimli_elf_shdr *shdr;
@@ -187,7 +187,7 @@ struct gimli_section_data *gimli_get_section_by_name(
 }
 
 
-const char *gimli_elf_get_string(struct gimli_elf_ehdr *elf,
+static const char *gimli_elf_get_string(struct gimli_elf_ehdr *elf,
   int section, uint64_t off)
 {
   const char *d = gimli_get_section_data(elf, section);
@@ -197,23 +197,46 @@ const char *gimli_elf_get_string(struct gimli_elf_ehdr *elf,
   return NULL;
 }
 
+void gimli_object_file_destroy(struct gimli_elf_ehdr *elf)
+{
+  struct gimli_elf_shdr *s;
+
+  while (STAILQ_FIRST(&elf->sections)) {
+    s = STAILQ_FIRST(&elf->sections);
+    STAILQ_REMOVE_HEAD(&elf->sections, shdrs);
+
+    free(s->data);
+    free(s);
+  }
+
+  if (elf->fd >= 0) {
+    close(elf->fd);
+  }
+  free(elf->objname);
+  free(elf);
+}
 
 struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
 {
   struct gimli_elf_ehdr *elf = calloc(1, sizeof(*elf));
   unsigned char ident[16];
   int i;
-  struct gimli_elf_shdr *last_section = NULL;
   struct gimli_elf_shdr *s;
 
   elf->fd = open(filename, O_RDONLY);
   if (elf->fd == -1) {
+    free(elf);
     return 0;
   }
+
+  STAILQ_INIT(&elf->sections);
 
   read(elf->fd, ident, sizeof(ident));
 
   if (memcmp(ident, GIMLI_EI_ELF_MAGIC, 4)) {
+closeout:
+    close(elf->fd);
+    free(elf);
     return 0;
   }
 
@@ -222,12 +245,12 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
   if (ident[GIMLI_EI_VERSION] != GIMLI_EV_CURRENT) {
     fprintf(stderr, "ELF: %s: unsupported ELF version %d\n", filename,
       ident[GIMLI_EI_VERSION]);
-    return 0;
+    goto closeout;
   }
   if (ident[GIMLI_EI_OSABI] && ident[GIMLI_EI_OSABI] != native_elf_abi) {
     fprintf(stderr, "ELF: %s: unsupported OS ABI %d (expected %d)\n",
       filename, ident[GIMLI_EI_OSABI], native_elf_abi);
-    return 0;
+    goto closeout;
   }
 
   /* we only support reading natively encoded ELF objects */
@@ -235,13 +258,13 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
   if (ident[GIMLI_EI_DATA] != GIMLI_ELFDATA2MSB) {
     fprintf(stderr, "ELF: %s: expected MSB format on this system\n",
       filename);
-    return 0;
+    goto closeout;
   }
 #else
   if (ident[GIMLI_EI_DATA] != GIMLI_ELFDATA2LSB) {
     fprintf(stderr, "ELF: %s: expected LSB format on this system\n",
       filename);
-    return 0;
+    goto closeout;
   }
 #endif
 
@@ -253,7 +276,7 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
     if (read(elf->fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
       fprintf(stderr, "ELF: %s: error reading EHDR: %s\n",
         filename, strerror(errno));
-      return 0;
+      goto closeout;
     }
     elf->e_type = hdr.e_type;
     elf->e_machine = hdr.e_machine;
@@ -274,7 +297,7 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
     if (read(elf->fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
       fprintf(stderr, "ELF: %s: error reading EHDR: %s\n",
           filename, strerror(errno));
-      return 0;
+      goto closeout;
     }
     elf->e_type = hdr.e_type;
     elf->e_machine = hdr.e_machine;
@@ -298,13 +321,13 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
     ) {
     fprintf(stderr, "ELF: %s: expected e_machine=%d, found %d\n",
       filename, native_machine, elf->e_machine);
-    return 0;
+    goto closeout;
   }
 
   if (elf->e_version != GIMLI_EV_CURRENT) {
-    fprintf(stderr, "ELF: %s: unsupported ELF version %d\n", filename,
+    fprintf(stderr, "ELF: %s: unsupported ELF version %" PRId64 "\n", filename,
       elf->e_version);
-    return 0;
+    goto closeout;
   }
 
   /* run through the section headers, pulling them in */
@@ -316,8 +339,8 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
 
     if (lseek(elf->fd, target, SEEK_SET) != target) {
       fprintf(stderr,
-        "ELF: %s: failed to seek for section header %d: offset %d: %s\n",
-        filename, i, target, strerror(errno));
+        "ELF: %s: failed to seek for section header %d: offset %" PRId64 ": %s\n",
+        filename, i, (int64_t)target, strerror(errno));
       return 0;
     }
     if (elf->ei_class == GIMLI_ELFCLASS32) {
@@ -363,11 +386,8 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
       s->sh_entsize = hdr.sh_entsize;
     }
 
-    if (last_section) {
-      last_section->next = s;
-    } else {
-      elf->sections = s;
-
+    STAILQ_INSERT_TAIL(&elf->sections, s, shdrs);
+    if (STAILQ_FIRST(&elf->sections) == s) {
       /* let's fixup the e_shstrndx here.  If it has the value
        * SHN_XINDEX, then the true value is stashed in the sh_link
        * field of the 0th section (that's us) */
@@ -375,11 +395,10 @@ struct gimli_elf_ehdr *gimli_elf_open(const char *filename)
         elf->e_shstrndx = s->sh_link;
       }
     }
-    last_section = s;
   }
 //  printf("e_shstrndx is %d\n", elf->e_shstrndx); 
   /* now make a pass through the sections to find out their names */
-  for (s = elf->sections; s; s = s->next) {
+  STAILQ_FOREACH(s, &elf->sections, shdrs) {
     s->name = (char*)gimli_elf_get_string(elf, elf->e_shstrndx, s->sh_name);
 //    printf("Section %d has name [%d] %s\n", s->section_no, s->sh_name, s->name);
   }
@@ -433,7 +452,7 @@ int gimli_elf_enum_symbols(struct gimli_elf_ehdr *elf,
   const char *end = NULL;
 
   /* find the symbol table */
-  for (s = elf->sections; s; s = s->next) {
+  STAILQ_FOREACH(s, &elf->sections, shdrs) {
     if (s->sh_type == GIMLI_SHT_SYMTAB || s->sh_type == GIMLI_SHT_DYNSYM) {
       symtab = gimli_get_section_data(elf, s->section_no);
       if (symtab == NULL) {
@@ -486,8 +505,6 @@ int gimli_elf_enum_symbols(struct gimli_elf_ehdr *elf,
       }
     }
   }
-
-
   return matches;
 }
 

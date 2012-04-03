@@ -6,9 +6,13 @@ AM_PROG_CC_C_O
 AM_PROG_AS
 AC_PROG_LIBTOOL
 AC_C_INLINE
+AC_C_BIGENDIAN
 
 CFLAGS=`echo $CFLAGS | sed -e 's/-O2//;'`
 CFLAGS="-D_REENTRANT $CFLAGS"
+if test "$GCC" == "yes" ; then
+  CFLAGS="$CFLAGS -Wmissing-prototypes -Wformat"
+fi
 MODULE_SUFFIX=".so"
 SHLIB_SUFFIX=".so"
 DWARF_DEBUG_FLAGS="-gdwarf-2 -g3"
@@ -29,7 +33,7 @@ case $host in
     MODULE_SUFFIX=".bundle"
     SHLIB_SUFFIX=".dylib"
     RLDPATH="-R"
-    DARWIN_DSYMUTIL="dsymutil -o .libs/wedgie.dSYM .libs/wedgie"
+    DARWIN_DSYMUTIL="dsymutil -o .libs/wedgie.dSYM .libs/wedgie ; dsymutil -o .libs/libgimli.0.dylib.dSYM .libs/libgimli.0.dylib"
     ;;
   *linux*)
     CORONER_LDFLAGS="-lthread_db -lpthread"

@@ -26,7 +26,16 @@ struct wedgie_data {
   unsigned bit1:1;
   unsigned bit2:1;
   signed moo:5;
+  unsigned bigbits:18;
+  double aftermoo;
+  int (*func)(int, ...);
+  int arr[4];
+  struct lemon {
+    int a, b;
+  } lone, ltwo;
 };
+
+char global_string[] = "global!";
 
 union wedgie_union {
   int one;
@@ -38,9 +47,18 @@ union wedgie_union {
   struct timeval tv;
 };
 
+int global_int = 360;
+
+static int myfunc(int arg)
+{
+  printf("myfunc(%d)\n", arg);
+  return 42;
+}
+
 static void handler(int signo, siginfo_t *si, void *v)
 {
   char buf[1024];
+
   printf("pid: %d signal handler invoked signo=%d si=%p v=%p\n", getpid(), signo, si, v);
   printf("top of stack %p\n", &signo);
   snprintf(buf, sizeof(buf)-1, "./glider %d", getpid());
@@ -56,6 +74,11 @@ static void handler(int signo, siginfo_t *si, void *v)
 
 static void mr_wedge(struct wedgie_data *data, int port)
 {
+  char *sptr = global_string;
+  int *iptr = &global_int;
+
+  printf("printing global string via local var %s, iptr = %p\n", sptr, iptr);
+
   fprintf(stderr, "taking a nap in func %p\n", mr_wedge);
   fflush(stderr);
   sleep(2);
@@ -82,6 +105,9 @@ static void func_two(void)
 {
   union wedgie_union u;
   struct wedgie_data d = { 42, "forty-two" };
+  char multidim[4][8][16] = {0};
+  short otherdim[3][6];
+  int (*func)(int) = myfunc;
 
   printf("initialize some data\n"); fflush(stdout);
   u.one = 1;
@@ -89,6 +115,18 @@ static void func_two(void)
   d.bit1 = 1;
   d.bit2 = 0;
   d.moo = 13;
+  d.bigbits = 0x29999;
+  d.aftermoo = 4.5;
+  d.lone.a = 3;
+  d.lone.b = 4;
+  d.ltwo.a = 5;
+  d.ltwo.b = 6;
+  d.arr[0] = 9;
+  d.arr[1] = 8;
+  d.arr[2] = 7;
+  d.arr[3] = 6;
+
+  func(3);
 
   printf("call func_one\n"); fflush(stdout);
   func_one(&d, 32, "hello", wee_two, d
@@ -99,9 +137,20 @@ static void func_two(void)
   printf("func_one called\n");
 }
 
+static void* idle_thread(void *arg)
+{
+  for (;;) {
+    sleep(10);
+    printf("idle thread is idle\n");
+  }
+  return NULL;
+}
+
 int main(int argc, char *argv[])
 {
   pthread_mutex_t m;
+  pthread_t thr;
+
   pthread_mutex_init(&m, NULL);
   if ((hb = gimli_heartbeat_attach())) {
     fprintf(stderr, "heartbeat activated\n");
@@ -117,6 +166,9 @@ int main(int argc, char *argv[])
 #endif
 //    signal(SIGSEGV, handler);
   }
+
+  pthread_create(&thr, NULL, idle_thread, NULL);
+
   fprintf(stderr, "calling func_two\n");
   fflush(stderr);
   func_two();

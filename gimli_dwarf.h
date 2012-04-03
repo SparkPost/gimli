@@ -359,6 +359,9 @@ extern "C" {
 #define DW_OP_lo_user 0xe0   
 #define DW_OP_hi_user 0xff   
 
+// DWARF 4 (seen in the wild!)
+#define DW_OP_stack_value 0x9f // result is on the expr stack
+
 #define DW_ATE_address 0x01 
 #define DW_ATE_boolean 0x02 
 #define DW_ATE_complex_float 0x03 
@@ -385,33 +388,24 @@ struct gimli_dwarf_attr {
   const uint8_t *ptr;
 };
 
+/* compilation unit */
+struct gimli_dwarf_cu {
+  /** offset of CU within .debug_info */
+  uint64_t offset, end;
+  /** offset into abbrev */
+  uint64_t da_offset;
+  struct gimli_dwarf_cu *left, *right;
+  STAILQ_HEAD(cudielist, gimli_dwarf_die) dies;
+};
+
 struct gimli_dwarf_die {
   uint64_t offset;
   uint64_t tag;
-  struct gimli_dwarf_die *next, *kids, *last_kid, *parent;
+  STAILQ_ENTRY(gimli_dwarf_die) siblings;
+  STAILQ_HEAD(dielist, gimli_dwarf_die) kids;
+  struct gimli_dwarf_die *parent;
   struct gimli_dwarf_attr *attrs;
 };
-
-int dw_read_encptr(uint8_t enc, const uint8_t **ptr, const uint8_t *end,
-  uint64_t pc, uint64_t *output);
-uint64_t dw_read_uleb128(const uint8_t **ptr, const uint8_t *end);
-int64_t dw_read_leb128(const uint8_t **ptr, const uint8_t *end);
-int dw_eval_expr(struct gimli_unwind_cursor *cur, const uint8_t *ops,
-  uint64_t oplen,
-  uint64_t frame_base, uint64_t *result, uint64_t *prepopulate,
-  int *is_stack);
-
-struct gimli_dwarf_die *gimli_dwarf_get_die(struct gimli_object_file *f,
-  uint64_t offset);
-
-struct gimli_dwarf_die *gimli_dwarf_get_die_for_pc(
-  struct gimli_unwind_cursor *cur);
-struct gimli_dwarf_attr *gimli_dwarf_die_get_attr(
-  struct gimli_dwarf_die *die, uint64_t attrcode);
-const char *gimli_dwarf_resolve_type_name(struct gimli_object_file *f,
-  struct gimli_dwarf_attr *type);
-int gimli_dwarf_read_value(void *addr, int is_stack, void *out, uint64_t size);
-
 
 #ifdef __cplusplus
 }

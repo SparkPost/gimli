@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2009 Message Systems, Inc. All rights reserved
+ * Copyright (c) 2007-2012 Message Systems, Inc. All rights reserved
  * For licensing information, see:
  * https://bitbucket.org/wez/gimli/src/tip/LICENSE
  */
@@ -29,59 +29,9 @@ struct gimli_kernel_ucontext { /* from asm/ucontext.h */
    * to not really be here... even though I can see the kernel code
    * pushing it at this location... very fishy */
   void *pad;
-//	sigset_t	  uc_sigmask;	// appears to not factor into frame
-};
-
-struct gimli_kernel_rt_sigframe {
-//  char *pretcode;
-  struct gimli_kernel_ucontext uc;
-  struct siginfo si;
 };
 
 #endif
-
-/* this is the linux proc_service style interface.
- * thread_db library routines require that we export these functions
- */
-
-typedef enum {
-  PS_OK,     /* Success */
-  PS_ERR,    /* Generic error */
-  PS_BADPID, /* Bad process handle */
-  PS_BADLID, /* Bad LWP id */
-  PS_BADADDR,/* Bad addres */
-  PS_NOSYM,  /* Symbol not found */
-  PS_NOFREGS,/* FPU regs not available */
-} ps_err_e;
-
-struct ps_prochandle {
-  pid_t pid;
-  struct ps_prochandle *next;
-};
-typedef unsigned long paddr_t;
-
-static struct ps_prochandle targetph = {
-  -1,
-  NULL
-};
-static td_thragent_t *ta = NULL;
-static int *pids_to_detach = NULL;
-static struct gimli_thread_state *cur_enum_thread = NULL;
-
-static void user_regs_to_thread(struct user_regs_struct *ur,
-  struct gimli_thread_state *thr)
-{
-  memcpy(&thr->regs, ur, sizeof(*ur));
-#ifdef __x86_64__
-  thr->pc = (void*)ur->rip;
-  thr->sp = (void*)ur->rsp;
-  thr->fp = (void*)ur->rsp;
-#else
-  thr->pc = (void*)ur->eip;
-  thr->sp = (void*)ur->esp;
-  thr->fp = (void*)ur->ebp;
-#endif
-}
 
 long gimli_ptrace(int cmd, int pid, void *addr, void *data)
 {
@@ -113,83 +63,14 @@ long gimli_ptrace(int cmd, int pid, void *addr, void *data)
   return ret;
 }
 
-int gimli_read_mem(void *src, void *dest, int len)
-{
-  long word;
-  int nread = 0;
-  unsigned char *destptr = (unsigned char *)dest;
-  unsigned char *srcptr = (unsigned char*)src;
 
-  do {
-    int x = sizeof(word);
-    int got;
-
-    word = gimli_ptrace(PTRACE_PEEKDATA, targetph.pid, srcptr, NULL);
-    if (errno) {
-      fprintf(stdout, "readmem: unable to read %d bytes at %p: %s\n",
-          x, src, strerror(errno));
-      return 0;
-    }
-
-    got = x > len ? len : x;
-    memcpy(destptr, &word, got);
-    destptr += got;
-    srcptr += got;
-    len -= got;
-    nread += got;
-
-  } while (len > 0);
-  return nread;
-}
-
-
-static int enum_threads(const td_thrhandle_t *thr, void *unused)
-{
-  struct gimli_thread_state *th = cur_enum_thread;
-  struct user_regs_struct ur;
-  int te;
-  td_thrinfo_t info;
-
-  te = td_thr_get_info(thr, &info);
-  if (TD_OK != te) {
-    fprintf(stderr, "enum_threads: can't get thread info!\n");
-    return 0;
-  }
-
-  if (info.ti_state == TD_THR_UNKNOWN || info.ti_state == TD_THR_ZOMBIE) {
-    return 0;
-  }
-
-  if (info.ti_lid != targetph.pid) {
-    /* need to explicitly attach to this process too */
-    int status;
-    struct ps_prochandle *p = calloc(1, sizeof(*p));
-    int tries = 10;
-
-    p->pid = info.ti_lid;
-    p->next = targetph.next;
-
-    if (gimli_ptrace(PTRACE_ATTACH, p->pid, NULL, NULL)) {
-      fprintf(stderr, "enum_threads: failed to attach to thread %d %s\n",
-        p->pid, strerror(errno));
-      free(p);
-      return 0;
-    }
-    targetph.next = p;
-  }
-
-  cur_enum_thread->lwpid = info.ti_lid;
-  cur_enum_thread++;
-  return 0;
-}
-
-static void read_maps(int pid)
+static void read_maps(gimli_proc_t proc)
 {
   char maps[1024];
   char line[1024];
   FILE *fp;
 
-  snprintf(maps, sizeof(maps)-1, "/proc/%d/maps", pid);
+  snprintf(maps, sizeof(maps)-1, "/proc/%d/maps", proc->pid);
   fp = fopen(maps, "r");
   if (!fp) {
     fprintf(stderr, "read_maps: fopen(%s) %s\n",
@@ -221,16 +102,16 @@ static void read_maps(int pid)
     }
     if (tok && *tok) {
       unsigned long long v;
-      void *base;
+      gimli_addr_t base;
       unsigned long len;
       char *objname = tok;
 
       if (*tok != '/') continue;
 
-      base = (void*)(intptr_t)strtoull(line, &tok, 16);
+      base = strtoull(line, &tok, 16);
       v = strtoull(tok + 1, NULL, 16);
-      len = v - (intptr_t)base;
-      gimli_add_mapping(objname, base, len, 0);
+      len = v - base;
+      gimli_add_mapping(proc, objname, base, len, 0);
     }
   }
   fclose(fp);
@@ -282,7 +163,7 @@ void *gimli_reg_addr(struct gimli_unwind_cursor *cur, int col)
   }
 }
 
-static void hexdump(void *addr, int p, int n)
+static void hexdump(gimli_proc_t proc, void *addr, int p, int n)
 {
   uint32_t data[4];
   int i, j;
@@ -293,11 +174,11 @@ static void hexdump(void *addr, int p, int n)
   addr = (char*)addr - (p * sizeof(data));
 
   for (i = 0; i < n; i++) {
-    x = gimli_read_mem(addr, data, sizeof(data));
+    x = gimli_read_mem(proc, (gimli_addr_t)addr, data, sizeof(data));
     printf("%p:   ", addr);
     for (j = 0; j < 4; j++) {
-      void *a = (void*)(intptr_t)data[j];
-      struct gimli_object_mapping *m = gimli_mapping_for_addr(a);
+      gimli_addr_t a = data[j];
+      struct gimli_object_mapping *m = gimli_mapping_for_addr(proc, a);
       if (m) {
         sym = find_symbol_for_addr(m->objfile, a);
       } else {
@@ -321,8 +202,10 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
    * used for the sigreturn handling in glibc */
 #ifdef __x86_64__
   uint64_t a, b;
-  if (gimli_read_mem(cur->st.pc, &a, sizeof(a)) == sizeof(a) &&
-      gimli_read_mem(cur->st.pc + sizeof(a), &b, sizeof(b)) == sizeof(b)) {
+  if (gimli_read_mem(cur->proc, (gimli_addr_t)cur->st.pc, &a,
+        sizeof(a)) == sizeof(a) &&
+      gimli_read_mem(cur->proc, (gimli_addr_t)cur->st.pc + sizeof(a),
+        &b, sizeof(b)) == sizeof(b)) {
     if ((a == 0x0f0000000fc0c748) && ((b & 0xff) == 5)) {
       void *siptr;
       int signo;
@@ -332,8 +215,9 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
        * to down down one level and look at the args passed to the
        * signal handler itself. */
 
-      if (gimli_read_mem(cur->st.fp + sizeof(struct gimli_kernel_ucontext),
-          &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
+      if (gimli_read_mem(cur->proc,
+            (gimli_addr_t)cur->st.fp + sizeof(struct gimli_kernel_ucontext),
+            &cur->si, sizeof(cur->si)) != sizeof(cur->si)) {
         /* can't tell the user anything useful */
         memset(&cur->si, 0, sizeof(cur->si));
       }
@@ -342,8 +226,8 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
   }
 #elif defined(__i386__)
   uint32_t a, b;
-  if (gimli_read_mem(cur->st.pc, &a, sizeof(a)) == sizeof(a) &&
-      gimli_read_mem(cur->st.pc + sizeof(a), &b, sizeof(b)) == sizeof(b)) {
+  if (gimli_read_mem(cur->proc, cur->st.pc, &a, sizeof(a)) == sizeof(a) &&
+      gimli_read_mem(cur->proc, cur->st.pc + sizeof(a), &b, sizeof(b)) == sizeof(b)) {
     /* pull out the signal number */
 
     if (a == 0x0077b858 && b == 0x80cd0000) {
@@ -352,9 +236,7 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
 //      printf("data around fp=%p\n", cur->st.fp);
 //      hexdump(cur->st.fp, 20, 40);
 
-      /* see below for derivation of the magic number; the signal
-       * number preceeds the frame, and that's what we're reading in here */
-      if (gimli_read_mem(cur->st.fp /* - 760 no dwarf!? */,
+      if (gimli_read_mem(cur->proc, cur->st.fp,
           &cur->si.si_signo, sizeof(cur->si.si_signo))
           != sizeof(cur->si.si_signo)) {
         printf("failed to read sigframe\n");
@@ -369,37 +251,16 @@ int gimli_is_signal_frame(struct gimli_unwind_cursor *cur)
         int signo;
         struct siginfo *siptr;
         struct gimli_kernel_ucontext *ucptr;
-        /*
-        struct siginfo si;
-        struct ucontext uc;
-        char retcode[8];
-         fp state */
       } frame;
 
-#if 0
-      printf("data around fp=%p\n", cur->st.fp);
-      hexdump(cur->st.fp, 20, 40);
-      printf("data around sp=%p\n", cur->st.sp);
-      hexdump(cur->st.sp, 20);
-#endif
-
-      /* maybe its because its 3am, but...
-       * If DWARF unwinding failed us, the magic number to find
-       * the frame is this:
-      if (gimli_read_mem(cur->st.fp - 920,
-          &frame, sizeof(frame)) != sizeof(frame)) {
-        printf("failed to read rt_sigframe\n");
-        return 0;
-      }
-      */
       /* if DWARF worked out, fp points right at the frame(!) */
-      if (gimli_read_mem(cur->st.fp,
+      if (gimli_read_mem(cur->proc, cur->st.fp,
           &frame, sizeof(frame)) != sizeof(frame)) {
         printf("failed to read rt_sigframe\n");
         return 0;
       }
 
-      if (gimli_read_mem(frame.siptr, &cur->si, sizeof(cur->si))
+      if (gimli_read_mem(cur->proc, frame.siptr, &cur->si, sizeof(cur->si))
           != sizeof(cur->si)) {
         printf("failed to read siginfo\n");
         return 0;
@@ -427,7 +288,8 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 #ifdef __x86_64__
     struct gimli_kernel_ucontext uc;
 
-    if (gimli_read_mem(cur->st.fp, &uc, sizeof(uc)) != sizeof(uc)) {
+    if (gimli_read_mem(cur->proc, (gimli_addr_t)cur->st.fp,
+          &uc, sizeof(uc)) != sizeof(uc)) {
       return 0;
     }
     cur->st.regs.r8 = uc.uc_mcontext.r8;
@@ -458,7 +320,7 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
     
     /* determine whether we have siginfo or not (see gimli_is_signal_frame
      * for more on this) */
-    gimli_read_mem(cur->st.pc, &a, sizeof(a));
+    gimli_read_mem(cur->proc, cur->st.pc, &a, sizeof(a));
     if (a == 0x0077b858) {
       /* no SA_SIGINFO */
       char *ptr;
@@ -472,17 +334,10 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
        * long extramask[_NSIG / 32];
        * char retcode[8];
        * the actual fp state comes here
-       *
-       * this frame structure is approx 720 bytes without taking the
-       * real fp state into account.
-       *
-       * I've observed that the magic offset to the sc is fp - 756 bytes.
-       * It feels wrong to have deduced the offset in this way.
        */
       ptr = cur->st.fp;
       ptr += 4;
-      /* ptr -= 756; non dwarf */
-      if (gimli_read_mem(ptr, &sc, sizeof(sc)) != sizeof(sc)) {
+      if (gimli_read_mem(cur->proc, ptr, &sc, sizeof(sc)) != sizeof(sc)) {
         printf("failed to read sigcontext\n");
         return 0;
       }
@@ -511,12 +366,12 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
       } frame;
       struct ucontext uc;
 
-      if (gimli_read_mem(cur->st.fp /* - 920 non-dwarf !? */,
+      if (gimli_read_mem(cur->proc, cur->st.fp,
           &frame, sizeof(frame)) != sizeof(frame)) {
         printf("failed to read rt_sigframe\n");
         return 0;
       }
-      if (gimli_read_mem(frame.uc, &uc, sizeof(uc))
+      if (gimli_read_mem(cur->proc, frame.uc, &uc, sizeof(uc))
           != sizeof(uc)) {
         printf("failed to read ucontext\n");
         return 0;
@@ -555,13 +410,14 @@ int gimli_unwind_next(struct gimli_unwind_cursor *cur)
 //printf("fp=%p sp=%p pc=%p\n", c.st.fp, c.st.sp, c.st.pc);
 
   if (c.st.fp) {
-    if (gimli_read_mem(c.st.fp, &frame, sizeof(frame)) != sizeof(frame)) {
+    if (gimli_read_mem(cur->proc, (gimli_addr_t)c.st.fp,
+          &frame, sizeof(frame)) != sizeof(frame)) {
       memset(&frame, 0, sizeof(frame));
     }
 //    printf("read frame: fp=%p pc=%p\n", frame.next, frame.retpc);
     /* If we don't appear to be making progress, or we end up in page 0,
      * then assume we're done */
-    if (c.st.fp == frame.next || frame.next == 0 || frame.retpc < 1024) {
+    if (c.st.fp == frame.next || frame.next == (void*)0 || frame.retpc < (void*)1024) {
       return 0;
     }
     cur->st.fp = frame.next;
@@ -588,162 +444,86 @@ static void child_handler(int signo)
   child_stopped = 1;
 
   p = waitpid(-1, &status, WNOHANG);
+//  printf("SIGCHLD: pid=%d\n", p);
 }
 
-int gimli_attach(int pid)
+gimli_err_t gimli_attach(gimli_proc_t proc)
 {
   long ret;
   int status;
-  td_err_e te;
   struct user_regs_struct ur;
   int i;
-  int done = 0;
+  char name[1024];
 
   signal(SIGCHLD, child_handler);
   
-  ret = gimli_ptrace(PTRACE_ATTACH, pid, NULL, NULL);
+  ret = gimli_ptrace(PTRACE_ATTACH, proc->pid, NULL, NULL);
   if (ret != 0) {
+    int err = errno;
+
     fprintf(stderr, "PTRACE_ATTACH: failed: %s\n",
-      strerror(errno));
+      strerror(err));
+
+    errno = err;
+
+    switch (err) {
+      case ESRCH:
+        return GIMLI_ERR_NO_PROC;
+      case EPERM:
+        return GIMLI_ERR_PERM;
+      default:
+        return GIMLI_ERR_CHECK_ERRNO;
+    }
     return 0;
   }
 
-  targetph.pid = pid;
   status = 0;
   for (i = 0; i < 60; i++) {
+    int pid;
+
     if (child_stopped) {
       break;
     }
 
-    if (waitpid(pid, &status, WNOHANG) == pid) {
+    pid = waitpid(proc->pid, &status, WNOHANG);
+    if (pid == proc->pid) {
       child_stopped = 1;
       break;
     }
 
-    fprintf(stderr, "waiting for pid %d to stop\n", pid);
+    fprintf(stderr, "waiting for pid %d to stop (saw %d)\n", proc->pid, pid);
     sleep(1);
   }
   signal(SIGCHLD, SIG_DFL);
   if (!child_stopped) {
     fprintf(stderr, "child didn't stop in 60 seconds\n");
-    return 0;
+    return GIMLI_ERR_TIMEOUT;
   }
 
-  read_maps(pid);
-
-  te = td_init();
-  if (te != TD_OK) {
-    fprintf(stderr, "td_init failed: %d\n", te);
-    return 0;
-  }
-  te = td_ta_new(&targetph, &ta);
-  if (te != TD_OK && te != TD_NOLIBTHREAD) {
-    fprintf(stderr, "td_ta_new failed: %d\n", te);
-    return 0;
-  }
-  if (ta) {
-    te = td_ta_get_nthreads(ta, &gimli_nthreads);
-    if (te == TD_OK) {
-      gimli_threads = calloc(gimli_nthreads, sizeof(*gimli_threads));
-      cur_enum_thread = gimli_threads;
-      td_ta_thr_iter(ta, enum_threads, NULL, TD_THR_ANY_STATE,
-        TD_THR_LOWEST_PRIORITY, TD_SIGNO_MASK, TD_THR_ANY_USER_FLAGS);
-    } else {
-      fprintf(stderr, "td_ta_get_nthreads failed: %d\n", te);
-    }
-
-  } else {
-    gimli_threads = calloc(1, sizeof(*gimli_threads));
-    gimli_threads->lwpid = pid;
-    gimli_nthreads = 1;
+  snprintf(name, sizeof(name), "/proc/%d/mem", proc->pid);
+  proc->proc_mem = open(name, O_RDWR);
+  if (proc->proc_mem == -1) {
+    fprintf(stderr, "failed to open %s: %s\n", name, strerror(errno));
+    return GIMLI_ERR_CHECK_ERRNO;
   }
 
-  while (done < gimli_nthreads) {
-    for (i = 0; i < gimli_nthreads; i++) {
-      struct gimli_thread_state *thr = &gimli_threads[i];
+  read_maps(proc);
 
-      if (ptrace(PTRACE_GETREGS, thr->lwpid, NULL, &ur) == 0) {
-        user_regs_to_thread(&ur, thr);
-        done++;
-      }
-    }
-    if (done >= gimli_nthreads) {
-      break;
-    }
-    sleep(1);
-    done = 0;
-  }
-
-  return 1;
+  return gimli_proc_service_init(proc);
 }
 
-int gimli_detach(void)
+gimli_err_t gimli_detach(gimli_proc_t proc)
 {
   long ret;
-  struct ps_prochandle *p = &targetph;
+  int i;
 
-  while (p) {
-    ret = ptrace(PTRACE_DETACH, p->pid, NULL, SIGCONT);
-    p = p->next;
-  }
-  return 0;
-}
+  gimli_proc_service_destroy(proc);
 
-ps_err_e ps_pdwrite(struct ps_prochandle *ph, paddr_t addr,
-  void *buf, size_t size)
-{
-  return PS_ERR;
-}
+  ptrace(PTRACE_DETACH, proc->pid, NULL, SIGCONT);
 
-ps_err_e ps_pdread(struct ps_prochandle *ph, paddr_t addr,
-  void *buf, size_t size)
-{
-  if (ph->pid != targetph.pid) {
-    return PS_ERR;
-  }
-  if (gimli_read_mem((void*)addr, buf, size) != size) {
-    return PS_ERR;
-  }
-  return PS_OK;
-}
+  // FIXME: free all bits from tdep properly
 
-ps_err_e ps_pglobal_lookup(struct ps_prochandle *ph, const char *obj,
-  const char *name, paddr_t *symaddr)
-{
-  struct gimli_symbol *sym = gimli_sym_lookup(obj, name);
-  if (sym) {
-    *symaddr = (paddr_t)sym->addr;
-    return PS_OK;
-  }
-  return PS_NOSYM;
-}
-
-ps_err_e ps_lsetfpregs(struct ps_prochandle *ph, lwpid_t lwpid, void *fpregset)
-{
-  return PS_ERR;
-}
-
-ps_err_e ps_lsetregs(struct ps_prochandle *ph, lwpid_t lwpid, void *gregset)
-{
-  return PS_ERR;
-}
-
-ps_err_e ps_lgetfpregs(struct ps_prochandle *ph, lwpid_t lwpid, void *fpregset)
-{
-  return PS_ERR;
-}
-
-ps_err_e ps_lgetregs(struct ps_prochandle *ph, lwpid_t lwpid, void *gregset)
-{
-  if (0 == gimli_ptrace(PTRACE_GETREGS, lwpid, NULL, gregset)) {
-    return PS_OK;
-  }
-  return PS_ERR;
-}
-
-pid_t ps_getpid(struct ps_prochandle *ph)
-{
-  return ph->pid;
+  return GIMLI_ERR_OK;
 }
 
 #endif

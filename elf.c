@@ -9,7 +9,7 @@
 static int for_each_symbol(struct gimli_elf_ehdr *elf,
   struct gimli_elf_symbol *sym, void *arg)
 {
-  struct gimli_object_file *f = arg;
+  gimli_mapped_object_t f = arg;
 
 #if 0
   /* ignore non-code symbols */
@@ -21,13 +21,13 @@ static int for_each_symbol(struct gimli_elf_ehdr *elf,
 
   if (sym->st_size && sym->name[0] && !strchr(sym->name, '.') &&
       !strchr(sym->name, '$')) {
-    gimli_add_symbol(f, sym->name, (void*)sym->st_value, sym->st_size);
+    gimli_add_symbol(f, sym->name, sym->st_value, sym->st_size);
     return 1;
   }
   return 0;
 }
 
-int gimli_process_elf(struct gimli_object_file *f)
+int gimli_process_elf(gimli_mapped_object_t f)
 {
   char altpath[1024];
 
@@ -38,6 +38,11 @@ int gimli_process_elf(struct gimli_object_file *f)
    * so let's try those first */
   snprintf(altpath, sizeof(altpath)-1, "/usr/lib/debug%s.debug", f->objname);
   f->aux_elf = gimli_elf_open(altpath);
+  if (!f->aux_elf) {
+    /* ubuntu has it without the .debug suffix */
+    snprintf(altpath, sizeof(altpath)-1, "/usr/lib/debug%s", f->objname);
+    f->aux_elf = gimli_elf_open(altpath);
+  }
 #endif
 
   gimli_elf_enum_symbols(f->elf, for_each_symbol, f);
