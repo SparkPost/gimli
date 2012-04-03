@@ -502,7 +502,6 @@ gimli_err_t gimli_attach(gimli_proc_t proc)
 
   snprintf(name, sizeof(name), "/proc/%d/mem", proc->pid);
   proc->proc_mem = open(name, O_RDWR);
-  proc->proc_mem_supports_mmap = -1; /* don't know yet */
   if (proc->proc_mem == -1) {
     fprintf(stderr, "failed to open %s: %s\n", name, strerror(errno));
     return GIMLI_ERR_CHECK_ERRNO;

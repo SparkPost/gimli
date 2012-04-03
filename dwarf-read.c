@@ -5,6 +5,7 @@
  */
 #include "impl.h"
 #include "gimli_dwarf.h"
+static gimli_addr_t calc_reloc(gimli_mapped_object_t f);
 
 struct dw_die_arange {
   uint64_t addr;
@@ -218,7 +219,7 @@ int gimli_determine_source_line_number(gimli_proc_t proc,
   pc -= f->base_addr;
 #else
   if (!gimli_object_is_executable(f->elf)) {
-    pc -= m->base; // FIXME: f->base_addr?
+    pc -= calc_reloc(f);
   }
 #endif
 
