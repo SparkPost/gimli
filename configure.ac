@@ -33,7 +33,7 @@ case $host in
     MODULE_SUFFIX=".bundle"
     SHLIB_SUFFIX=".dylib"
     RLDPATH="-R"
-    DARWIN_DSYMUTIL="dsymutil -o .libs/wedgie.dSYM .libs/wedgie"
+    DARWIN_DSYMUTIL="dsymutil -o .libs/wedgie.dSYM .libs/wedgie ; dsymutil -o .libs/libgimli.0.dylib.dSYM .libs/libgimli.0.dylib"
     ;;
   *linux*)
     CORONER_LDFLAGS="-lthread_db -lpthread"

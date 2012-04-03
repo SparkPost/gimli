@@ -353,12 +353,8 @@ static int add_symbol(gimli_mach_header *mhdr, void *context,
 #endif
     }
     if (want_symbol) {
-      gimli_addr_t value = nsym->n_value;
-
-      if (mhdr->filetype != MH_EXECUTE) {
-        value += file->base_addr;
-      }
-      //          printf("sym: %s %p\n", strtab + nsym->n_un.n_strx, (char*)value);
+      gimli_addr_t value = nsym->n_value + file->base_addr;
+//      printf("sym: %s " PTRFMT "\n", strtab + nsym->n_un.n_strx, value);
       gimli_add_symbol(file, strtab + nsym->n_un.n_strx, value, 0);
 
       if (sigtramp == 0 &&

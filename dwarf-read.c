@@ -198,7 +198,9 @@ int gimli_determine_source_line_number(gimli_proc_t proc,
   struct gimli_line_info *linfo;
 
   m = gimli_mapping_for_addr(proc, pc);
-  if (!m) return 0;
+  if (!m) {
+    return 0;
+  }
   f = m->objfile;
 
   if (!f->elf) {
@@ -212,9 +214,13 @@ int gimli_determine_source_line_number(gimli_proc_t proc,
     }
   }
 
+#ifdef __MACH__
+  pc -= f->base_addr;
+#else
   if (!gimli_object_is_executable(f->elf)) {
-    pc -= m->base;
+    pc -= m->base; // FIXME: f->base_addr?
   }
+#endif
 
   linfo = bsearch(&pc, f->lines, f->linecount, sizeof(*linfo),
       search_compare_line);
@@ -557,19 +563,6 @@ static int process_line_numbers(gimli_mapped_object_t f)
   }
 
   return 0;
-}
-
-int gimli_process_dwarf(gimli_mapped_object_t f)
-{
-  /* pull out additional information from dwarf debugging information.
-   * In particular, we can scan the .debug_info section to resolve
-   * function names into symbols for the back trace code */
-
-  if (f->elf) {
-    //process_line_numbers(f);
-  }
-
-  return 1;
 }
 
 static int get_sect_data(gimli_mapped_object_t f, const char *name,

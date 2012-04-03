@@ -69,7 +69,8 @@ static void bake_symtab(gimli_mapped_object_t f)
   f->symchanged = 0;
 
   if (debug) {
-    printf("baking %" PRId64 " symbols for %s\n", f->symcount, f->objname);
+    printf("baking %" PRId64 " symbols for %s base=" PTRFMT "\n",
+        f->symcount, f->objname, f->base_addr);
   }
 
   if (f->symhash) {
