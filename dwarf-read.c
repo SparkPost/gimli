@@ -1778,14 +1778,11 @@ static void populate_struct_or_union(
         offset = 1;
       }
       /* convert to bit offset from start of storage */
-      /* FIXME: check this for big endian systems */
       if (!gimli_dwarf_die_get_uint64_t_attr(die, DW_AT_byte_size, &bytesize)) {
         bytesize = gimli_type_size(memt)/8;
       }
-//printf("bitfield: offset=%" PRIu64 " from MSB, bytesize=%" PRIu64 " bits=%" PRIu64 "\n", offset, bytesize, size);
 #if !WORDS_BIGENDIAN
       offset = (bytesize * 8) - (offset + size);
-//printf("    -> offset=%" PRIu64 " from lowest byte\n", offset);
 #endif
 
     } else {
