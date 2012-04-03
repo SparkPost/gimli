@@ -1,4 +1,4 @@
-Copyright (c) 2007-2010, Message Systems, Inc.
+Copyright (c) 2007-2012, Message Systems, Inc.
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -58,4 +58,10 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+Some portions of this code are derived from the CTF and MDB facilities that
+were originally open sourced as part of OpenSolaris.  Those portions are
+subject to the CDDL, the full text of which can be found in the
+OPENSOLARIS.LICENSE file included with this distribution.
 
