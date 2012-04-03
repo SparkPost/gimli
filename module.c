@@ -122,8 +122,6 @@ static int load_module(const char *exename, const char *filename)
     }
   }
 
-  /* TODO: v3 load goes here */
-
   return found;
 }
 
