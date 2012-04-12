@@ -478,7 +478,7 @@ gimli_err_t gimli_attach(gimli_proc_t proc)
   }
 
   status = 0;
-  for (i = 0; i < 60; i++) {
+  for (i = 0; i < 5; i++) {
     int pid;
 
     if (child_stopped) {
@@ -496,8 +496,8 @@ gimli_err_t gimli_attach(gimli_proc_t proc)
   }
   signal(SIGCHLD, SIG_DFL);
   if (!child_stopped) {
-    fprintf(stderr, "child didn't stop in 60 seconds\n");
-    return GIMLI_ERR_TIMEOUT;
+    fprintf(stderr,
+        "didn't detect child stop within 5 seconds, continuing anyway\n");
   }
 
   snprintf(name, sizeof(name), "/proc/%d/mem", proc->pid);
