@@ -75,6 +75,7 @@
 #endif
 #include <stdarg.h>
 #include <dlfcn.h>
+#include <ctype.h>
 
 struct gimli_mapped_object;
 typedef struct gimli_mapped_object *gimli_mapped_object_t;
