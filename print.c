@@ -558,11 +558,11 @@ static int print_var(struct print_data *data, gimli_type_t t, const char *varnam
         snprintf(addrkey, sizeof(addrkey), "%p:%" PRIx64, t, addr);
         if (gimli_hash_find(derefd, addrkey, &dummy)) {
           printf(" " PTRFMT " [deref'd above]\n", addr);
-          return;
+          return GIMLI_ITER_CONT;
         }
         if (!gimli_hash_insert(derefd, addrkey, NULL)) {
           printf(" " PTRFMT " <hash insert failed>\n", addr);
-          return;
+          return GIMLI_ITER_ERR;
         }
 
         printf(" " PTRFMT " = {\n", addr);
